@@ -1,0 +1,5 @@
+minimum REAPER version: unverified
+minimum ReaImGui version: not used by this probe
+
+Fill both lines from the host version that passes the routing and timing proof.
+Do not copy a version from a document.

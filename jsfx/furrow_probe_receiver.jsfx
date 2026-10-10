@@ -1,0 +1,50 @@
+desc: Furrow probe receiver
+tags: midi
+in_pin: none
+out_pin: none
+
+options: gmem=FurrowProbeReceiver
+
+@init
+ext_midi_bus = 1;
+block_start = 0;
+event_count = 0;
+block_count = 0;
+sample_count = 0;
+
+@block
+block_count < 100000 ? (
+  gmem[1 + block_count] = tempo;
+  block_count += 1;
+);
+sample_in_block = 0;
+loop(samplesblock,
+  sample_count < 1000000 ? (
+    gmem[100001 + sample_count] = tempo;
+    sample_count += 1;
+  );
+  sample_in_block += 1;
+);
+while (midirecv(offset, msg1, msg2, msg3)) (
+  status = msg1 & $xF0;
+  is_on = status == $x90 && msg3 > 0;
+  is_off = status == $x80 || (status == $x90 && msg3 == 0);
+  (is_on || is_off) && event_count < 100000 ? (
+    at = 2000000 + event_count * 9;
+    gmem[at] = block_start + offset;
+    gmem[at + 1] = is_on;
+    gmem[at + 2] = msg1 & 15;
+    gmem[at + 3] = midi_bus;
+    gmem[at + 4] = 0;
+    gmem[at + 5] = msg1 & 15;
+    gmem[at + 6] = msg2;
+    gmem[at + 7] = is_on ? msg3 : 0;
+    gmem[at + 8] = is_on;
+    event_count += 1;
+  );
+  midisend(offset, msg1, msg2, msg3);
+);
+block_start += samplesblock;
+gmem[0] = event_count;
+gmem[100000] = block_count;
+gmem[1100000] = sample_count;

@@ -1,0 +1,75 @@
+desc: Furrow probe engine
+tags: instrument midi
+in_pin: none
+out_pin: none
+
+options: maxmem=8388608
+
+slider1:0<0,1,1>Pattern on
+
+@init
+ext_midi_bus = 1;
+ext_noinit = 1;
+// Sixty-four steps, sixteen per lane. A zero entry does not sound.
+// The bits match probes/pattern-4x16.txt. Lane notes are 36, 38, 42, 46.
+step_on = 0;
+memset(step_on, 0, 64);
+step_on[0] = 1;
+step_on[4] = 1;
+step_on[8] = 1;
+step_on[12] = 1;
+step_on[18] = 1;
+step_on[22] = 1;
+step_on[26] = 1;
+step_on[30] = 1;
+step_on[32] = 1;
+step_on[34] = 1;
+step_on[36] = 1;
+step_on[38] = 1;
+step_on[40] = 1;
+step_on[42] = 1;
+step_on[44] = 1;
+step_on[46] = 1;
+step_on[52] = 1;
+step_on[60] = 1;
+step_on[63] = 1;
+note_of = 100;
+note_of[0] = 36;
+note_of[1] = 38;
+note_of[2] = 42;
+note_of[3] = 46;
+next_step = 0;
+block_end_beat = -1;
+
+@block
+// This probe reads tempo once per block. It does not follow a ramp inside the block.
+// The receiver records tempo per sample so a later comparison can show the difference.
+playing = play_state == 1 || play_state == 5;
+slider1 < 0.5 ? playing = 0;
+!playing ? (
+  next_step = 0;
+  block_end_beat = beat_position;
+) : (
+  step_beats = 0.25;
+  block_beats = samplesblock * tempo / (60 * srate);
+  beat_position + 0.000001 < block_end_beat ? next_step = floor(beat_position / step_beats);
+  block_end_beat = beat_position + block_beats;
+  while (next_step < 16 && next_step * step_beats < block_end_beat) (
+    hit = next_step * step_beats;
+    release = hit + step_beats * 0.5;
+    lane = 0;
+    loop(4,
+      step_on[lane * 16 + next_step] ? (
+        on_offset = (hit - beat_position) * (samplesblock / block_beats);
+        off_offset = (release - beat_position) * (samplesblock / block_beats);
+        on_offset < 0 ? on_offset = 0;
+        off_offset < 0 ? off_offset = 0;
+        midi_bus = 0;
+        midisend(on_offset, $x90 + lane, note_of[lane], 100);
+        midisend(off_offset, $x80 + lane, note_of[lane], 0);
+      );
+      lane += 1;
+    );
+    next_step += 1;
+  );
+);
