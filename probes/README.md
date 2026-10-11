@@ -2,7 +2,7 @@ The first proof has two parts. Python checks the schedule. REAPER has to check t
 
 **Checked on this machine.** `python3 probes/check_schedule.py` checks the half-sample tie, the 120 BPM step and half-step gate, the full and partial ramp integrals, the 38 events of the 4 by 16 pattern, and the one-sample diff. `python3 probes/check_lua_scripts.py` runs both Lua scripts against a stub REAPER API under Lua 5.4. It needs `pip install lupa` and skips without it. The stub shows what the scripts ask REAPER to do. It does not show that REAPER honours it. `probes/expected/constant-120.txt` is the file a capture compares against. `probes/expected/ramp-44100-1024.txt` uses the map in `probes/cases/ramp-44100-1024.txt`, with BPM linear in time as REAPER 7.82 played it.
 
-1. Copy both files from `jsfx/` into the REAPER Effects directory.
+1. Copy every file from `jsfx/` into the REAPER Effects directory, or link them there. Each probe names the JSFX it loads.
 2. Run `lua/furrow_probe_layout.lua` once. It gives each receiver its own slot. A second run finds the named tracks and stops. Remove those tracks before creating the layout again. If a JSFX fails to load, the script removes what it created and says which file is missing.
 3. Set 44.1 kHz, 1,024-sample blocks, and a constant 120 BPM. Play from beat 0 through the sixteen steps, then stop. Starting playback clears the previous capture.
 4. Run `lua/furrow_probe_dump.lua`. It writes three files next to the saved project, or into the REAPER resource directory for an unsaved project. The console lists the paths.

@@ -88,7 +88,9 @@ local function measure(seconds)
   reaper.gmem_write(20, 1)
   wait(seconds)
   reaper.gmem_write(20, 0)
-  wait(0.03)
+  if not wait_until(function() return reaper.gmem_read(26) == 0 end, 1) then
+    fail("meter stopped measuring")
+  end
   local count = reaper.gmem_read(24)
   if count <= 0 then
     return { left = 0, right = 0, hz = 0 }
@@ -96,7 +98,7 @@ local function measure(seconds)
   return {
     left = math.sqrt(reaper.gmem_read(21) / count),
     right = math.sqrt(reaper.gmem_read(22) / count),
-    hz = reaper.gmem_read(23) / 2 / (count / SAMPLE_RATE),
+    hz = reaper.gmem_read(23) / 2 / (count / reaper.gmem_read(27)),
   }
 end
 
@@ -193,6 +195,13 @@ local function main()
     fail("project saved before the run")
     return
   end
+  for index = 0, reaper.CountTracks(0) - 1 do
+    local _, name = reaper.GetSetMediaTrackInfo_String(reaper.GetTrack(0, index), "P_NAME", "", false)
+    if name == TRACK then
+      fail("no earlier probe track shares this run's gmem", "delete the " .. TRACK .. " track or use a new project")
+      return
+    end
+  end
   reaper.gmem_attach(GMEM)
   reaper.gmem_write(20, 0)
   local sample = dir .. package.config:sub(1, 1) .. "furrow-rs5k-sine-1k.wav"
@@ -210,6 +219,11 @@ local function main()
   end
   reaper.TrackFX_SetNamedConfigParm(track, fx, "FILE0", sample)
   reaper.TrackFX_SetNamedConfigParm(track, fx, "DONE", "")
+  local _, file = reaper.TrackFX_GetNamedConfigParm(track, fx, "FILE0")
+  if file ~= sample then
+    fail("RS5K loaded the sample", "FILE0 reads " .. tostring(file))
+    return
+  end
   reaper.Undo_OnStateChangeEx2(0, "Furrow probe: RS5K track", STATE_ALL, -1)
   local start = reaper.gmem_read(25)
   if not wait_until(function() return reaper.gmem_read(25) > start end, 2) then
@@ -254,6 +268,10 @@ local function main()
   result("baseline held level, left", baseline.left)
   result("baseline held level, right", baseline.right)
   result("baseline pitch Hz", baseline.hz)
+  if baseline.left < 0.1 or math.abs(baseline.hz - SINE_HZ) > 10 then
+    fail("RS5K plays the sample at its own level and pitch")
+    return
+  end
   result("note-off with Obey note-offs, level change dB", db(baseline.after_off.left / baseline.left))
   for _, velocity in ipairs({ 64, 1 }) do
     result("velocity " .. velocity .. ", level change dB", db(play(velocity).left / baseline.left))
