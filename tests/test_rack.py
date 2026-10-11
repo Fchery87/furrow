@@ -584,6 +584,90 @@ class RackTest(unittest.TestCase):
         starts = [round(e[0] / 5512.5) for e in self.rig.events if e[2] == 0x90 and e[4] > 0]
         self.assertEqual(starts, [3, 35])
 
+    def lane_steps(self, slot, steps, fields=(0, 1)):
+        return {s: [self.c("step_value", slot, s, f) for f in fields] for s in steps}
+
+    def run_tool(self, kind, arg=None):
+        self.c("lane_tool", 0, kind, arg)
+        self.settle(60)
+        self.tick(10)
+
+    def painted_lane(self, on_steps, length=None):
+        self.c("add_sample", "/samples/kick.wav")
+        self.settle()
+        if length:
+            self.c("set_length", 0, length)
+            self.settle()
+        commands = self.rig.lua.table_from([self.rig.lua.table_from([OP_SET_STEP, 0, 0, s, F_ON, 1])
+                                            for s in on_steps])
+        self.c("run", "paint steps", commands)
+        self.settle()
+        self.tick(10)
+        self.stub.undo.clear()
+
+    def on_steps(self, count=16):
+        return [s for s in range(count) if self.c("step_value", 0, s, F_ON) == 1]
+
+    def test_fill_every_n_turns_on_those_steps_and_clears_the_rest_in_one_undo_point(self):
+        self.painted_lane([1, 5, 6])
+        self.run_tool("fill", 4)
+        self.assertEqual(self.on_steps(), [0, 4, 8, 12])
+        self.assertEqual(self.stub.undo, ["Furrow: fill every 4"])
+        self.run_tool("fill", 3)
+        self.assertEqual(self.on_steps(), [0, 3, 6, 9, 12, 15])
+
+    def test_rotate_moves_steps_with_their_fields_and_wraps_across_pages(self):
+        self.painted_lane([2, 39], length=40)
+        lua = self.rig.lua
+        edit = lua.table_from([lua.table_from([OP_SET_STEP, 0, 0, 2, 1, 64])])
+        self.c("run", "edit velocity", edit)
+        self.settle()
+        self.tick(8)
+        self.stub.undo.clear()
+        self.run_tool("rotate", 1)
+        self.assertEqual(self.stub.undo, ["Furrow: rotate right"])
+        self.c("set_page", 0)
+        self.tick(8)
+        self.assertEqual(self.lane_steps(0, (0, 2, 3)), {0: [1, 100], 2: [0, 100], 3: [1, 64]})
+        self.c("set_page", 2)
+        self.tick(8)
+        self.assertEqual(self.lane_steps(0, (38, 39)), {38: [0, 100], 39: [0, 100]})
+        self.run_tool("rotate", -1)
+        self.assertEqual(self.stub.undo[-1], "Furrow: rotate left")
+        self.assertEqual(self.lane_steps(0, (38, 39)), {38: [0, 100], 39: [1, 100]})
+
+    def test_invert_and_clear_work_on_the_whole_lane_and_clear_resets_every_field(self):
+        self.painted_lane([0, 4])
+        self.run_tool("invert")
+        self.assertEqual(self.on_steps(), [s for s in range(16) if s not in (0, 4)])
+        self.assertEqual(self.stub.undo, ["Furrow: invert steps"])
+        lua = self.rig.lua
+        self.c("run", "edit velocity", lua.table_from([lua.table_from([OP_SET_STEP, 0, 0, 1, 1, 33])]))
+        self.settle()
+        self.run_tool("clear")
+        self.assertEqual(self.on_steps(), [])
+        self.assertEqual(self.c("step_value", 0, 1, 1), 100)
+        self.assertEqual(self.rig.engine.var("nd_count"), 0)
+        self.assertEqual(self.stub.undo[-1], "Furrow: clear steps")
+
+    def test_a_tool_that_changes_nothing_makes_no_undo_point_and_the_grid_window_returns(self):
+        self.painted_lane([0, 4, 8, 12])
+        self.run_tool("fill", 4)
+        self.assertEqual(self.stub.undo, [])
+        self.assertEqual(self.on_steps(), [0, 4, 8, 12])
+        self.assertIsNone(self.coordinator.tool)
+        self.assertEqual(self.coordinator.session.window.nl, 64)
+
+    def test_a_tool_waits_for_pending_edits_before_it_reads_the_lane(self):
+        self.painted_lane([])
+        gesture = self.c("begin", "paint steps")
+        self.c("add", gesture, *self.edit(0, 7, 1))
+        self.c("lane_tool", 0, "invert", None)
+        self.c("finish", gesture)
+        self.settle(60)
+        self.tick(10)
+        self.assertEqual(self.on_steps(), [s for s in range(16) if s != 7])
+
     def rack_links(self):
         return self.rack["rack"].ext.get("P_EXT:Furrow", "")
 
@@ -596,6 +680,7 @@ class FakeImGui:
         self.drop = []
         self.small_labels = []
         self.press = None
+        self.menu_open = False
 
     def table(self, lua):
         fake = self
@@ -603,6 +688,11 @@ class FakeImGui:
         def call(name):
             def fn(*args):
                 fake.calls.append(name)
+                if name == "BeginPopupContextItem":
+                    return fake.menu_open
+                if name == "MenuItem" and args[1] == fake.press:
+                    fake.press = None
+                    return True
                 if name == "SmallButton":
                     fake.small_labels.append(args[1])
                     if args[1] == fake.press:
@@ -683,6 +773,33 @@ class WindowTest(unittest.TestCase):
             self.assertIn("17-32##page1", imgui.small_labels)
             self.assertIn("33-48##page2", imgui.small_labels)
             self.assertNotIn("49-64##page3", imgui.small_labels)
+        finally:
+            rig.close()
+
+    def test_the_lane_menu_starts_a_tool(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(70):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame == 30:
+                    imgui.menu_open = True
+                    imgui.press = "Fill every 4"
+                if frame == 31:
+                    imgui.menu_open = False
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: fill every 4"])
         finally:
             rig.close()
 
