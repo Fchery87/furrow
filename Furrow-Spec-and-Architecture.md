@@ -2,7 +2,7 @@
 
 Oct 10, 2026 · No Chaserz
 
-**Status.** Revised after architecture review on 10 October 2026. The document is ready for feasibility probes. REAPER-dependent behavior remains unverified. The rack, page allocator and item bridge must wait for their stated gates. The first routing and timing probe exists in `jsfx/`, `lua/` and `probes/`. It has not run in REAPER.
+**Status.** Revised on 11 October 2026 after the first milestone 1 probes on REAPER 7.82 for Linux. Routing, constant-tempo timing, tempo ramps, tempo steps on the beat grid and native undo of an acknowledged engine edit passed. The evidence is in `probes/results/reaper-7.82-linux/`. Other REAPER-dependent behavior remains unverified, and Windows and macOS have not run. The rack, page allocator and item bridge must wait for their stated gates.
 
 ## Overview
 
@@ -27,7 +27,7 @@ The name comes from the rows of a ploughed field, after REAPER's harvest theme. 
 
 **Success criteria**
 
-- Generated MIDI stays within one sample of the independently calculated schedule over 10 minutes at 60 to 200 BPM, using the timing matrix below.
+- Generated MIDI stays within one sample of the independently calculated schedule over 10 minutes at 60 to 200 BPM, using the timing matrix below. The one exception is an event that follows a tempo marker inside the same audio block, described under engine timing.
 - A new user builds a 4-lane, 16-step beat in under 2 minutes from first open.
 - An unedited Furrow commit restores its complete source pattern from embedded metadata with no data lost. Capture of edited or unrelated MIDI follows the explicit conversion rules below.
 - Engine CPU averages under 1% of one core on the published reference machine for the defined 32-lane workload. Report peak block time separately.
@@ -257,7 +257,7 @@ Transport-relative conditions use a separate runtime traversal counter. Start, s
 
 ### What SeqCore does each audio block
 
-1. Read transport state, beat position, tempo, sample rate and block size. Detect discontinuities against the expected previous position, with a documented tolerance. Resolve time-signature and tempo boundaries using the mechanism validated in milestone 1.
+1. Read transport state, beat position, tempo, sample rate and block size. Detect discontinuities against the expected previous position. A tempo change inside the previous block moves this block's start by less than that block's span in beats, so only a larger difference is a seek or loop wrap. Resolve time-signature boundaries using the mechanism validated in milestone 1. Tempo follows the rule below.
 2. On seek or transport-loop wrap, release held notes, restore controller baselines, and cancel all pending hits and releases before scheduling from the new position. Apply completed state transactions before acknowledging them. If a quantized switch occurs within this block, split scheduling at that boundary. Keep all work within the measured block budget.
 3. While the transport is playing or recording in Live mode, enumerate logical starts in the block's half-open beat interval. Stopped and paused transport produce no sequenced notes. The lane rate determines step length; 1/16 equals 0.25 quarter-note beats. Map each start to the selected direction and per-pattern lane length.
 4. Evaluate enabled state, conditions and probability once per logical step. Muted lanes emit no events. Solo enables only soloed, unmuted lanes when any solo exists. Muted or rejected steps set `prev` false.
@@ -265,7 +265,16 @@ Transport-relative conditions use a separate runtime traversal counter. Start, s
 6. Merge due events into sample-offset order. At an equal offset, release the old note first, apply the new hit's controller values next, and send its note-on last. A hit's queued release carries its voice identity so an old release cannot terminate a newer note.
 7. Retain future events in beat units. Recalculate their offsets using the current tempo mapping rather than retaining offsets calculated under an earlier tempo. Publish playhead and completed acknowledgements.
 
-The [JSFX variable reference](https://www.reaper.fm/sdk/js/vars.php) documents `tempo` as one read-only BPM value available in `@block` and `@sample`. It documents `beat_position` as the playback position as of the last `@block`. The reference does not say whether `tempo` changes between samples during a ramp, or only between blocks. Do not assume either behavior. The first timing probe logs `tempo` in both `@block` and `@sample` while a ramp moves inside one 1,024-sample block at 44.1 kHz, and compares logged MIDI with the one-sample target. A single constant-tempo conversion is not that proof. If the logged values cannot support the tolerance, revise the supported tempo behavior or the architecture before UI implementation. Offline rendering is part of the same gate.
+The [JSFX variable reference](https://www.reaper.fm/sdk/js/vars.php) documents `tempo` as one read-only BPM value available in `@block` and `@sample`, and `beat_position` as the playback position as of the last `@block`. The milestone 1 probes on REAPER 7.82 for Linux measured the rest.
+
+- `tempo` is the tempo at the block's first sample. It does not change inside a block, including in `@sample`.
+- A gradual tempo marker ramps BPM linearly in time, not in beats.
+- REAPER does not split a block at a tempo marker.
+- `beat_position` matched the exact tempo map within 5e-13 beats.
+
+SeqCore therefore converts beats to samples with a tempo that changes linearly through the block. It takes the slope from the previous block only when that block advanced exactly as a linear ramp between the two block-start tempos would. Otherwise it holds the block-start tempo. On a continuous ramp, a ramp with edges on the beat, and a tempo step on the beat, every logged event met the one-sample target.
+
+**Known limit.** An event that follows a tempo marker inside the same block can be off by up to one block, because SeqCore learns the new tempo only at the next block. That is 23 ms at 1,024 samples and 44.1 kHz, and 5.8 ms at 256. It affects only markers placed off the step grid. A one-block lookahead reported to REAPER as plugin delay could remove it. That remains unproven and is not planned. Offline rendering still has to pass the same gate.
 
 ### Rules for each feature
 
@@ -327,9 +336,18 @@ All authoritative musical data saves inside the REAPER project through SeqCore's
 
 `phase_origin_beats` and the commit origin need a lossless encoding. The proposed encoding writes each finite IEEE-754 binary64 beat value as four unsigned 16-bit words, least-significant word first, then reassembles the same binary64 value on load. It normalizes negative zero to zero and rejects NaN and infinity. Each proposed word fits in a 32-bit slot. Do not quantize absolute beat positions to the step-control precision. This encoding stays proposed until the first save/load probe shows bit-exact round trips for negative origins, nonzero fractional origins and large valid project positions. The documented compact 32-bit storage form is not that proof. The same probe must save and reload the seed values 0 and 16,777,215 and show that both return unchanged. Do not treat the 32-bit storage form as proof that the seed bound survives.
 
-**Undo.** Each gesture produces one native REAPER undo point covering every affected engine, track, FX, routing and item change. Associate all commands in that gesture with a transaction ID. Begin the native undo operation before its first mutation, and close it only after a matching applied-revision acknowledgement and successful host-side updates. Queue consumption alone is insufficient. When REAPER restores engine state, invalidate pending command generations and publish a new snapshot before accepting another edit.
+**Undo.** Each gesture produces one native REAPER undo point covering every affected engine, track, FX, routing and item change. Associate all commands in that gesture with a transaction ID. Queue consumption alone is insufficient. When REAPER restores engine state, invalidate pending command generations and publish a new snapshot before accepting another edit.
 
-Milestone 1 still has to show that REAPER can close one native undo point after the audio thread acknowledges a command. The spec does not treat that behavior as known. Milestone 1 runs that test. Also test isolation from unrelated REAPER edits while an asynchronous gesture is pending. Do not keep an unbounded undo block open across bypass, a project switch, a closed window or a lost session. Define and test cancellation that rolls back partial host changes, resolves whether the engine transaction applied, and then restores the prior coherent state. While processing is unavailable, refuse new dependent edits instead of accepting unacknowledged changes.
+The milestone 1 probe on REAPER 7.82 fixed the mechanism. Each gesture runs these steps in order.
+
+1. Apply the host-side changes.
+2. Send the engine commands and wait for a matching applied-revision acknowledgement.
+3. Set SeqCore's hidden State revision parameter from Lua with `TrackFX_SetParam`.
+4. Create one undo point with `Undo_OnStateChangeEx2` for every affected state category.
+
+REAPER keeps the engine state it last read and reads `@serialize` again only after a host-side parameter change. Without step 3, REAPER creates no FX undo point and never restores the engine. A change made inside SeqCore, even with `sliderchange` from `@block`, does not count. Every undoable change therefore goes through a Lua command. SeqCore never changes authoritative state on its own. REAPER closes an undo block at the end of each deferred script callback, so a block cannot stay open from the first mutation until the acknowledgement. The State revision parameter carries no musical meaning. SeqCore ignores its value.
+
+With that mechanism, one native undo restored an acknowledged step, redo reapplied it, a pending toggle stayed separate from an unrelated rename, and one undo removed a step change and a new track together, stopped and playing. A user edit made after a gesture's host changes but before its undo point has not been tested. Neither have bypass, a project switch, a closed window or a lost session while a gesture is pending. Define and test cancellation that rolls back partial host changes, resolves whether the engine transaction applied, and then restores the prior coherent state. While processing is unavailable, refuse new dependent edits instead of accepting unacknowledged changes.
 
 Ctrl+Z must use REAPER's own undo. A separate Lua history does not meet that requirement. If native atomic undo cannot be demonstrated, stop feature implementation and revise the state ownership or transaction design. Document any proposed reduction in behavior before proceeding.
 
@@ -348,7 +366,7 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
    - First expected-output proof: calculate expected events outside REAPER from an explicit tempo map. Include a tempo ramp inside a 1,024-sample block at 44.1 kHz. Diff the logged events against that file. Assert that project feedback routing stays disabled, destination routing is correct and the audio return reaches the folder. Expand the fixture across the timing matrix only after this proof passes.
    - Latency proof: verify delay compensation with a known-latency instrument or test effect. Compare receiver MIDI timestamps, not instrument attack times. If the timing or routing proof fails, revise the architecture before adding UI work.
    - Memory-scope proof: measure usable named gmem size and whether two JSFX instances in one project or separate project tabs see the same values. Test duplicated FX. Only then define slot arbitration, the wire address map and simultaneous-session capacity. Confirm local `maxmem` capacity separately.
-   - Edit and undo proof: add one gmem command that toggles one step and one matching acknowledgement. The undo test is open until it passes. Show that native undo and redo restore the step after the audio thread has acknowledged the command. Repeat with an unrelated REAPER edit between them and with a host object created or changed in the same gesture. The save/load test uses the proposed four-word origin encoding and the seed values 0 and 16,777,215. Adopt that encoding only after the save/load test passes. Defer the 4,096-entry ring until sharing and native undo are proven.
+   - Edit and undo proof: add one gmem command that toggles one step and one matching acknowledgement. The undo test is open until it passes. Show that native undo and redo restore the step after the audio thread has acknowledged the command. Repeat with an unrelated REAPER edit between them and with a host object created or changed in the same gesture. These three passed on REAPER 7.82 for Linux. The save/load test uses the proposed four-word origin encoding and the seed values 0 and 16,777,215. Adopt that encoding only after the save/load test passes. Defer the 4,096-entry ring until sharing and native undo are proven.
    - Receiver and item-storage proof: verify RS5K volume, pan, bend and release behavior. Record receiver settings or links required. Confirm item extension metadata survives save/load and duplication at the maximum supported source-snapshot size.
    - Exit artifact: a feasibility report with host and dependency versions, event fixtures and diffs, routing and state observations, failures and resulting spec amendments. Before milestone 2, also test stopped transport, bypass, project switching, window closure and session recovery. Do not start milestone 2 with an unresolved gate.
 2. **Bridge and rack window.** The gmem ring and mirror, plus a ReaImGui window with the grid, mute and solo, and sample drop that creates tracks and RS5K.
@@ -381,11 +399,11 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 
 | Risk | Why it matters | Plan |
 | --- | --- | --- |
-| Native undo and asynchronous edits | Engine and host objects must restore as one operation | Blocking milestone 1 gate; revise the design if it fails |
+| Native undo and asynchronous edits | Engine and host objects must restore as one operation | Passed on REAPER 7.82 for Linux with a Lua-side revision parameter change before one undo point. Interleaved user edits, bypass and project switches remain open |
 | gmem sessions and publication | Stale commands or reused slots could edit another state or rack | Validate ownership, generations, acknowledgements and snapshots in milestone 1 |
 | Engine memory and bounded work | Pattern storage alone reserves 5,259,264 values; transactions and snapshots need additional capacity | Budget local and shared memory separately; preflight operations and bound audio-block work |
 | Routing and plugin latency | Feedback routing invalidates the intended delay-compensation behavior | Use a separate engine child and test routing and delay compensation in milestone 1 |
-| Tempo ramps and block timing | `tempo` is readable in `@block` and `@sample`, but the reference does not say how it moves inside a ramp | Log both in the first timing probe and test the one-sample target, or revise supported behavior |
+| Tempo ramps and block timing | REAPER reports one tempo per block and does not split blocks at tempo markers | Continue a verified ramp slope through each block. Accept up to one block of error after an off-grid tempo marker. Repeat on Windows and macOS |
 | MIDI source metadata | Ordinary emitted MIDI cannot recover generative source state | Verify persistent item metadata and make edited-MIDI conversion explicit |
 | Managed item mute | A user may unmute an owned item directly while Furrow is in Live mode | Milestone 4 gate. Show that a direct edit cannot play Live notes and committed notes together. The proof needs more than native mute |
 | Controller support and overlapping notes | Instruments differ; channel controllers cannot isolate overlapping voices | Use monophonic lanes, configured receiver mappings and explicit channel ownership |
@@ -406,3 +424,10 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 - Live and Items are mutually exclusive rack playback modes. Commit enters Items mode.
 - Native REAPER undo remains required. There is no automatic downgrade to Lua-only history.
 - Architecture feasibility precedes rack UI work. Exact protocol offsets, host transaction mechanics and tempo-ramp conversion require milestone 1 evidence before feature implementation.
+
+### Decisions (11 October 2026)
+
+- SeqCore continues the previous block's tempo slope only after a block that advanced as a linear ramp.
+- An event after an off-grid tempo marker inside the same block may be off by up to one block. Furrow accepts this instead of adding lookahead latency.
+- Native undo uses a Lua-side change to SeqCore's hidden State revision parameter, then one `Undo_OnStateChangeEx2` point, after the acknowledgement.
+- Every undoable change goes through a Lua command. SeqCore does not change authoritative state on its own.
