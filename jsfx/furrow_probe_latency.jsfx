@@ -1,0 +1,33 @@
+desc: Furrow probe latency
+tags: utility
+in_pin:left
+in_pin:right
+out_pin:left
+out_pin:right
+
+slider1:0<0,48000,1>Latency samples
+
+@init
+// Delays audio by the slider's sample count and reports that count to REAPER as plugin delay.
+SIZE = 65536;
+left = 0;
+right = SIZE;
+memset(left, 0, 2 * SIZE);
+pos = 0;
+
+@slider
+delay = floor(slider1 + 0.5);
+pdc_delay = delay;
+pdc_bot_ch = 0;
+pdc_top_ch = 2;
+pdc_midi = 0;
+
+@sample
+left[pos] = spl0;
+right[pos] = spl1;
+read = pos - delay;
+read < 0 ? read += SIZE;
+spl0 = left[read];
+spl1 = right[read];
+pos += 1;
+pos >= SIZE ? pos = 0;

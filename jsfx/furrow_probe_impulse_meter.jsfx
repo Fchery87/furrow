@@ -1,0 +1,46 @@
+desc: Furrow probe impulse meter
+tags: analysis
+in_pin:left
+in_pin:right
+out_pin:left
+out_pin:right
+
+options: gmem=FurrowProbeLatency
+
+@init
+// gmem[0] version, gmem[1] left impulse count, gmem[2] right impulse count, gmem[3] sample rate,
+// gmem[4] heartbeat. Project samples of left impulses start at gmem[1000], right at gmem[100000].
+// Counts reset when playback starts. The meter outputs silence.
+VERSION = 1;
+LEFT = 1000;
+RIGHT = 100000;
+MAX = 90000;
+was_playing = 0;
+
+@block
+playing = play_state == 1 || play_state == 5;
+playing && !was_playing ? (
+  gmem[1] = 0;
+  gmem[2] = 0;
+);
+was_playing = playing;
+block_sample = floor(play_position * srate + 0.5);
+i = 0;
+gmem[0] = VERSION;
+gmem[3] = srate;
+gmem[4] += 1;
+
+@sample
+playing ? (
+  abs(spl0) > 0.5 && gmem[1] < MAX ? (
+    gmem[LEFT + gmem[1]] = block_sample + i;
+    gmem[1] += 1;
+  );
+  abs(spl1) > 0.5 && gmem[2] < MAX ? (
+    gmem[RIGHT + gmem[2]] = block_sample + i;
+    gmem[2] += 1;
+  );
+);
+i += 1;
+spl0 = 0;
+spl1 = 0;
