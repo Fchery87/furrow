@@ -10,6 +10,7 @@ local ui = {}
 local CELL = 22
 local GAP = 3
 local NAME_WIDTH = 150
+local LENGTH_CHANGES = { -16, -1, 1, 16 }
 local BAR_HEIGHT = 84
 local GRID_OFFSET = 2 * CELL + NAME_WIDTH + 5 * GAP
 local DRAIN_SECONDS = 3
@@ -244,19 +245,22 @@ function ui.run(ImGui)
       end
     end
     ImGui.SameLine(ctx, 0, GAP * 6)
-    ImGui.Text(ctx, "Length")
-    ImGui.SameLine(ctx, 0, GAP * 2)
-    ImGui.SetNextItemWidth(ctx, 120)
     local now = reaper.time_precise()
     local shown = lane.length
     if length_shown and length_shown.slot == lane.slot and now < length_shown.until_time then
       shown = length_shown.value
     end
-    local changed, typed = ImGui.InputInt(ctx, "##length", shown, 1, 4, ImGui.InputTextFlags_EnterReturnsTrue)
-    if changed and c:processing() then
-      typed = math.max(1, math.min(wire.MAX_STEPS, typed))
-      length_shown = { slot = lane.slot, value = typed, until_time = now + 0.5 }
-      c:set_length(lane.slot, typed)
+    ImGui.Text(ctx, "Length " .. shown)
+    for _, change in ipairs(LENGTH_CHANGES) do
+      ImGui.SameLine(ctx, 0, GAP)
+      if ImGui.SmallButton(ctx, string.format("%+d##length%d", change, change)) and c:processing() then
+        local target = math.max(1, math.min(wire.MAX_STEPS, shown + change))
+        if target ~= shown then
+          length_shown = { slot = lane.slot, value = target, until_time = now + 0.5 }
+          c:set_length(lane.slot, target)
+          shown = target
+        end
+      end
     end
     local def = fields.list[edit_field]
     ImGui.Dummy(ctx, GRID_OFFSET - GAP * 3, BAR_HEIGHT)

@@ -17,3 +17,5 @@ python -m unittest test_seqcore test_rack
 
 - `test_seqcore.py` covers wire format 1, transactions, snapshots, playback timing, mute and solo, the full ring, pool exhaustion, undo and state format 1.
 - `test_rack.py` runs the coordinator, host and window code against a stub REAPER, with SeqCore underneath. The stub records calls. It does not prove REAPER honours them.
+
+`FakeImGui` in `test_rack.py` accepts any arguments. It cannot catch an assertion that real ReaImGui raises for a bad argument or flag, such as the one `InputInt` raises for the Enter-only flag. Run each new widget in REAPER before trusting it.
