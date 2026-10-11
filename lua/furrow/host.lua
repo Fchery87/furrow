@@ -1,0 +1,283 @@
+-- REAPER objects for a rack: the folder, the engine track, lane tracks with RS5K, MIDI
+-- sends and the lane-to-track links. Every function here runs on REAPER's UI thread.
+local wire = require("furrow.wire")
+
+local host = {}
+
+host.ENGINE_NAMES = { "JS:furrow_seqcore.jsfx", "JS:Furrow/furrow_seqcore.jsfx" }
+host.RS5K = "ReaSamplOmatic5000"
+host.LINKS_KEY = "P_EXT:Furrow"
+-- Product choice, not a measurement. Velocity 1 plays this far below velocity 127.
+host.MIN_VELOCITY_DB = -30
+
+function host.track_name(track)
+  local _, name = reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)
+  return name
+end
+
+function host.track_by_guid(proj, guid)
+  for i = 0, reaper.CountTracks(proj) - 1 do
+    local track = reaper.GetTrack(proj, i)
+    if reaper.GetTrackGUID(track) == guid then
+      return track
+    end
+  end
+  return nil
+end
+
+function host.engine_fx(track)
+  for fx = 0, reaper.TrackFX_GetCount(track) - 1 do
+    local _, name = reaper.TrackFX_GetFXName(track, fx, "")
+    if name:find("Furrow SeqCore", 1, true) then
+      return fx
+    end
+  end
+  return nil
+end
+
+-- Every SeqCore in proj, as { engine = track, fx = index, rack = parent folder or nil }.
+function host.find_racks(proj)
+  local racks = {}
+  for i = 0, reaper.CountTracks(proj) - 1 do
+    local track = reaper.GetTrack(proj, i)
+    local fx = host.engine_fx(track)
+    if fx then
+      racks[#racks + 1] = { engine = track, fx = fx, rack = reaper.GetParentTrack(track) }
+    end
+  end
+  return racks
+end
+
+-- The slots that some SeqCore in an open project reports. A slot outside this set has an
+-- owner that no longer exists, because SeqCore has no destructor to release it.
+function host.live_slots()
+  local live = {}
+  local p = 0
+  while true do
+    local proj = reaper.EnumProjects(p)
+    if not proj then
+      break
+    end
+    for i = 0, reaper.CountTracks(proj) - 1 do
+      local track = reaper.GetTrack(proj, i)
+      for fx = 0, reaper.TrackFX_GetCount(track) - 1 do
+        local _, name = reaper.TrackFX_GetFXName(track, fx, "")
+        if name:find("Furrow SeqCore", 1, true) then
+          local slot = math.floor(reaper.TrackFX_GetParam(track, fx, wire.PARAM_SLOT) + 0.5)
+          if slot >= 0 then
+            live[slot] = true
+          end
+        end
+      end
+    end
+    p = p + 1
+  end
+  return live
+end
+
+-- Index of the last track inside the folder, or the folder itself when it is empty.
+function host.last_child(folder)
+  local index = math.floor(reaper.GetMediaTrackInfo_Value(folder, "IP_TRACKNUMBER")) - 1
+  if reaper.GetMediaTrackInfo_Value(folder, "I_FOLDERDEPTH") < 1 then
+    return index
+  end
+  local depth = 1
+  local last = index
+  for i = index + 1, reaper.CountTracks(0) - 1 do
+    last = i
+    depth = depth + reaper.GetMediaTrackInfo_Value(reaper.GetTrack(0, i), "I_FOLDERDEPTH")
+    if depth <= 0 then
+      break
+    end
+  end
+  return last
+end
+
+-- Inserts a track as the folder's last child and moves the folder's closing depth onto it.
+function host.append_child(folder, name)
+  local last = host.last_child(folder)
+  local empty = last == math.floor(reaper.GetMediaTrackInfo_Value(folder, "IP_TRACKNUMBER")) - 1
+  local last_track = reaper.GetTrack(0, last)
+  local closing = empty and -1 or reaper.GetMediaTrackInfo_Value(last_track, "I_FOLDERDEPTH")
+  if not empty then
+    reaper.SetMediaTrackInfo_Value(last_track, "I_FOLDERDEPTH", 0)
+  end
+  reaper.InsertTrackAtIndex(last + 1, true)
+  local track = reaper.GetTrack(0, last + 1)
+  reaper.GetSetMediaTrackInfo_String(track, "P_NAME", name, true)
+  reaper.SetMediaTrackInfo_Value(track, "I_FOLDERDEPTH", closing)
+  return track
+end
+
+-- Deletes a track and gives its closing folder depth to the track above it.
+function host.delete_child(track)
+  local depth = reaper.GetMediaTrackInfo_Value(track, "I_FOLDERDEPTH")
+  local index = math.floor(reaper.GetMediaTrackInfo_Value(track, "IP_TRACKNUMBER")) - 1
+  if depth < 0 and index > 0 then
+    local above = reaper.GetTrack(0, index - 1)
+    reaper.SetMediaTrackInfo_Value(above, "I_FOLDERDEPTH", reaper.GetMediaTrackInfo_Value(above, "I_FOLDERDEPTH") + depth)
+  end
+  reaper.DeleteTrack(track)
+end
+
+function host.add_engine(track)
+  for _, name in ipairs(host.ENGINE_NAMES) do
+    local fx = reaper.TrackFX_AddByName(track, name, false, -1)
+    if fx >= 0 then
+      return fx
+    end
+  end
+  return nil
+end
+
+-- Creates the Rack folder and its Engine child below the selected track or at the end.
+-- Returns the rack, or nil and a message. The caller wraps it in one undo block.
+function host.create_rack()
+  local selected = reaper.GetSelectedTrack(0, 0)
+  local index = selected and host.last_child(selected) + 1 or reaper.CountTracks(0)
+  reaper.InsertTrackAtIndex(index, true)
+  local folder = reaper.GetTrack(0, index)
+  reaper.GetSetMediaTrackInfo_String(folder, "P_NAME", "Furrow Rack", true)
+  reaper.SetMediaTrackInfo_Value(folder, "I_FOLDERDEPTH", 1)
+  local engine = host.append_child(folder, "Furrow Engine")
+  reaper.SetMediaTrackInfo_Value(engine, "B_MAINSEND", 0)
+  local fx = host.add_engine(engine)
+  if not fx then
+    reaper.DeleteTrack(engine)
+    reaper.DeleteTrack(folder)
+    return nil, "REAPER could not load furrow_seqcore.jsfx. Copy it into the Effects folder."
+  end
+  return { engine = engine, fx = fx, rack = folder }
+end
+
+-- Lane links live on the rack track as "1" then one "lane <id> <track GUID>" line a lane.
+function host.read_links(rack)
+  local links = {}
+  if not rack then
+    return links
+  end
+  local _, text = reaper.GetSetMediaTrackInfo_String(rack, host.LINKS_KEY, "", false)
+  for id, guid in (text or ""):gmatch("lane (%d+) (%S+)") do
+    links[tonumber(id)] = guid
+  end
+  return links
+end
+
+function host.write_links(rack, links)
+  local ids = {}
+  for id in pairs(links) do
+    ids[#ids + 1] = id
+  end
+  table.sort(ids)
+  local lines = { "1" }
+  for _, id in ipairs(ids) do
+    lines[#lines + 1] = string.format("lane %d %s", id, links[id])
+  end
+  reaper.GetSetMediaTrackInfo_String(rack, host.LINKS_KEY, table.concat(lines, "\n"), true)
+end
+
+local function find_param(track, fx, prefix)
+  for i = 0, reaper.TrackFX_GetNumParams(track, fx) - 1 do
+    local _, name = reaper.TrackFX_GetParamName(track, fx, i, "")
+    if name:lower():sub(1, #prefix) == prefix then
+      return i
+    end
+  end
+  return nil
+end
+
+local function db_of(track, fx, param, normalized)
+  local _, text = reaper.TrackFX_FormatParamValueNormalized(track, fx, param, normalized, "")
+  if text:lower():find("inf", 1, true) then
+    return -math.huge
+  end
+  return tonumber(text:match("[-+]?%d+%.?%d*")) or -math.huge
+end
+
+-- RS5K showed +0.0 dB at 0.5 and -inf at 0. Search that range for the floor's position.
+local function min_velocity_position(track, fx, param, target)
+  local lo, hi = 0, 0.5
+  for _ = 1, 30 do
+    local mid = (lo + hi) / 2
+    if db_of(track, fx, param, mid) < target then
+      lo = mid
+    else
+      hi = mid
+    end
+  end
+  return hi
+end
+
+local function link(track, fx, param, cc)
+  local prefix = "param." .. param .. ".plink."
+  local keys = {
+    { "param." .. param .. ".mod.active", 1 },
+    { prefix .. "active", 1 },
+    { prefix .. "effect", -100 },
+    { prefix .. "midi_bus", 0 },
+    { prefix .. "midi_chan", 0 },
+    { prefix .. "midi_msg", 176 },
+    { prefix .. "midi_msg2", cc },
+    { prefix .. "scale", 1 },
+    { prefix .. "offset", 0 },
+  }
+  for _, kv in ipairs(keys) do
+    reaper.TrackFX_SetNamedConfigParm(track, fx, kv[1], tostring(kv[2]))
+  end
+end
+
+-- Configures RS5K by the instrument contract in the spec.
+function host.configure_rs5k(track, fx, file)
+  reaper.TrackFX_SetNamedConfigParm(track, fx, "FILE0", file)
+  reaper.TrackFX_SetNamedConfigParm(track, fx, "DONE", "")
+  local _, loaded = reaper.TrackFX_GetNamedConfigParm(track, fx, "FILE0")
+  if loaded ~= file then
+    return false, "RS5K did not load " .. file
+  end
+  local obey = find_param(track, fx, "obey note-offs")
+  local min_gain = find_param(track, fx, "gain for minimum velocity")
+  local volume = find_param(track, fx, "volume")
+  local pan = find_param(track, fx, "pan")
+  if not (obey and min_gain and volume and pan) then
+    return false, "RS5K is missing an expected parameter"
+  end
+  reaper.TrackFX_SetParamNormalized(track, fx, obey, 1)
+  reaper.TrackFX_SetParamNormalized(track, fx, min_gain, min_velocity_position(track, fx, min_gain, host.MIN_VELOCITY_DB))
+  link(track, fx, volume, 7)
+  link(track, fx, pan, 10)
+  return true
+end
+
+-- Route slot n is JSFX bus n // 16 and channel n % 16. The send maps it to channel 1 on
+-- bus 0 of the lane track. Field layout from the routing probe: low 5 bits source channel,
+-- next 5 destination channel, one-based buses at bit 14 and bit 22.
+function host.midi_flags(slot, dest_channel)
+  return (slot % 16 + 1) | (dest_channel << 5) | ((slot // 16 + 1) << 14) | (1 << 22)
+end
+
+function host.add_send(engine, track, slot)
+  local send = reaper.CreateTrackSend(engine, track)
+  reaper.SetTrackSendInfo_Value(engine, 0, send, "I_SRCCHAN", -1)
+  reaper.SetTrackSendInfo_Value(engine, 0, send, "I_MIDIFLAGS", host.midi_flags(slot, 1))
+  return send
+end
+
+-- Creates a sample lane's track, RS5K and send. Returns the track, or nil and a message
+-- after removing whatever it created.
+function host.create_sample_lane(rack, engine, file, slot)
+  local name = file:match("([^/\\]+)$"):gsub("%.[^.]*$", "")
+  local track = host.append_child(rack, name)
+  local fx = reaper.TrackFX_AddByName(track, host.RS5K, false, -1)
+  local ok, err = fx >= 0, "REAPER could not add RS5K"
+  if ok then
+    ok, err = host.configure_rs5k(track, fx, file)
+  end
+  if not ok then
+    host.delete_child(track)
+    return nil, err
+  end
+  host.add_send(engine, track, slot)
+  return track
+end
+
+return host

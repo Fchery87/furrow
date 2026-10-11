@@ -1,0 +1,28 @@
+desc: Furrow test gmem bridge
+in_pin: none
+out_pin: none
+
+options: gmem=Furrow maxmem=2097152
+
+@init
+// Test only. The host writes a request into local memory and runs one block.
+// mem[0] is 1 to copy mem[3...] into gmem[mem[1]...], or 2 to copy gmem into mem[3...].
+// mem[2] is the count.
+
+@block
+mem = 0;
+mem[0] == 1 ? (
+  i = 0;
+  loop(mem[2],
+    gmem[mem[1] + i] = mem[3 + i];
+    i += 1;
+  );
+);
+mem[0] == 2 ? (
+  i = 0;
+  loop(mem[2],
+    mem[3 + i] = gmem[mem[1] + i];
+    i += 1;
+  );
+);
+mem[0] = 0;
