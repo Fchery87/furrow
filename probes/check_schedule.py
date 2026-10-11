@@ -42,6 +42,12 @@ class ScheduleTest(unittest.TestCase):
         got = schedule.seconds_at(2.0, [(0.0, 100.0), (4.0, 140.0)])
         self.assertAlmostEqual(got, 6.0 * math.log(1.2), places=9)
 
+    def test_two_tempo_points_at_one_beat(self):
+        # The zero-length span takes no time. 60 BPM then holds, so beat 1 is 1 second.
+        points = [(0.0, 120.0), (0.0, 60.0)]
+        self.assertEqual(schedule.seconds_at(0.0, points), 0.0)
+        self.assertAlmostEqual(schedule.seconds_at(1.0, points), 1.0, places=9)
+
     def test_pattern_counts_and_first_pair(self):
         lines = schedule.schedule(
             ROOT / "pattern-4x16.txt",
