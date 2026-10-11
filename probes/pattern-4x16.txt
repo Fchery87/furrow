@@ -1,7 +1,7 @@
 # Furrow first timing pattern.
 # Four lanes, sixteen steps, rate 1/16, direction forward, no swing, no shift.
 # Each lane uses one internal MIDI bus and one zero-based channel.
-# The send must remap that pair onto destination bus 0 and destination channel 0.
+# Each send keeps the lane's channel and remaps the bus onto destination bus 0.
 # An off step emits nothing. Gate is one half of a step. Velocity is 100.
 
 lanes 4

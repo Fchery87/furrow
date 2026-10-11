@@ -2,7 +2,7 @@
 
 Oct 10, 2026 · No Chaserz
 
-**Status.** Revised after architecture review on 10 October 2026. The document is ready for feasibility probes. REAPER-dependent behavior remains unverified. The rack, page allocator and item bridge must wait for their stated gates. No implementation exists yet.
+**Status.** Revised after architecture review on 10 October 2026. The document is ready for feasibility probes. REAPER-dependent behavior remains unverified. The rack, page allocator and item bridge must wait for their stated gates. The first routing and timing probe exists in `jsfx/`, `lua/` and `probes/`. It has not run in REAPER.
 
 ## Overview
 
