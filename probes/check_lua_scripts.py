@@ -472,7 +472,8 @@ class StubLifecycleReaper(StubUndoReaper):
 
 
 class StubRS5KReaper(StubReaper):
-    """RS5K with a driver and meter. Raw controllers do nothing, linked or learned ones move parameters."""
+    """RS5K with a driver and meter. Velocity scales level only below the default minimum-velocity gain.
+    Raw controllers do nothing, linked or learned ones move parameters."""
 
     NAMES = ["Volume", "Pan", "Gain for minimum velocity", "Obey note-offs"]
 
@@ -482,7 +483,7 @@ class StubRS5KReaper(StubReaper):
         self.clock = 0
         self.deferred = None
         self.config = {}
-        self.params = [0.5, 0.5, 0.0, 0.0]
+        self.params = [0.5, 0.5, 0.5, 0.0]
         self.last_seq = 0
         self.note = False
         self.velocity = 0
@@ -526,7 +527,8 @@ class StubRS5KReaper(StubReaper):
                 self.measuring = True
                 for i in (21, 22, 23, 24):
                     self.gmem[i] = 0
-            level = 0.5 * self.velocity / 127 * self.params[0] * 2 if self.note else 0
+            gain = 1 if self.params[2] >= 0.5 else self.velocity / 127
+            level = 0.5 * gain * self.params[0] * 2 if self.note else 0
             left, right = level * (1 - self.params[1]), level * self.params[1]
             hz = 1000 * 2 ** ((self.bend - 8192) / 8192 * 2 / 12)
             self.gmem[21] += left * left * 1024
@@ -735,18 +737,30 @@ class RS5KTest(unittest.TestCase):
             results = (Path(directory) / "furrow-rs5k-results.txt").read_text().splitlines()
             wav = (Path(directory) / "furrow-rs5k-sine-1k.wav").read_bytes()
         self.assertEqual([line for line in results if line.startswith("FAIL")], [])
-        self.assertEqual(results[-1], "31 results, 0 failures")
+        self.assertEqual(results[-1], "38 results, 0 failures")
         self.assertEqual(len(wav), 44 + 44100 * 3 * 2)
         for line in (
             "RESULT baseline pitch Hz = 1000.0000",
-            "RESULT velocity 64, level change dB = -5.9525",
+            "RESULT note-off, default settings, level change dB = 0.0000",
+            "RESULT velocity 64, level change dB = 0.0000",
+            "RESULT lowest minimum-velocity gain, velocity 64, level change dB = -5.9525",
             "RESULT raw CC 7 = 0, level change dB = 0.0000",
             "RESULT pitch bend maximum, pitch change semitones = 1.9998",
             "RESULT note-off with Obey note-offs, level change dB = -inf",
             "RESULT linked CC 10 = 0, Pan parameter reads = 0.0000",
+            "RESULT Volume parameter after the link is removed = 0.7874",
             "RESULT learned CC 10 = 0, Pan parameter reads = 0.0000",
         ):
             self.assertIn(line, results)
+
+    def test_rs5k_script_fails_when_a_voice_is_still_sounding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubRS5KReaper(str(Path(directory) / "rs5k.rpp"))
+            stub.TrackFX_SetParamNormalized = lambda track, fx, index, value: None
+            run(stub, "furrow_probe_rs5k.lua")
+            stub.drive()
+            results = (Path(directory) / "furrow-rs5k-results.txt").read_text().splitlines()
+        self.assertIn("FAIL silent before the note-on  left 0.250000, right 0.250000", results)
 
 
 @unittest.skipIf(lua54 is None, "lupa is not installed")
