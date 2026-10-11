@@ -1,4 +1,4 @@
-First routing and timing proof on REAPER 7.82, Linux x86_64, captured on 11 October 2026. The first two captures come from the engine at commit 6944845, which held one tempo per block. The two `-extrapolate` captures come from the engine at commit df58b67, which extrapolates the tempo change inside each block.
+First routing and timing proof on REAPER 7.82, Linux x86_64, captured on 11 October 2026. The first two captures come from the engine at commit 6944845, which held one tempo per block. The two `-extrapolate` captures come from the engine at commit df58b67, which extrapolates the tempo change inside each block. The `ramp-edge`, `step-on-beat` and `step-off-grid` captures come from the engine in PR #3, which extrapolates only after a block that advanced as a ramp.
 
 **Host.** REAPER v7.82 (4 October 2026) on Linux 7.0.0-38-generic. `reaper.ini` saved 44,100 Hz and a 1,024-sample block with `linux_audio_mode=2`. The block tempo logs confirm the block size. In both runs, every logged block was 1,024 samples. The probe ran without ReaImGui or SWS.
 
@@ -50,3 +50,17 @@ The engine now takes the previous block's tempo change as the slope for the curr
 The ramp run logged the same tempo map as the first run, 100 + 20 BPM per second within 5e-11, in 369 blocks of 1,024 samples. `tempo` again never changed inside a block.
 
 **What this does not cover.** The pattern puts no events in the block where the ramp ends, because the ramp ends at 2.0 s and the last event is at 1.95 s. At a ramp edge, the previous block's change is the wrong guess for one block. A Python copy of the engine stayed within 1 sample on synthetic ramps that start and end mid-pattern. A REAPER capture of those cases is still open. The rest of the timing matrix is also open. That covers 48 and 96 kHz, 64 and 256-sample blocks, tempo steps, 3/4 time, seeks, loops and offline render.
+
+## Third run, ramp edges and tempo steps
+
+The engine in this run treats a position error below one block's beats as tempo drift, not a seek. It continues the last block's tempo change only if that block advanced exactly as a time-linear ramp would. `probes/make_tempo_project.py` wrote each tempo map into the project.
+
+| Case | Tempo map | Result |
+| --- | --- | --- |
+| `ramp-edge` | 100 BPM, ramp to 200 between beats 1 and 3, then 200 | Pass. 38 of 38 on the exact expected sample |
+| `step-on-beat` | 120 BPM, step to 60 on beat 2 | Pass. 38 of 38 within 1 sample. Four note-offs are 1 sample late |
+| `step-off-grid` | 120 BPM, step to 60 at beat 2.46875 | Fail. 36 of 38 within 1 sample. The step 10 note-ons are 689 samples early |
+
+**Host behavior.** REAPER kept every block at 1,024 samples, including the blocks that contain a ramp edge or a tempo step. It does not split a block at a tempo marker. `beat_position` matched the exact tempo map within 5e-13 beats in all three runs. The ramp-edge block tempos matched the time-linear map within 5e-11 BPM.
+
+**The step-off-grid miss.** The step falls at sample 54,436, inside the block that starts at 54,272. The step 10 note-ons follow it in the same block. The engine reads only that block's starting tempo, 120 BPM, so it places them as if the step had not happened. A Python copy of the engine predicted the same 689 samples before the run. No engine that reads one tempo per block can place an event that follows a tempo change inside the same block. The error is at most one block, 23 ms at 1,024 samples and 5.8 ms at 256. Removing it would need one block of lookahead, reported to REAPER as plugin delay, which has not been tested.
