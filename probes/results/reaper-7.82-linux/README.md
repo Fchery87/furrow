@@ -1,8 +1,8 @@
-First routing and timing proof on REAPER 7.82, Linux x86_64, captured on 11 October 2026. These captures come from the engine at commit 6944845, which held one tempo per block.
+First routing and timing proof on REAPER 7.82, Linux x86_64, captured on 11 October 2026. The first two captures come from the engine at commit 6944845, which held one tempo per block. The two `-extrapolate` captures come from the engine at commit a9572b8, which extrapolates the tempo change inside each block.
 
 **Host.** REAPER v7.82 (4 October 2026) on Linux 7.0.0-38-generic. `reaper.ini` saved 44,100 Hz and a 1,024-sample block with `linux_audio_mode=2`. The block tempo logs confirm the block size. In both runs, every logged block was 1,024 samples. The probe ran without ReaImGui or SWS.
 
-**Files.** `constant-120-events.txt` and `ramp-44100-1024-events.txt` are the receiver captures that `lua/furrow_probe_dump.lua` wrote. `ramp-44100-1024-tempo-block.txt` is the block tempo log from the ramp run. The sample tempo log is 7 MB, so it stays out of the repository. Its findings are below.
+**Files.** The `-events.txt` files are receiver captures that `lua/furrow_probe_dump.lua` wrote. The `-tempo-block.txt` files are the block tempo logs from the two ramp runs. The sample tempo log is 7 MB, so it stays out of the repository. Its findings are below.
 
 ## Results
 
@@ -36,4 +36,17 @@ The engine assumes the block-start tempo holds for the whole block. During a ris
 
 For the worst event, at offset 836 and about 139 BPM, a constant-tempo assumption predicts 1.14 samples of drift before rounding. The rows group events by unique offset and error, so they total 18 rather than 38.
 
-The spec's success criterion is one sample. The gate does not pass with this engine. Spec line 268 says to revise the supported tempo behavior or the architecture before UI work.
+The spec's success criterion is one sample. The gate did not pass with this engine.
+
+## Second run, extrapolating engine
+
+The engine now takes the previous block's tempo change as the slope for the current block and places each event on the resulting curve. A start, stop or jump resets the slope to zero.
+
+| Case | File | Result |
+| --- | --- | --- |
+| Constant 120 BPM | `constant-120-extrapolate-events.txt` | Pass. 38 of 38 within 1 sample. Identical to the first constant capture |
+| Ramp 100 to 140 BPM | `ramp-44100-1024-extrapolate-events.txt` | Pass. 38 of 38 on the exact expected sample |
+
+The ramp run logged the same tempo map as the first run, 100 + 20 BPM per second within 5e-11, in 369 blocks of 1,024 samples. `tempo` again never changed inside a block.
+
+**What this does not cover.** The pattern puts no events in the block where the ramp ends, because the ramp ends at 2.0 s and the last event is at 1.95 s. At a ramp edge, the previous block's change is the wrong guess for one block. A Python copy of the engine stayed within 1 sample on synthetic ramps that start and end mid-pattern. A REAPER capture of those cases is still open. The rest of the timing matrix is also open. That covers 48 and 96 kHz, 64 and 256-sample blocks, tempo steps, 3/4 time, seeks, loops and offline render.
