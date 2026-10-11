@@ -471,6 +471,124 @@ class StubLifecycleReaper(StubUndoReaper):
         self.playing = False
 
 
+class StubRS5KReaper(StubReaper):
+    """RS5K with a driver and meter. Raw controllers do nothing, linked or learned ones move parameters."""
+
+    NAMES = ["Volume", "Pan", "Gain for minimum velocity", "Obey note-offs"]
+
+    def __init__(self, project):
+        super().__init__(project=project)
+        self.gmem = {}
+        self.clock = 0
+        self.deferred = None
+        self.config = {}
+        self.params = [0.5, 0.5, 0.0, 0.0]
+        self.last_seq = 0
+        self.note = False
+        self.velocity = 0
+        self.bend = 8192
+        self.measuring = False
+
+    def table(self, lua):
+        api = super().table(lua)
+        for name in ("gmem_write", "defer", "time_precise", "TrackFX_SetNamedConfigParm", "TrackFX_GetNamedConfigParm",
+                     "TrackFX_GetNumParams", "TrackFX_GetParamName", "TrackFX_GetFormattedParamValue",
+                     "TrackFX_GetParamNormalized", "TrackFX_SetParamNormalized", "TrackFX_GetFXName",
+                     "Undo_OnStateChangeEx2", "EnumProjects"):
+            api[name] = getattr(self, name)
+        return api
+
+    def mapped(self, param, cc, value):
+        linked = self.config.get(f"param.{param}.plink.active") == "1" and self.config.get(f"param.{param}.plink.midi_msg2") == str(cc)
+        learned = self.config.get(f"param.{param}.learn.midi1") == "176" and self.config.get(f"param.{param}.learn.midi2") == str(cc)
+        if linked or learned:
+            self.params[param] = value / 127
+
+    def block(self):
+        seq = self.gmem.get(2, 0)
+        if seq != self.last_seq:
+            status, data1, data2 = (int(self.gmem.get(i, 0)) for i in (3, 4, 5))
+            if status == 0x90:
+                self.note, self.velocity = True, data2
+            elif status == 0x80 and self.params[3] >= 0.5:
+                self.note = False
+            elif status == 0xB0 and data1 == 7:
+                self.mapped(0, 7, data2)
+            elif status == 0xB0 and data1 == 10:
+                self.mapped(1, 10, data2)
+            elif status == 0xE0:
+                self.bend = data2 * 128 + data1
+            self.last_seq = seq
+            self.gmem[6] = seq
+        self.gmem[25] = self.gmem.get(25, 0) + 1
+        if self.gmem.get(20, 0) == 1:
+            if not self.measuring:
+                self.measuring = True
+                for i in (21, 22, 23, 24):
+                    self.gmem[i] = 0
+            level = 0.5 * self.velocity / 127 * self.params[0] * 2 if self.note else 0
+            left, right = level * (1 - self.params[1]), level * self.params[1]
+            hz = 1000 * 2 ** ((self.bend - 8192) / 8192 * 2 / 12)
+            self.gmem[21] += left * left * 1024
+            self.gmem[22] += right * right * 1024
+            self.gmem[23] += 2 * hz * 1024 / 44100 if self.note else 0
+            self.gmem[24] += 1024
+        else:
+            self.measuring = False
+
+    def drive(self, limit=200000):
+        while self.deferred is not None and limit > 0:
+            callback, self.deferred = self.deferred, None
+            self.block()
+            self.clock += 1
+            callback()
+            limit -= 1
+
+    def gmem_write(self, index, value):
+        self.gmem[int(index)] = value
+
+    def defer(self, callback):
+        self.deferred = callback
+
+    def time_precise(self):
+        return self.clock * 1024 / 44100
+
+    def EnumProjects(self, index, buffer):
+        return None, self.project
+
+    def TrackFX_AddByName(self, track, name, record, instantiate):
+        track["fx"].append(name)
+        return len(track["fx"]) - 1
+
+    def TrackFX_SetNamedConfigParm(self, track, fx, key, value):
+        self.config[key] = value
+        return True
+
+    def TrackFX_GetNamedConfigParm(self, track, fx, key):
+        return key in self.config, self.config.get(key, "")
+
+    def TrackFX_GetNumParams(self, track, fx):
+        return len(self.NAMES)
+
+    def TrackFX_GetParamName(self, track, fx, index, buffer):
+        return True, self.NAMES[int(index)]
+
+    def TrackFX_GetFormattedParamValue(self, track, fx, index, buffer):
+        return True, "%.2f" % self.params[int(index)]
+
+    def TrackFX_GetParamNormalized(self, track, fx, index):
+        return self.params[int(index)]
+
+    def TrackFX_SetParamNormalized(self, track, fx, index, value):
+        self.params[int(index)] = value
+
+    def TrackFX_GetFXName(self, track, fx, buffer):
+        return True, "VSTi: ReaSamplOmatic5000 (Cockos)"
+
+    def Undo_OnStateChangeEx2(self, project, description, states, track):
+        pass
+
+
 class StubMemoryReaper:
     """Project tabs whose memory JSFX instances run once per tick.
 
@@ -605,6 +723,30 @@ class StubMemoryReaper:
 
     def GetResourcePath(self):
         return self.directory
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class RS5KTest(unittest.TestCase):
+    def test_rs5k_script_measures_every_case(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubRS5KReaper(str(Path(directory) / "rs5k.rpp"))
+            run(stub, "furrow_probe_rs5k.lua")
+            stub.drive()
+            results = (Path(directory) / "furrow-rs5k-results.txt").read_text().splitlines()
+            wav = (Path(directory) / "furrow-rs5k-sine-1k.wav").read_bytes()
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
+        self.assertEqual(results[-1], "31 results, 0 failures")
+        self.assertEqual(len(wav), 44 + 44100 * 3 * 2)
+        for line in (
+            "RESULT baseline pitch Hz = 1000.0000",
+            "RESULT velocity 64, level change dB = -5.9525",
+            "RESULT raw CC 7 = 0, level change dB = 0.0000",
+            "RESULT pitch bend maximum, pitch change semitones = 1.9998",
+            "RESULT note-off with Obey note-offs, level change dB = -inf",
+            "RESULT linked CC 10 = 0, Pan parameter reads = 0.0000",
+            "RESULT learned CC 10 = 0, Pan parameter reads = 0.0000",
+        ):
+            self.assertIn(line, results)
 
 
 @unittest.skipIf(lua54 is None, "lupa is not installed")

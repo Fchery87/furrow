@@ -1,0 +1,24 @@
+desc: Furrow probe MIDI driver
+tags: midi
+in_pin:left
+in_pin:right
+out_pin:left
+out_pin:right
+
+options: gmem=FurrowProbeRS5K
+
+@init
+// Lua writes gmem[3..5] as the three MIDI bytes, then gmem[2] as a new sequence.
+// The driver sends that message once at the start of its next block and writes gmem[6].
+// A message written before this instance loaded is not sent.
+last_seq = gmem[2];
+
+@block
+gmem[2] !== last_seq ? (
+  midisend(0, gmem[3], gmem[4], gmem[5]);
+  last_seq = gmem[2];
+  gmem[6] = last_seq;
+);
+while (midirecv(offset, msg1, msg2, msg3)) (
+  midisend(offset, msg1, msg2, msg3);
+);
