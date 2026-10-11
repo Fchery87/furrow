@@ -10,14 +10,17 @@ The first proof has two parts. Python checks the schedule. REAPER has to check t
 6. For a tempo case, write its project from a saved probe project instead of placing markers by hand. Run `python3 probes/make_tempo_project.py probes/cases/ramp-edge-44100-1024.txt constant.RPP ramp-edge.RPP`, then open the new project. The same works for `step-on-beat-44100-1024.txt` and `step-off-grid-44100-1024.txt`.
 7. Repeat with the ramp case. `furrow-capture-tempo-block.txt` holds the tempo read in `@block`. `furrow-capture-tempo-sample.txt` holds the tempo read in `@sample`, one line per played sample.
 
-**Undo probe.** `lua/furrow_probe_undo.lua` tests the milestone 1 edit and undo gate. Open one project built by the layout script, with no other probe project open, because every engine instance shares the `FurrowProbeEngine` gmem. Run the script from the action list and leave REAPER alone until the console prints the failure count. It runs each test while stopped and again while playing.
+**Undo probe.** `lua/furrow_probe_undo.lua` tests the milestone 1 edit and undo gate. Open one project built by the layout script, with no other probe project open, because every engine instance shares the `FurrowProbeEngine` gmem. Run the script from the action list and leave REAPER alone until the console prints the failure count. It runs every test while stopped and again while playing.
 
-- **A.** Toggle a step, wait for the engine's acknowledgement, then create an FX undo point. Undo and redo must restore the step.
-- **B.** Toggle a step that the engine applies 20 blocks later, rename the folder track with its own undo point while the toggle is pending, then create the toggle's undo point. The first undo must restore only the step, and the second only the name.
-- **C1.** Toggle a step and add a track, wait for the acknowledgement, then create one undo point for both. One undo must remove both.
-- **C2.** The same gesture inside one `Undo_BeginBlock2` and `Undo_EndBlock2` pair that stays open across deferred callbacks until the acknowledgement.
+Each gesture marks the engine state as changed before its undo point, in one of three ways. `none` adds no mark. `lua` sets the engine's hidden State revision parameter after the acknowledgement. `engine` has the engine bump that parameter with `sliderchange` when it applies the command.
 
-The engine saves its steps through `@serialize` and counts each restore in `gmem[8]`. The script writes `furrow-undo-results.txt` next to the project. `probes/check_lua_scripts.py` runs it against a simulated REAPER whose undo restores everything. That shows the script works. It does not show what REAPER does.
+- **A.** Toggle a step, wait for the acknowledgement, mark, then create an FX undo point. Undo and redo must restore the step.
+- **B.** Toggle a step that the engine applies 20 blocks later, and rename the folder track with its own undo point while the toggle is pending. The first undo must restore only the step, and the second only the name.
+- **C.** Toggle a step and add a track, wait for the acknowledgement, mark, then create one undo point for both. One undo must remove both.
+
+The first REAPER 7.82 run had no mark. REAPER created no FX-only undo point, never asked the engine to reload its state, and closed an undo block left open across deferred callbacks as "ReaScript: Run". See `probes/results/reaper-7.82-linux/undo-v1-results.txt`.
+
+The engine saves its steps through `@serialize` and counts each restore in `gmem[8]`. The script writes `furrow-undo-results.txt` next to the project. `probes/check_lua_scripts.py` runs it against a simulated REAPER, once with an undo that rereads engine state and once with an undo that rereads it only when a parameter changes. That shows the script reports each case. It does not show what REAPER does.
 
 **gmem layout, version 3.** Named gmem `FurrowProbeReceiver`. `gmem[0]` is the layout version. `gmem[2]` and `gmem[3]` count block and sample tempo entries. `gmem[4]` is the project sample of the first sample tempo. `gmem[10 + slot]` counts slot events. Block entries start at 1,000, three numbers each. Project sample, tempo and `beat_position`. Sample tempos start at 200,000. Slot events start at 2,000,000 + slot × 500,000, nine numbers each. Sample, order, lane, bus, destination bus, channel, note, velocity, kind. Kind 1 is a note-on. Kind 0 is a note-off. Sample positions come from `play_position` in each block, so they count from project time zero.
 

@@ -106,14 +106,23 @@ def run(stub, script):
 
 
 class StubUndoReaper(StubReaper):
-    """An engine that applies mailbox commands once per tick, and an undo that snapshots everything."""
+    """An engine that applies mailbox commands once per tick, and a snapshot undo.
 
-    def __init__(self, project, steps, engine_runs=True, restores_fx=True):
+    fx_tracking "always" rereads the engine state for every snapshot. "params" keeps the
+    state REAPER last read and rereads it only when the State revision parameter changes,
+    which is the behavior the REAPER 7.82 run pointed to. An FX-only undo point is then
+    created only when that state differs from the last snapshot.
+    """
+
+    def __init__(self, project, steps, engine_runs=True, restores_fx=True, fx_tracking="always"):
         super().__init__(project=project)
         for name in ("Furrow Probe Folder", "Furrow Probe Engine", "Furrow Probe Lane 1"):
             self.InsertTrackAtIndex(len(self.tracks), True)
             self.tracks[-1]["name"] = name
         self.steps = list(steps)
+        self.cached_steps = list(steps)
+        self.revision = 0
+        self.fx_tracking = fx_tracking
         self.engine_runs = engine_runs
         self.restores_fx = restores_fx
         self.gmem = {0: 1}
@@ -127,21 +136,39 @@ class StubUndoReaper(StubReaper):
 
     def table(self, lua):
         api = super().table(lua)
-        for name in ("GetTrackGUID", "gmem_write", "defer", "time_precise", "Undo_OnStateChangeEx2", "Undo_BeginBlock2",
+        for name in ("TrackFX_GetParam", "TrackFX_SetParam", "GetTrackGUID", "gmem_write", "defer", "time_precise", "Undo_OnStateChangeEx2", "Undo_BeginBlock2",
                      "Undo_EndBlock2", "Undo_DoUndo2", "Undo_DoRedo2", "Undo_CanUndo2", "OnPlayButton",
                      "OnStopButton"):
             api[name] = getattr(self, name)
         return api
 
+    def fx_state(self):
+        if self.fx_tracking == "always":
+            self.cached_steps = list(self.steps)
+        return (tuple(self.cached_steps), self.revision)
+
     def snapshot(self):
-        return {"steps": list(self.steps), "tracks": [dict(track) for track in self.tracks]}
+        return {"fx": self.fx_state(), "tracks": [dict(track) for track in self.tracks]}
 
     def restore(self, state):
-        if self.restores_fx:
-            self.steps = list(state["steps"])
+        if self.restores_fx and state["fx"] != self.fx_state():
+            self.steps = list(state["fx"][0])
+            self.cached_steps = list(self.steps)
+            self.revision = state["fx"][1]
             self.gmem[7] = self.gmem.get(7, 0) + 1
             self.gmem[8] = self.gmem.get(8, 0) + 1
         self.tracks[:] = [dict(track) for track in state["tracks"]]
+
+    def bump_revision(self, value):
+        self.revision = value
+        self.cached_steps = list(self.steps)
+
+    def TrackFX_GetParam(self, track, fx, param):
+        return float(self.revision), 0.0, 16777215.0
+
+    def TrackFX_SetParam(self, track, fx, param, value):
+        if track["name"] == "Furrow Probe Engine" and int(param) == 1:
+            self.bump_revision(int(value))
 
     def engine_block(self):
         if not self.engine_runs:
@@ -155,6 +182,8 @@ class StubUndoReaper(StubReaper):
             if self.gmem[1] >= self.apply_at:
                 index = int(self.gmem.get(4, 0))
                 self.steps[index] = 1 - self.steps[index]
+                if self.gmem.get(9, 0) == 1:
+                    self.bump_revision(self.revision + 1)
                 self.last_seq = seq
                 self.gmem[6] = seq
                 self.gmem[7] = self.gmem.get(7, 0) + 1
@@ -192,6 +221,8 @@ class StubUndoReaper(StubReaper):
         self.cursor += 1
 
     def Undo_OnStateChangeEx2(self, project, description, states, track):
+        if int(states) == 2 and self.snapshot()["fx"] == self.history[self.cursor][1]["fx"]:
+            return
         self.push(description)
 
     def Undo_BeginBlock2(self, project):
@@ -307,19 +338,22 @@ class UndoTest(unittest.TestCase):
 
     def test_an_undo_that_restores_engine_state_passes_every_check(self):
         stub, results = self.run_undo()
-        failed = [line for line in results if line.startswith("FAIL")]
-        self.assertEqual(failed, [])
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
         self.assertEqual(results[-1], "0 failures")
-        self.assertEqual(sum(line.startswith("PASS") for line in results), 47)
         self.assertEqual([track["name"] for track in stub.tracks],
                          ["Furrow Probe Folder", "Furrow Probe Engine", "Furrow Probe Lane 1"])
+
+    def test_cached_engine_state_fails_only_the_unmarked_gesture(self):
+        stub, results = self.run_undo(fx_tracking="params")
+        failed = [line.split("  ")[0] for line in results if line.startswith("FAIL")]
+        self.assertEqual(failed, ["FAIL stopped A-none undo point", "FAIL playing A-none undo point"])
 
     def test_an_undo_that_skips_engine_state_fails_the_step_checks(self):
         stub, results = self.run_undo(restores_fx=False)
         failed = [line.split("  ")[0] for line in results if line.startswith("FAIL")]
-        self.assertIn("FAIL stopped A undo restores step", failed)
-        self.assertIn("FAIL stopped C2 one undo restores step and track", failed)
-        self.assertNotIn("FAIL stopped B first undo keeps the rename", failed)
+        self.assertIn("FAIL stopped A-lua undo restores step", failed)
+        self.assertIn("FAIL stopped C-engine one undo restores step and track", failed)
+        self.assertNotIn("FAIL stopped B-lua first undo keeps the rename", failed)
 
     def test_an_engine_that_never_runs_stops_at_the_first_wait(self):
         stub, results = self.run_undo(engine_runs=False)
