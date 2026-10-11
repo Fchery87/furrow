@@ -1,0 +1,78 @@
+== RS5K parameters
+RESULT RS5K name = furrow-rs5k-sine-1k (RS5K)
+PARAM 0 Volume = 0.5000 (+0.0)
+PARAM 1 Pan = 0.5000 (0.50)
+PARAM 2 Gain for minimum velocity = 0.5000 (+0.0)
+PARAM 3 Note range start = 0.0000 (0)
+PARAM 4 Note range end = 1.0000 (127)
+PARAM 5 Pitch for start note = 0.0688 (-69)
+PARAM 6 Pitch for end note = 0.8687 (59)
+PARAM 7 MIDI channel = 0.0000 (0)
+PARAM 8 Max voices = 0.1111 (8)
+PARAM 9 Attack = 0.0005 (1.00)
+PARAM 10 Release = 0.0005 (1)
+PARAM 11 Obey note-offs = 0.0000 (0)
+PARAM 12 Loop (requires note-offs) = 0.0000 (0)
+PARAM 13 Sample start offset = 0.0000 (0.000)
+PARAM 14 Sample end offset = 1.0000 (1.000)
+PARAM 15 Pitch adjust = 0.5000 (0.00)
+PARAM 16 Pitchbend range = 0.1667 (2.0)
+PARAM 17 Minimum velocity = 0.0079 (1)
+PARAM 18 Maximum velocity = 1.0000 (127)
+PARAM 19 Probability of hitting = 1.0000 (100)
+PARAM 20 Round-robin mode = 0.0000 (0)
+PARAM 21 Filter played notes = 0.0000 (0)
+PARAM 22 Crossfade loop length = 0.0000 (0.00)
+PARAM 23 Loop start offset = 0.0000 (0.00)
+PARAM 24 Decay = 0.0160 (250)
+PARAM 25 Sustain = 0.5000 (+0.0)
+PARAM 26 Release (note-off) = 0.0003 (1)
+PARAM 27 Use note-off release override = 0.0000 (0)
+PARAM 28 Legacy voice re-use mode = 0.0000 (0)
+PARAM 29 Portamento = 0.0000 (0)
+PARAM 30 Bypass = 0.0000 (normal)
+PARAM 31 Wet = 1.0000 (100)
+PARAM 32 Delta = 0.0000 (normal)
+== note-off, default settings
+RESULT note-off, default settings, level change dB = 0.0003
+RESULT note-off after Obey note-offs is turned on, level = 0.0000
+== Obey note-offs on
+RESULT baseline held level, left = 0.3535
+RESULT baseline held level, right = 0.3535
+RESULT baseline pitch Hz = 1000.0977
+RESULT note-off with Obey note-offs, level change dB = -309.9991
+RESULT velocity 64, level change dB = 0.0006
+RESULT velocity 1, level change dB = 0.0000
+RESULT Gain for minimum velocity, default and lowest = +0.0 and -inf
+RESULT lowest minimum-velocity gain, velocity 64, level change dB = -6.0210
+RESULT lowest minimum-velocity gain, velocity 1, level change dB = -309.9991
+== raw MIDI
+RESULT raw CC 7 = 0, level change dB = 0.0007
+RESULT raw CC 7 = 0, Volume parameter reads = 0.5000
+RESULT raw CC 7 = 127, level change dB = 0.0000
+RESULT raw CC 10 = 0, right minus left dB = 0.0000
+RESULT raw CC 10 = 0, Pan parameter reads = 0.5000
+RESULT raw CC 10 = 127, right minus left dB = 0.0000
+RESULT pitch bend maximum, pitch change semitones = 1.9930
+RESULT pitch bend minimum, pitch change semitones = -1.9817
+== parameter links, CC 7 to Volume and CC 10 to Pan
+RESULT Volume link settings read back = mod.active 1, plink.active 1, effect -100, midi_bus 0, midi_chan 0, midi_msg 176, midi_msg2 7, scale 1, offset 0
+RESULT Pan link settings read back = mod.active 1, plink.active 1, effect -100, midi_bus 0, midi_chan 0, midi_msg 176, midi_msg2 10, scale 1, offset 0
+RESULT linked CC 7 = 0, level change dB = -309.9991
+RESULT linked CC 7 = 0, Volume parameter reads = 0.0000
+RESULT linked CC 7 = 127, level change dB = 6.0214
+RESULT linked CC 10 = 0, right minus left dB = -313.9436
+RESULT linked CC 10 = 0, Pan parameter reads = 0.0000
+RESULT linked CC 10 = 127, right minus left dB = 313.9442
+RESULT Volume parameter after the link is removed = 0.7874
+RESULT Pan parameter after the link is removed = 0.5039
+== MIDI learn, CC 7 to Volume and CC 10 to Pan
+RESULT Volume learn settings read back = midi1 176, midi2 7
+RESULT Pan learn settings read back = midi1 176, midi2 10
+RESULT learned CC 7 = 0, level change dB = 0.0000
+RESULT learned CC 7 = 0, Volume parameter reads = 0.5000
+RESULT learned CC 7 = 127, level change dB = 0.0006
+RESULT learned CC 10 = 0, right minus left dB = 0.0000
+RESULT learned CC 10 = 0, Pan parameter reads = 0.5000
+RESULT learned CC 10 = 127, right minus left dB = 0.0000
+38 results, 0 failures
