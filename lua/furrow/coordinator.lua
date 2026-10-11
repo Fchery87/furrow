@@ -484,6 +484,16 @@ function Coordinator:add_sample(file)
   self:finish(gesture)
 end
 
+-- Sets one step field inside an open gesture. Returns false when the step already shows
+-- that value, so a drag sends one edit per change.
+function Coordinator:set_field(gesture, slot, step, field, value)
+  if self:step_value(slot, step, field) == value then
+    return false
+  end
+  self:add(gesture, { { wire.OP_SET_STEP, 0, slot, step, field, value } }, { { slot, step, field, value } })
+  return true
+end
+
 -- Removes the engine lane, then its track if Furrow linked one, in one undo point.
 function Coordinator:remove_lane(lane)
   self:run("delete lane", { { wire.OP_REMOVE_LANE, lane.slot } }, {

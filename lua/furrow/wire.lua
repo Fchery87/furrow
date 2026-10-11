@@ -113,6 +113,7 @@ return {
 
   F_ON = 0,
   F_VEL = 1,
+  F_PITCH = 3,
   F_GATE = 9,
   STEP_FIELDS = 16,
 

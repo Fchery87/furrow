@@ -487,6 +487,42 @@ class RackTest(unittest.TestCase):
         self.assertIn("results received 500", text)
         self.assertIn("mismatches 0", text)
 
+    def test_a_bar_drag_edits_velocity_pitch_and_gate_that_the_engine_plays(self):
+        self.c("add_sample", "/samples/kick.wav")
+        self.settle()
+        self.stub.undo.clear()
+        lua = self.rig.lua
+        ints = lua.table_from([lua.table_from([OP_SET_STEP, 0, 0, 0, F_ON, 1])])
+        self.c("run", "paint steps", ints)
+        self.settle()
+        fields = lua.eval('(require("furrow.fields"))')
+        velocity, gate, pitch = (fields.list[i] for i in (1, 2, 3))
+        for definition, value in ((velocity, 64), (pitch, 7), (gate, 10000)):
+            gesture = self.c("begin", "edit " + definition.name.lower())
+            self.assertTrue(self.c("set_field", gesture, 0, 0, definition.field, value))
+            self.assertFalse(self.c("set_field", gesture, 0, 0, definition.field, value))
+            self.c("finish", gesture)
+            self.settle()
+        self.tick(6)
+        self.assertEqual(self.stub.undo[-3:], ["Furrow: edit velocity", "Furrow: edit pitch", "Furrow: edit gate"])
+        self.assertEqual([self.c("step_value", 0, 0, f) for f in (1, 3, 9)], [64, 7, 10000])
+        self.rig.events.clear()
+        self.rig.seek(0.0)
+        self.rig.run(8)
+        on = [e for e in self.rig.events if e[2] & 0xF0 == 0x90 and e[4] > 0][0]
+        off = [e for e in self.rig.events if e[2] & 0xF0 == 0x80 and e[0] > 0][0]
+        self.assertEqual((on[3], on[4]), (67, 64))
+        self.assertLessEqual(abs(off[0] - 44100 * 0.5 / 4), 1)
+
+    def test_bar_heights_map_onto_each_field_range(self):
+        fields = self.rig.lua.eval('(require("furrow.fields"))')
+        velocity, gate, pitch = (fields.list[i] for i in (1, 2, 3))
+        self.assertEqual([fields.value_at(velocity, f) for f in (0, 0.5, 1, -3, 7)], [1, 64, 127, 1, 127])
+        self.assertEqual([fields.value_at(gate, f) for f in (0, 1)], [500, 10000])
+        self.assertEqual([fields.value_at(pitch, f) for f in (0, 0.5, 1)], [-24, 0, 24])
+        self.assertAlmostEqual(fields.fraction(pitch, 0), 0.5)
+        self.assertEqual(fields.fraction(velocity, 500), 1)
+
     def rack_links(self):
         return self.rack["rack"].ext.get("P_EXT:Furrow", "")
 
@@ -547,6 +583,7 @@ class WindowTest(unittest.TestCase):
                 stub.clock += 0.03
             self.assertEqual([t.name for t in stub.tracks], ["Furrow Rack", "Furrow Engine", "perc"])
             self.assertIn("InvisibleButton", imgui.calls)
+            self.assertIn("Dummy", imgui.calls)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
         finally:
             rig.close()

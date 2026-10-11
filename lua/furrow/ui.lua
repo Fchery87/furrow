@@ -3,12 +3,15 @@
 local wire = require("furrow.wire")
 local host = require("furrow.host")
 local Coordinator = require("furrow.coordinator")
+local fields = require("furrow.fields")
 
 local ui = {}
 
 local CELL = 22
 local GAP = 3
 local NAME_WIDTH = 150
+local BAR_HEIGHT = 84
+local GRID_OFFSET = 2 * CELL + NAME_WIDTH + 5 * GAP
 local DRAIN_SECONDS = 3
 local UNDO_COMMAND = 40029
 local REDO_COMMAND = 40030
@@ -21,6 +24,7 @@ local COLOR = {
   playhead = 0xFFFFFFFF,
   missing = 0xE0605AFF,
   muted = 0x8A8F98FF,
+  bar_off = 0x555B64FF,
   warn = 0xE8C35AFF,
   drop = 0x2A3A4AFF,
 }
@@ -56,6 +60,9 @@ function ui.run(ImGui)
   local proj = reaper.EnumProjects(-1)
   local coordinator = nil
   local paint = nil
+  local shaping = nil
+  local edit_slot = nil
+  local edit_field = 1
   local open = true
   local closing_at = nil
   -- Undo and redo wait here until pending gestures have their undo points.
@@ -103,6 +110,7 @@ function ui.run(ImGui)
       end
       if button then
         local target = button == ImGui.MouseButton_Left and 1 - value or 0
+        edit_slot = lane.slot
         paint = {
           button = button,
           value = target,
@@ -149,6 +157,7 @@ function ui.run(ImGui)
       ImGui.PushStyleColor(ctx, ImGui.Col_Text, COLOR.muted)
     end
     if ImGui.Button(ctx, name .. "##name", NAME_WIDTH, CELL) and c:processing() then
+      edit_slot = lane.slot
       c:audition(lane.slot)
     end
     if not track or lane.mute then
@@ -167,6 +176,72 @@ function ui.run(ImGui)
       ImGui.PopID(ctx)
     end
     ImGui.PopID(ctx)
+  end
+
+  local function bar(c, lane, def, step)
+    local value = c:step_value(lane.slot, step, def.field)
+    ImGui.InvisibleButton(ctx, "##bar", CELL, BAR_HEIGHT, ImGui.ButtonFlags_MouseButtonLeft)
+    local x1, y1 = ImGui.GetItemRectMin(ctx)
+    local draw = ImGui.GetWindowDrawList(ctx)
+    ImGui.DrawList_AddRectFilled(draw, x1, y1, x1 + CELL, y1 + BAR_HEIGHT, COLOR.off, 3)
+    local tip = y1 + (1 - fields.fraction(def, value)) * BAR_HEIGHT
+    local top, bottom = tip, y1 + BAR_HEIGHT
+    if def.centered then
+      local middle = y1 + BAR_HEIGHT / 2
+      top, bottom = math.min(tip, middle), math.max(tip, middle)
+    end
+    local on = c:step_value(lane.slot, step, wire.F_ON) == 1
+    ImGui.DrawList_AddRectFilled(draw, x1 + 2, top, x1 + CELL - 2, bottom, on and COLOR.on or COLOR.bar_off, 2)
+    if not c:processing() or not ImGui.IsItemHovered(ctx, ImGui.HoveredFlags_AllowWhenBlockedByActiveItem) then
+      return
+    end
+    local _, my = ImGui.GetMousePos(ctx)
+    local target = fields.value_at(def, 1 - (my - y1) / BAR_HEIGHT)
+    if ImGui.IsMouseClicked(ctx, ImGui.MouseButton_Left) and not shaping and not paint then
+      shaping = { gesture = c:begin("edit " .. def.name:lower()) }
+    end
+    if shaping and ImGui.IsMouseDown(ctx, ImGui.MouseButton_Left) then
+      c:set_field(shaping.gesture, lane.slot, step, def.field, target)
+    end
+    ImGui.SetTooltip(ctx, def.text(shaping and target or value))
+  end
+
+  local function editor(c)
+    local lanes = c:lanes()
+    local lane = lanes[1]
+    for _, candidate in ipairs(lanes) do
+      if candidate.slot == edit_slot then
+        lane = candidate
+      end
+    end
+    if not lane then
+      return
+    end
+    edit_slot = lane.slot
+    local track = c:lane_track(lane)
+    ImGui.Separator(ctx)
+    ImGui.Text(ctx, "Step editor  " .. (track and host.track_name(track) or ("Lane " .. (lane.slot + 1))))
+    for index, def in ipairs(fields.list) do
+      ImGui.SameLine(ctx, 0, GAP * 3)
+      local active = index == edit_field
+      if active then
+        ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.on)
+      end
+      if ImGui.SmallButton(ctx, def.name) then
+        edit_field = index
+      end
+      if active then
+        ImGui.PopStyleColor(ctx, 1)
+      end
+    end
+    local def = fields.list[edit_field]
+    ImGui.Dummy(ctx, GRID_OFFSET - GAP * 3, BAR_HEIGHT)
+    for step = 0, lane.length - 1 do
+      ImGui.SameLine(ctx, 0, step == 0 and GAP * 3 or GAP)
+      ImGui.PushID(ctx, "bar" .. step)
+      bar(c, lane, def, step)
+      ImGui.PopID(ctx)
+    end
   end
 
   local function drop_zone(c)
@@ -230,11 +305,16 @@ function ui.run(ImGui)
       for _, lane in ipairs(c:lanes()) do
         lane_row(c, lane)
       end
+      editor(c)
       drop_zone(c)
     end
     if paint and not ImGui.IsMouseDown(ctx, paint.button) then
       c:finish(paint.gesture)
       paint = nil
+    end
+    if shaping and not ImGui.IsMouseDown(ctx, ImGui.MouseButton_Left) then
+      c:finish(shaping.gesture)
+      shaping = nil
     end
     if ImGui.IsWindowFocused(ctx, ImGui.FocusedFlags_RootAndChildWindows) then
       if ImGui.IsKeyPressed(ctx, ImGui.Key_Space, false) then
@@ -271,6 +351,10 @@ function ui.run(ImGui)
         if paint then
           coordinator:finish(paint.gesture)
           paint = nil
+        end
+        if shaping then
+          coordinator:finish(shaping.gesture)
+          shaping = nil
         end
         closing_at = reaper.time_precise()
       end
