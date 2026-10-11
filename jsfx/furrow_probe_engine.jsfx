@@ -61,6 +61,12 @@ slope = 0;
 MAILBOX_VERSION = 1;
 OP_TOGGLE = 1;
 MIRROR = 100;
+// gmem[10] counts @serialize writes and gmem[11] startup releases. gmem[12] is 1 in an
+// engine that releases every lane on its first block.
+// A held note is lost from memory when the engine reloads, so the first block releases
+// every lane's note and sends All Notes Off on its channel.
+startup_release = 1;
+gmem[12] = 1;
 // A command written before this instance loaded is not replayed.
 last_seq = gmem[2];
 pending_seq = last_seq;
@@ -110,6 +116,18 @@ function flush_releases(limit, inclusive) local(lane, best, best_beat, due) (
 @block
 gmem[0] = MAILBOX_VERSION;
 gmem[1] += 1;
+startup_release ? (
+  lane = 0;
+  loop(LANES,
+    midi_bus = 0;
+    midisend(0, $x80 + lane, note_of[lane], 0);
+    midisend(0, $xB0 + lane, 123, 0);
+    release_at[lane] = -1;
+    lane += 1;
+  );
+  startup_release = 0;
+  gmem[11] += 1;
+);
 seq = gmem[2];
 seq != last_seq ? (
   seq != pending_seq ? (
@@ -188,4 +206,4 @@ format == 1 ? file_mem(0, step_on, LANES * STEPS);
 reading ? (
   gmem[7] += 1;
   gmem[8] += 1;
-);
+) : gmem[10] += 1;

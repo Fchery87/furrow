@@ -861,6 +861,58 @@ class StubItem:
         return StubItem(self.position if position is None else position, self.length, take, self.ext)
 
 
+class StubStartupReaper(StubLifecycleReaper):
+    """The lifecycle stub with an engine that releases every lane on its first block.
+
+    Taking the engine offline writes its state once. Coming online or reopening the project
+    runs the release again. Bypass does not.
+    """
+
+    NOTES = [36, 38, 42, 46]
+
+    def __init__(self, project, steps, releases=True):
+        super().__init__(project, steps)
+        self.gmem[12] = 1 if releases else 0
+        self.releases = releases
+        self.starting = True
+
+    def table(self, lua):
+        api = super().table(lua)
+        for name in ("Main_SaveProject", "Main_openProject"):
+            api[name] = getattr(self, name)
+        return api
+
+    def engine_block(self):
+        if self.runs() and self.starting and self.releases:
+            for slot, note in enumerate(self.NOTES):
+                self.event(slot, 0, note)
+                self.event(slot, 2, 123)
+            self.gmem[11] = self.gmem.get(11, 0) + 1
+        if self.runs():
+            self.starting = False
+        super().engine_block()
+
+    def event(self, slot, kind, data1):
+        count = int(self.receiver.get(10 + slot, 0))
+        at = 2000000 + slot * 500000 + count * 9
+        self.receiver[at + 6], self.receiver[at + 8] = data1, kind
+        self.receiver[10 + slot] = count + 1
+
+    def TrackFX_SetOffline(self, track, fx, offline):
+        if offline and not self.offline:
+            self.gmem[10] = self.gmem.get(10, 0) + 1
+        if not offline and self.offline:
+            self.starting = True
+        super().TrackFX_SetOffline(track, fx, offline)
+
+    def Main_SaveProject(self, project, ask):
+        self.gmem[10] = self.gmem.get(10, 0) + 1
+
+    def Main_openProject(self, name):
+        assert name == "noprompt:" + self.project
+        self.starting = True
+
+
 class StubItemsReaper(StubReaper):
     """Items with extension data, REAPER's copy actions, a snapshot undo, and save and reopen.
 
@@ -1194,6 +1246,33 @@ class ItemsTest(unittest.TestCase):
             stub.drive()
             results = (Path(directory) / "furrow-items-results.txt").read_text().splitlines()
         self.assertEqual(results[-1], "0 results, 1 failures")
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class StartupTest(unittest.TestCase):
+    def run_startup(self, **options):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubStartupReaper(str(Path(directory) / "startup.rpp"), [0] * 64, **options)
+            run(stub, "furrow_probe_startup.lua")
+            stub.drive()
+            return (Path(directory) / "furrow-startup-results.txt").read_text().splitlines()
+
+    def test_startup_script_measures_every_case(self):
+        results = self.run_startup()
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
+        self.assertEqual(results[-1], "11 results, 0 failures")
+        for line in (
+            "RESULT bypass, startup release ran = false",
+            "RESULT bypass, receivers logged = 0 of 4 lanes got the note-off then All Notes Off",
+            "RESULT offline while stopped, serialize writes while it went down = 1",
+            "RESULT offline with a held note, receivers logged = 4 of 4 lanes got the note-off then All Notes Off",
+            "RESULT reopen, startup release ran = true",
+        ):
+            self.assertIn(line, results)
+
+    def test_startup_script_refuses_an_engine_without_the_release(self):
+        results = self.run_startup(releases=False)
+        self.assertEqual(results[0], "FAIL engine has the startup release  restart REAPER so it loads the new furrow_probe_engine.jsfx")
 
 
 if __name__ == "__main__":
