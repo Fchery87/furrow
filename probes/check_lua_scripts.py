@@ -1000,6 +1000,83 @@ class StubLatencyReaper(StubReaper):
         return 0 if self.play_start is None else (self.clock - self.play_start) * 0.03
 
 
+class StubRenderReaper(StubReaper):
+    """A timing project whose render plays the expected events into the receivers' gmem.
+
+    playing False models a render that does not count as playback, so no tempo blocks log.
+    """
+
+    def __init__(self, project, expected, playing=True):
+        super().__init__(gmem={0: 3}, project=project)
+        self.InsertTrackAtIndex(0, True)
+        self.tracks[0]["name"] = "Furrow Probe Engine"
+        self.expected = diff_log.load(expected)
+        self.playing = playing
+        self.info = {"RENDER_SETTINGS": 2, "RENDER_BOUNDSFLAG": 1, "RENDER_STARTPOS": 0, "RENDER_ENDPOS": 0}
+        self.strings = {"RENDER_FILE": "", "RENDER_PATTERN": "$project"}
+        self.clock = 0
+        self.deferred = None
+
+    def table(self, lua):
+        api = super().table(lua)
+        for name in ("gmem_write", "defer", "time_precise", "GetSetProjectInfo", "GetSetProjectInfo_String",
+                     "Main_OnCommand", "EnumerateFiles"):
+            api[name] = getattr(self, name)
+        return api
+
+    def drive(self, limit=1000):
+        while self.deferred is not None and limit > 0:
+            callback, self.deferred = self.deferred, None
+            self.clock += 1
+            callback()
+            limit -= 1
+
+    def defer(self, callback):
+        self.deferred = callback
+
+    def time_precise(self):
+        return self.clock * 0.03
+
+    def gmem_write(self, index, value):
+        self.gmem[int(index)] = value
+
+    def GetSetProjectInfo(self, project, key, value, set_new):
+        if set_new:
+            self.info[key] = value
+        return self.info[key]
+
+    def GetSetProjectInfo_String(self, project, key, value, set_new):
+        if set_new:
+            self.strings[key] = value
+        return True, self.strings[key]
+
+    def Main_OnCommand(self, command, flag):
+        if int(command) != 42230:
+            return
+        self.rendered_with = (dict(self.info), dict(self.strings))
+        if self.playing:
+            for block in range(130):
+                self.gmem[1000 + block * 3] = block * 1024
+            self.gmem[2] = 130
+        if self.playing or self.gmem.get(5) == 1:
+            for row in self.expected:
+                lane = int(row["lane"])
+                count = int(self.gmem.get(10 + lane, 0))
+                at = 2000000 + lane * 500000 + count * 9
+                values = [row["sample"], int(row["order"]), lane, int(row["src_bus"]), int(row["dst_bus"]),
+                          int(row["channel"]), int(row["note"]), int(row["velocity"]),
+                          {"off": 0, "on": 1, "cc": 2}[row["kind"]]]
+                for field, value in enumerate(values):
+                    self.gmem[at + field] = value
+                self.gmem[10 + lane] = count + 1
+        path = Path(self.strings["RENDER_FILE"]) / (self.strings["RENDER_PATTERN"] + ".wav")
+        path.write_bytes(b"RIFF" + b"\0" * 40)
+
+    def EnumerateFiles(self, path, index):
+        names = sorted(item.name for item in Path(path).iterdir())
+        return names[int(index)] if int(index) < len(names) else None
+
+
 class StubItemsReaper(StubReaper):
     """Items with extension data, REAPER's copy actions, a snapshot undo, and save and reopen.
 
@@ -1385,6 +1462,36 @@ class LatencyTest(unittest.TestCase):
     def test_latency_script_shows_an_uncompensated_lane_late(self):
         results = self.run_latency(compensates=False)
         self.assertIn("RESULT latency 1000, lane 2 clicks at the folder = 4 of 4 events, error 1000.0 to 1000.0 samples", results)
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class RenderTest(unittest.TestCase):
+    EXPECTED = ROOT / "expected" / "constant-120.txt"
+
+    def run_render(self, **options):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubRenderReaper(str(Path(directory) / "constant.RPP"), self.EXPECTED, **options)
+            run(stub, "furrow_probe_render.lua")
+            stub.drive()
+            results = (Path(directory) / "furrow-render-constant-results.txt").read_text().splitlines()
+            captured = diff_log.load(Path(directory) / "furrow-render-constant-events.txt")
+            return stub, results, captured
+
+    def test_render_captures_the_events_and_restores_settings(self):
+        stub, results, captured = self.run_render()
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
+        self.assertEqual(results[-1], "6 results, 0 failures")
+        self.assertEqual(diff_log.compare(diff_log.load(self.EXPECTED), captured, 1), [])
+        self.assertIn("RESULT render block sizes = 1024", results)
+        self.assertEqual(stub.rendered_with[0]["RENDER_ENDPOS"], 3)
+        self.assertEqual(stub.info, {"RENDER_SETTINGS": 2, "RENDER_BOUNDSFLAG": 1, "RENDER_STARTPOS": 0, "RENDER_ENDPOS": 0})
+        self.assertEqual(stub.strings, {"RENDER_FILE": "", "RENDER_PATTERN": "$project"})
+
+    def test_render_that_is_not_playback_still_logs_through_the_stopped_flag(self):
+        _, results, captured = self.run_render(playing=False)
+        self.assertIn("RESULT block tempo entries logged, which needs a playing state = 0", results)
+        self.assertIn("RESULT render block sizes = none", results)
+        self.assertEqual(len(captured), 38)
 
 
 if __name__ == "__main__":
