@@ -1,0 +1,54 @@
+PASS project saved before the run
+== first run, state chunk round trip
+PASS state probe loads
+PASS state probe runs
+PASS chunk round trip read the state  reads 1.0
+PASS chunk zero words  stored 0 0 0 0, IEEE 0 0 0 0
+PASS chunk zero decodes exactly  0
+PASS chunk negative zero, stored as zero words  stored 0 0 0 0, IEEE 0 0 0 0
+PASS chunk negative zero, stored as zero decodes exactly  0
+PASS chunk negative origin -16.25 words  stored 0 0 16384 49200, IEEE 0 0 16384 49200
+PASS chunk negative origin -16.25 decodes exactly  -16.25
+PASS chunk fractional origin 1/3 words  stored 21845 21845 21845 16341, IEEE 21845 21845 21845 16341
+PASS chunk fractional origin 1/3 decodes exactly  0.33333333333333331
+PASS chunk large position 288000 + 1/3 words  stored 21845 21845 37889 16657, IEEE 21845 21845 37889 16657
+PASS chunk large position 288000 + 1/3 decodes exactly  288000.33333333331
+PASS chunk negative large -(2^30) - 1/7 words  stored 9362 9 0 49616, IEEE 9362 9 0 49616
+PASS chunk negative large -(2^30) - 1/7 decodes exactly  -1073741824.1428571
+PASS chunk 2^52 + 2 words  stored 2 0 0 17200, IEEE 2 0 0 17200
+PASS chunk 2^52 + 2 decodes exactly  4503599627370498
+PASS chunk small 2^-30 words  stored 0 0 0 15888, IEEE 0 0 0 15888
+PASS chunk small 2^-30 decodes exactly  9.3132257461547852e-10
+RESULT chunk raw 1/3 through file_var = 0.3333333432674408, exact true
+PASS chunk seed 0  0
+PASS chunk seed 16777215  16777215
+RESULT chunk seed 16777217, above the spec's bound = 16777216
+Saved. Reopen this project from File > Recent projects, then run this script again.
+0 failures
+PASS project saved before the run
+PASS state probe version  gmem[0] = 1.0
+== second run, project reload
+PASS state probe runs
+PASS the project was reopened  token 13504554, first run left 0
+PASS this instance read its state when the project loaded  reads 1
+PASS reload zero words  stored 0 0 0 0, IEEE 0 0 0 0
+PASS reload zero decodes exactly  0
+PASS reload negative zero, stored as zero words  stored 0 0 0 0, IEEE 0 0 0 0
+PASS reload negative zero, stored as zero decodes exactly  0
+PASS reload negative origin -16.25 words  stored 0 0 16384 49200, IEEE 0 0 16384 49200
+PASS reload negative origin -16.25 decodes exactly  -16.25
+PASS reload fractional origin 1/3 words  stored 21845 21845 21845 16341, IEEE 21845 21845 21845 16341
+PASS reload fractional origin 1/3 decodes exactly  0.33333333333333331
+PASS reload large position 288000 + 1/3 words  stored 21845 21845 37889 16657, IEEE 21845 21845 37889 16657
+PASS reload large position 288000 + 1/3 decodes exactly  288000.33333333331
+PASS reload negative large -(2^30) - 1/7 words  stored 9362 9 0 49616, IEEE 9362 9 0 49616
+PASS reload negative large -(2^30) - 1/7 decodes exactly  -1073741824.1428571
+PASS reload 2^52 + 2 words  stored 2 0 0 17200, IEEE 2 0 0 17200
+PASS reload 2^52 + 2 decodes exactly  4503599627370498
+PASS reload small 2^-30 words  stored 0 0 0 15888, IEEE 0 0 0 15888
+PASS reload small 2^-30 decodes exactly  9.3132257461547852e-10
+RESULT reload raw 1/3 through file_var = 0.3333333432674408, exact true
+PASS reload seed 0  0
+PASS reload seed 16777215  16777215
+RESULT reload seed 16777217, above the spec's bound = 16777216
+0 failures
