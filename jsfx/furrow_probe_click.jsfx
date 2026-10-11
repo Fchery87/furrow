@@ -1,0 +1,38 @@
+desc: Furrow probe click
+tags: utility
+in_pin:left
+in_pin:right
+out_pin:left
+out_pin:right
+
+slider1:0<0,1,1>Output channel
+
+@init
+// Each note-on becomes a one-sample impulse of 1.0 at its own offset, on one channel.
+// The impulse marks the note's sample exactly, which an instrument's attack does not.
+offsets = 0;
+count = 0;
+next = 0;
+i = 0;
+
+@block
+count = 0;
+next = 0;
+i = 0;
+while (midirecv(offset, msg1, msg2, msg3)) (
+  (msg1 & $xF0) == $x90 && msg3 > 0 ? (
+    offsets[count] = offset;
+    count += 1;
+  );
+  midisend(offset, msg1, msg2, msg3);
+);
+
+@sample
+out = 0;
+while (next < count && offsets[next] == i) (
+  out = 1;
+  next += 1;
+);
+spl0 = slider1 < 0.5 ? out : 0;
+spl1 = slider1 >= 0.5 ? out : 0;
+i += 1;

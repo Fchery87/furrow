@@ -913,6 +913,93 @@ class StubStartupReaper(StubLifecycleReaper):
         self.starting = True
 
 
+class StubLatencyReaper(StubReaper):
+    """The latency layout. Playback writes clicks and receiver note-ons for the first two lanes.
+
+    With compensates False, lane 2's clicks reach the folder late by the reported delay.
+    """
+
+    STEPS = [[0, 4, 8, 12], [2, 6, 10, 14]]
+
+    def __init__(self, project, compensates=True):
+        super().__init__(project=project)
+        self.compensates = compensates
+        self.segments = {"FurrowProbeLatency": {3: 44100}, "FurrowProbeReceiver": {}}
+        self.attached = "FurrowProbeLatency"
+        self.clock = 0
+        self.deferred = None
+        self.delay = 0
+        self.play_start = None
+
+    def table(self, lua):
+        api = super().table(lua)
+        for name in ("defer", "time_precise", "gmem_attach", "gmem_read", "TrackFX_SetParam",
+                     "TrackFX_GetNamedConfigParm", "SetEditCurPos", "OnPlayButton", "OnStopButton", "GetPlayPosition",
+                     "Master_GetTempo", "SetCurrentBPM", "Undo_OnStateChangeEx2"):
+            api[name] = getattr(self, name)
+        return api
+
+    def drive(self, limit=200000):
+        while self.deferred is not None and limit > 0:
+            callback, self.deferred = self.deferred, None
+            self.clock += 1
+            meter = self.segments["FurrowProbeLatency"]
+            if any(track["name"] == "Furrow Latency Folder" for track in self.tracks):
+                meter[4] = meter.get(4, 0) + 1
+            callback()
+            limit -= 1
+
+    def defer(self, callback):
+        self.deferred = callback
+
+    def time_precise(self):
+        return self.clock * 0.03
+
+    def gmem_attach(self, name):
+        self.attached = name
+
+    def gmem_read(self, index):
+        return self.segments[self.attached].get(int(index), 0)
+
+    def TrackFX_SetParam(self, track, fx, param, value):
+        if track["name"] == "Furrow Latency Lane 2" and track["fx"][int(fx)] == "JS:furrow_probe_latency.jsfx":
+            self.delay = int(value)
+
+    def TrackFX_GetNamedConfigParm(self, track, fx, key):
+        return (True, str(self.delay)) if key == "pdc" else (False, "")
+
+    def SetEditCurPos(self, position, move_view, seek_play):
+        pass
+
+    def Master_GetTempo(self):
+        return 120.0
+
+    def SetCurrentBPM(self, project, bpm, undo):
+        pass
+
+    def Undo_OnStateChangeEx2(self, project, description, flags, track):
+        pass
+
+    def OnPlayButton(self):
+        self.play_start = self.clock
+        meter, receiver = self.segments["FurrowProbeLatency"], self.segments["FurrowProbeReceiver"]
+        for lane, (count, base) in enumerate(((1, 1000), (2, 100000))):
+            late = 0 if self.compensates or lane == 0 else self.delay
+            meter[count] = len(self.STEPS[lane])
+            receiver[10 + lane] = len(self.STEPS[lane])
+            for i, step in enumerate(self.STEPS[lane]):
+                sample = round(step * 0.125 * 44100)
+                meter[base + i] = sample + late
+                at = 2000000 + lane * 500000 + i * 9
+                receiver[at], receiver[at + 8] = sample, 1
+
+    def OnStopButton(self):
+        self.play_start = None
+
+    def GetPlayPosition(self):
+        return 0 if self.play_start is None else (self.clock - self.play_start) * 0.03
+
+
 class StubItemsReaper(StubReaper):
     """Items with extension data, REAPER's copy actions, a snapshot undo, and save and reopen.
 
@@ -1273,6 +1360,31 @@ class StartupTest(unittest.TestCase):
     def test_startup_script_refuses_an_engine_without_the_release(self):
         results = self.run_startup(releases=False)
         self.assertEqual(results[0], "FAIL engine has the startup release  restart REAPER so it loads the new furrow_probe_engine.jsfx")
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class LatencyTest(unittest.TestCase):
+    def run_latency(self, **options):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubLatencyReaper(str(Path(directory) / "latency.rpp"), **options)
+            run(stub, "furrow_probe_latency.lua")
+            stub.drive()
+            return (Path(directory) / "furrow-latency-results.txt").read_text().splitlines()
+
+    def test_latency_script_measures_both_latencies(self):
+        results = self.run_latency()
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
+        self.assertEqual(results[-1], "11 results, 0 failures")
+        for line in (
+            "RESULT latency 1000, lane 2 delay reports = pdc 1000, chain_pdc_reporting (unreadable), chain_pdc_actual (unreadable)",
+            "RESULT latency 1000, lane 2 clicks at the folder = 4 of 4 events, error 0.0 to 0.0 samples",
+            "RESULT latency 0, lane 1 note-ons at its receiver = 4 of 4 events, error 0.0 to 0.0 samples",
+        ):
+            self.assertIn(line, results)
+
+    def test_latency_script_shows_an_uncompensated_lane_late(self):
+        results = self.run_latency(compensates=False)
+        self.assertIn("RESULT latency 1000, lane 2 clicks at the folder = 4 of 4 events, error 1000.0 to 1000.0 samples", results)
 
 
 if __name__ == "__main__":
