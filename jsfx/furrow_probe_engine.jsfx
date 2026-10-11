@@ -50,9 +50,15 @@ memset(release_at, -1, LANES);
 next_step = 0;
 was_playing = 0;
 block_end_beat = 0;
+prev_tempo = -1;
+slope = 0;
 
-function offset_of(beat) local(x) (
-  x = floor((beat - beat_position) * samplesblock / block_beats + 0.5);
+// Inverts beats = (tempo * x + slope * x^2 / 2) / (60 * srate) for the sample offset x.
+function offset_of(beat) local(beats, root, x) (
+  beats = beat - beat_position;
+  root = tempo * tempo + 2 * slope * 60 * srate * beats;
+  x = root > 0 ? 120 * srate * beats / (tempo + sqrt(root)) : 60 * srate * beats / tempo;
+  x = floor(x + 0.5);
   max(0, min(samplesblock - 1, x));
 );
 
@@ -89,18 +95,24 @@ function flush_releases(limit, inclusive) local(lane, best, best_beat, due) (
 );
 
 @block
-// This probe reads tempo once per block. It does not follow a ramp inside the block.
 playing = slider1 >= 0.5 && (play_state == 1 || play_state == 5);
-block_beats = samplesblock * tempo / (60 * srate);
 !playing ? (
   was_playing ? release_all();
   was_playing = 0;
+  prev_tempo = -1;
 ) : (
-  !was_playing || abs(beat_position - block_end_beat) > JUMP_BEATS ? (
+  jumped = !was_playing || abs(beat_position - block_end_beat) > JUMP_BEATS;
+  jumped ? (
     release_all();
     next_step = ceil(beat_position / step_beats - 0.000001);
   );
+  // REAPER 7.82 reports tempo once per block, at its first sample.
+  // Assume the last block's tempo change continues through this block, so a ramp stays sample accurate.
+  slope = jumped || prev_tempo < 0 ? 0 : (tempo - prev_tempo) / prev_block;
+  prev_tempo = tempo;
+  prev_block = samplesblock;
   was_playing = 1;
+  block_beats = (tempo * samplesblock + slope * samplesblock * samplesblock / 2) / (60 * srate);
   block_end_beat = beat_position + block_beats;
   while (next_step < STEPS && next_step * step_beats < block_end_beat) (
     hit = next_step * step_beats;
