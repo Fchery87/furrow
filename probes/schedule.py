@@ -2,9 +2,9 @@
 """Build the expected MIDI schedule for one Furrow timing fixture.
 
 The schedule uses project beats, then rounds each beat to a sample.
-An exact half sample rounds toward the even integer. A ramp is
-piecewise linear in BPM between the stated tempo points. This script
-does not read REAPER. A ramp file is a stated map, not a captured one.
+An exact half sample rounds toward the even integer. Between two
+tempo points BPM moves linearly in time, which is what REAPER 7.82 did
+for a gradual tempo marker. This script does not read REAPER.
 """
 
 import argparse
@@ -59,16 +59,15 @@ def read_case(path):
     return case
 
 
-def seconds_across(start_bpm, end_bpm, beats):
-    """Seconds for `beats` while BPM moves linearly from start to end."""
-    if beats < 0:
+def seconds_into(start_bpm, end_bpm, span, beats):
+    """Seconds to cover `beats` of a `span`-beat segment whose BPM moves linearly in time."""
+    if beats < 0 or span < 0:
         raise ValueError("tempo spans move forward")
-    if beats == 0.0:
+    if span == 0:
         return 0.0
-    if abs(start_bpm - end_bpm) < 1e-12:
-        return beats * 60.0 / start_bpm
-    slope = (end_bpm - start_bpm) / beats
-    return (60.0 / slope) * math.log((start_bpm + slope * beats) / start_bpm)
+    duration = 120.0 * span / (start_bpm + end_bpm)
+    slope = (end_bpm - start_bpm) / duration
+    return 120.0 * beats / (start_bpm + math.sqrt(start_bpm**2 + 120.0 * slope * beats))
 
 
 def seconds_at(beat, points):
@@ -77,14 +76,11 @@ def seconds_at(beat, points):
     elapsed = 0.0
     for index, (start, bpm) in enumerate(points):
         if index + 1 == len(points):
-            return elapsed + seconds_across(bpm, bpm, beat - start)
+            return elapsed + 60.0 * (beat - start) / bpm
         end, next_bpm = points[index + 1]
         if beat <= end:
-            if end == start:
-                return elapsed
-            bpm_at_beat = bpm + (next_bpm - bpm) * (beat - start) / (end - start)
-            return elapsed + seconds_across(bpm, bpm_at_beat, beat - start)
-        elapsed += seconds_across(bpm, next_bpm, end - start)
+            return elapsed + seconds_into(bpm, next_bpm, end - start, beat - start)
+        elapsed += seconds_into(bpm, next_bpm, end - start, end - start)
     raise ValueError("beat is outside the tempo map")
 
 

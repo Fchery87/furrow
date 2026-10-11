@@ -31,16 +31,15 @@ class ScheduleTest(unittest.TestCase):
         self.assertEqual(schedule.round_half_even(step * 44100), 5512)
         self.assertEqual(schedule.round_half_even(gate * 44100), 2756)
 
-    def test_linear_ramp_matches_the_integral(self):
-        # 100 BPM to 140 BPM across 4 beats. At beat 4 the integral is
-        # 60/10 * ln(1.4) seconds.
+    def test_ramp_ends_where_reaper_reached_140(self):
+        # The REAPER 7.82 capture logged 100 + 20 BPM per second, reaching 140 at 2.0 s.
         got = schedule.seconds_at(4.0, [(0.0, 100.0), (4.0, 140.0)])
-        self.assertAlmostEqual(got, 6.0 * math.log(1.4), places=9)
+        self.assertAlmostEqual(got, 2.0, places=12)
 
-    def test_partial_ramp_uses_the_tempo_at_that_beat(self):
-        # Halfway through the 100 to 140 ramp the tempo is 120, so the integral is 6 * ln(1.2).
+    def test_partial_ramp_solves_the_time_linear_integral(self):
+        # Beats at time t are (100 t + 10 t^2) / 60. Beat 2 solves t^2 + 10 t - 12 = 0.
         got = schedule.seconds_at(2.0, [(0.0, 100.0), (4.0, 140.0)])
-        self.assertAlmostEqual(got, 6.0 * math.log(1.2), places=9)
+        self.assertAlmostEqual(got, (-10.0 + math.sqrt(148.0)) / 2.0, places=12)
 
     def test_two_tempo_points_at_one_beat(self):
         # The zero-length span takes no time. 60 BPM then holds, so beat 1 is 1 second.
@@ -71,6 +70,16 @@ class ScheduleTest(unittest.TestCase):
                 if line and not line.startswith("#")
             ]
             self.assertEqual(stored, fresh)
+
+    def test_reaper_782_captures_against_the_schedule(self):
+        results = ROOT / "results" / "reaper-7.82-linux"
+        constant = diff_log.load(ROOT / "expected" / "constant-120.txt")
+        ramp = diff_log.load(ROOT / "expected" / "ramp-44100-1024.txt")
+        self.assertEqual(diff_log.compare(constant, diff_log.load(results / "constant-120-events.txt"), 1), [])
+        self.assertEqual(
+            diff_log.compare(ramp, diff_log.load(results / "ramp-44100-1024-events.txt"), 1),
+            ["missing 85828 off note 46 ch 3", "extra 85830 off note 46 ch 3"],
+        )
 
     def test_diff_rejects_an_extra_note(self):
         with tempfile.TemporaryDirectory() as directory:
