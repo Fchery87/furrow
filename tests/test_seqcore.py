@@ -61,10 +61,12 @@ class SeqCoreTest(unittest.TestCase):
     def test_two_engines_claim_different_slots(self):
         from harness import jsfx_host
         other = jsfx_host.Effect(SEQCORE)
-        other.time(120, 0, 0)
-        other.process()
-        self.assertEqual((self.rig.slot, other.slider(1)), (0, 1.0))
-        other.close()
+        try:
+            other.time(120, 0, 0)
+            other.process()
+            self.assertEqual((self.rig.slot, other.slider(1)), (0, 1.0))
+        finally:
+            other.close()
 
     def test_a_transaction_applies_whole_and_the_snapshot_shows_it(self):
         code = self.rig.apply([add_lane(0), add_lane(3, row=1), step_on(0, 0), step_on(3, 5),
@@ -239,10 +241,12 @@ class SeqCoreTest(unittest.TestCase):
         # REAPER builds a new instance when an FX comes back online or a project reopens.
         from harness import jsfx_host
         reloaded = jsfx_host.Effect(SEQCORE)
-        reloaded.load(saved)
-        reloaded.time(120, 0, 0)
-        events = reloaded.process()
-        reloaded.close()
+        try:
+            reloaded.load(saved)
+            reloaded.time(120, 0, 0)
+            events = reloaded.process()
+        finally:
+            reloaded.close()
         self.assertEqual([e[2:4] for e in events[:3]], [(0x80, 60), (0xB0, 123), (0xB1, 123)])
         self.assertEqual(len(events), 65)
 

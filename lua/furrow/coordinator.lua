@@ -166,6 +166,10 @@ end
 
 -- Closes every finished gesture whose transactions all have results.
 function Coordinator:settle()
+  -- Host changes use the active project, so they wait until this rack's tab is active.
+  if reaper.EnumProjects(-1) ~= self.proj then
+    return
+  end
   local kept = {}
   for _, gesture in ipairs(self.gestures) do
     local done = not gesture.open and #gesture.queue == 0 and gesture.waiting == 0

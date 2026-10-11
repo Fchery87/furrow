@@ -238,13 +238,17 @@ local function decode_bank(mem, at)
   return snap
 end
 
--- Reads the newest published bank, frees every published bank and returns the snapshot,
--- or nil when nothing new arrived. A bank from an older generation is freed unread.
+-- Reads the newest published bank and returns the snapshot, or nil when nothing new
+-- arrived. It frees only banks it saw published before decoding, so a bank SeqCore
+-- publishes during the decode waits for the next call. A bank from an older generation
+-- is freed unread.
 function Session:read_snapshot()
   local best, best_seq = nil, self.last_snap
+  local seen = {}
   for bank = 0, 1 do
     local at = self.base + wire.BANK0 + bank * wire.BANK_STRIDE
     if self.mem.read(at + wire.B_STATE) == wire.BANK_PUBLISHED then
+      seen[#seen + 1] = at
       local seq = round(self.mem.read(at + wire.B_SEQ))
       if seq > best_seq and round(self.mem.read(at + wire.B_GENERATION)) == self.generation then
         best, best_seq = at, seq
@@ -252,11 +256,8 @@ function Session:read_snapshot()
     end
   end
   local snap = best and decode_bank(self.mem, best)
-  for bank = 0, 1 do
-    local at = self.base + wire.BANK0 + bank * wire.BANK_STRIDE
-    if self.mem.read(at + wire.B_STATE) == wire.BANK_PUBLISHED then
-      self.mem.write(at + wire.B_STATE, wire.BANK_FREE)
-    end
+  for _, at in ipairs(seen) do
+    self.mem.write(at + wire.B_STATE, wire.BANK_FREE)
   end
   if snap then
     self.last_snap = snap.seq
