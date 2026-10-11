@@ -1,50 +1,75 @@
 desc: Furrow probe receiver
 tags: midi
-in_pin: none
-out_pin: none
+in_pin:left
+in_pin:right
+out_pin:left
+out_pin:right
 
 options: gmem=FurrowProbeReceiver
 
+slider1:0<0,3,1>Receiver slot
+
 @init
 ext_midi_bus = 1;
-block_start = 0;
-event_count = 0;
-block_count = 0;
-sample_count = 0;
+ext_noinit = 1;
+// gmem layout version 2. Each slot owns its event region. Slot 0 alone writes the tempo logs.
+// gmem[0] version, gmem[2] block tempo count, gmem[3] sample tempo count,
+// gmem[4] project sample of the first sample tempo, gmem[10 + slot] event count.
+VERSION = 2;
+BLOCK_LOG = 1000;
+BLOCK_MAX = 50000;
+SAMPLE_LOG = 200000;
+SAMPLE_MAX = 1000000;
+EVENT_LOG = 2000000;
+EVENT_STRIDE = 500000;
+EVENT_MAX = 50000;
+was_playing = 0;
+logging_tempo = 0;
 
 @block
-block_count < 100000 ? (
-  gmem[1 + block_count] = tempo;
-  block_count += 1;
-);
-sample_in_block = 0;
-loop(samplesblock,
-  sample_count < 1000000 ? (
-    gmem[100001 + sample_count] = tempo;
-    sample_count += 1;
+slot = floor(slider1 + 0.5);
+playing = play_state == 1 || play_state == 5;
+block_sample = floor(play_position * srate + 0.5);
+gmem[0] = VERSION;
+playing && !was_playing ? (
+  gmem[10 + slot] = 0;
+  slot == 0 ? (
+    gmem[2] = 0;
+    gmem[3] = 0;
+    gmem[4] = block_sample;
   );
-  sample_in_block += 1;
+);
+was_playing = playing;
+logging_tempo = playing && slot == 0;
+logging_tempo && gmem[2] < BLOCK_MAX ? (
+  at = BLOCK_LOG + gmem[2] * 2;
+  gmem[at] = block_sample;
+  gmem[at + 1] = tempo;
+  gmem[2] += 1;
 );
 while (midirecv(offset, msg1, msg2, msg3)) (
   status = msg1 & $xF0;
   is_on = status == $x90 && msg3 > 0;
   is_off = status == $x80 || (status == $x90 && msg3 == 0);
-  (is_on || is_off) && event_count < 100000 ? (
-    at = 2000000 + event_count * 9;
-    gmem[at] = block_start + offset;
+  count = gmem[10 + slot];
+  playing && (is_on || is_off) && count < EVENT_MAX ? (
+    at = EVENT_LOG + slot * EVENT_STRIDE + count * 9;
+    gmem[at] = block_sample + offset;
     gmem[at + 1] = is_on;
-    gmem[at + 2] = msg1 & 15;
+    gmem[at + 2] = slot;
     gmem[at + 3] = midi_bus;
     gmem[at + 4] = 0;
     gmem[at + 5] = msg1 & 15;
     gmem[at + 6] = msg2;
     gmem[at + 7] = is_on ? msg3 : 0;
     gmem[at + 8] = is_on;
-    event_count += 1;
+    gmem[10 + slot] = count + 1;
   );
   midisend(offset, msg1, msg2, msg3);
 );
-block_start += samplesblock;
-gmem[0] = event_count;
-gmem[100000] = block_count;
-gmem[1100000] = sample_count;
+
+@sample
+logging_tempo && gmem[3] < SAMPLE_MAX ? (
+  gmem[SAMPLE_LOG + gmem[3]] = tempo;
+  gmem[3] += 1;
+);
