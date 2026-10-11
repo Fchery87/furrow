@@ -81,6 +81,17 @@ class ScheduleTest(unittest.TestCase):
             ["missing 85828 off note 46 ch 3", "extra 85830 off note 46 ch 3"],
         )
 
+    def test_reaper_782_extrapolating_engine_captures(self):
+        results = ROOT / "results" / "reaper-7.82-linux"
+        constant = diff_log.load(ROOT / "expected" / "constant-120.txt")
+        ramp = diff_log.load(ROOT / "expected" / "ramp-44100-1024.txt")
+        self.assertEqual(
+            diff_log.compare(constant, diff_log.load(results / "constant-120-extrapolate-events.txt"), 1), []
+        )
+        self.assertEqual(
+            diff_log.compare(ramp, diff_log.load(results / "ramp-44100-1024-extrapolate-events.txt"), 0), []
+        )
+
     def test_diff_rejects_an_extra_note(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
