@@ -160,29 +160,32 @@ Each result holds both stopped and playing. With the lua mark, one native undo r
 
 ## RS5K response
 
-`lua/furrow_probe_rs5k.lua` drove RS5K 7.82 with a generated 1 kHz sine at full velocity. `rs5k-v1-results.txt` has 31 results and no failures. The 3-second sample held a steady 0.3535 RMS on each channel, which is the sample's own level, at 1000.1 Hz.
+`lua/furrow_probe_rs5k.lua` drove RS5K 7.82 with a generated 1 kHz sine. A full-velocity note held 0.3535 RMS on each channel, which is the sample's own level, at 1000.1 Hz.
 
-| Case | Result | Valid |
-| --- | --- | --- |
-| Note-off, default settings | Level unchanged. RS5K plays the sample to its end | Yes |
-| Note-off, Obey note-offs on | Level falls to silence, -316 dB | Yes |
-| Pitch bend at both extremes | +2.01 and -2.00 semitones, matching the default bend range of 2 | Yes, inferred. Bend moves every sounding voice |
-| Raw CC 10 at 0 and 127 | Balance unchanged and Pan reads 0.5. RS5K ignores raw CC 10 | Yes |
-| Raw CC 7 at 0 | Level did not fall and Volume reads 0.5. RS5K ignores raw CC 7 | Yes |
-| Raw CC 7 at 127, velocity 64 | -19.4 and -1.6 dB | No. See below |
-| CC 7 linked to Volume | CC 0 silences, -310 dB. CC 127 gives +6.02 dB. The parameter follows the CC linearly | Yes |
-| CC 10 linked to Pan | CC 0 is hard left and CC 127 hard right, about 314 dB apart | Yes |
-| CC 7 and CC 10 through MIDI learn | No effect. Volume stayed at 0.7874 and Pan at 0.5039, the values the links left | Yes |
+**First run.** `rs5k-v1-results.txt` left Obey note-offs off for its first section. Each note's voice kept playing for the full 3-second sample, about 1.3 s into the next note, so copies of the same sine overlapped at different phases. Raw CC 7 = 127 read -19.4 dB and velocity 64 read -1.6 dB from that overlap, not from RS5K. Its link, learn, pan and Obey note-offs results match the second run.
 
-**Why two rows are invalid.** Obey note-offs was off for the first section, so each note's voice kept playing for the full 3 seconds. Each note was about 1.3 s after the last, so two or three voices of the same sine overlapped at different phases. Two equal sines sum to anywhere from +6 dB to silence. The +5.1 dB at raw CC 7 = 0 and the -19.4 dB at CC 7 = 127 fit that. The second run turns Obey note-offs on before every level case and fails if any voice is still sounding before a note-on.
+**Second run.** `rs5k-v2-results.txt` has 38 results and no failures. It turns Obey note-offs on before every level case. Before each note-on it confirmed no voice was sounding.
 
-**Link and learn readbacks.** Every `plink` and `learn` key read back the value written.
+| Case | Result |
+| --- | --- |
+| Note-off, default settings | Level unchanged. RS5K plays the sample to its end |
+| Note-off, Obey note-offs on | Silence, -310 dB. Turning Obey note-offs on also let a note-off stop a voice that started before |
+| Velocity 64 and 1, default Gain for minimum velocity of +0.0 dB | 0.0 dB and 0.0 dB. RS5K ignores velocity by default |
+| Velocity 64 and 1, Gain for minimum velocity at -inf | -6.02 dB and silence. Inferred, amplitude is (velocity - 1) / 126 |
+| Raw CC 7 at 0 and 127 | Level unchanged and Volume reads 0.5. RS5K ignores raw CC 7 |
+| Raw CC 10 at 0 and 127 | Balance unchanged and Pan reads 0.5. RS5K ignores raw CC 10 |
+| Pitch bend at both extremes | +1.99 and -1.98 semitones. The default bend range is 2 |
+| CC 7 linked to Volume | CC 0 silences. CC 127 gives +6.02 dB. The parameter follows the CC linearly |
+| CC 10 linked to Pan | CC 0 is hard left and CC 127 hard right, about 314 dB apart |
+| Links removed after CC 7 = 100 and CC 10 = 64 | Volume stays at 0.7874 and Pan at 0.5039, the last linked values |
+| CC 7 and CC 10 through MIDI learn | No effect. Volume and Pan stayed at 0.5 |
 
-**Inferred from the parameter list.** Gain for minimum velocity defaults to +0.0 dB. If that means velocity 1 plays at the same level as 127, RS5K ignores velocity by default and Furrow must lower that parameter when it creates a lane. The second run measures it.
+**Readbacks.** Every `plink` and `learn` key read back the value written. MIDI learn failed on both runs. The cause is not known.
+
+**Pitch bend precision.** The zero-crossing count over 0.4 s resolves about 0.005 semitones, inferred. The -1.98 reading is 0.02 semitones short of -2. The cause is not known, and it does not affect a lane.
 
 **What this means for the spec.**
-- Parameter links from the track's MIDI are the working method for per-lane volume and pan, and for V2 parameter locks. MIDI learn did not respond to the same CCs. The cause is not known.
-- A link maps CC 0 to 127 onto the whole parameter range. On Volume that is silence to +6 dB, so CC 100 sets +3.9 dB, not unity. The spec's lane volume must pick the CC from the dB it wants, or set `scale` and `offset`.
-- Removing a link leaves the parameter at the last linked value. A lane that drops a link must restore the base value itself.
-- Gate length depends on Obey note-offs. Furrow must turn it on for every RS5K it creates.
-
+- Parameter links from the track's MIDI are the working method for per-lane volume and pan, and for V2 parameter locks. MIDI learn did not respond to the same CCs.
+- A link maps CC 0 to 127 onto the whole parameter range. On Volume that is silence to +6 dB, so CC 100 gives +3.9 dB, measured in the first run, not unity. Lane volume must pick the CC from the dB it wants, or set `scale` and `offset`.
+- Removing a link leaves the parameter at its last linked value. A lane that drops a link must restore the base value itself.
+- Gate length needs Obey note-offs on. Per-step velocity needs Gain for minimum velocity below +0.0 dB. Furrow must set both on every RS5K it creates. At -inf, velocity 1 is silent.
