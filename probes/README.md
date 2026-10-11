@@ -48,12 +48,12 @@ The script writes `furrow-lifecycle-results.txt` next to the project. `probes/ch
 
 **RS5K probe.** `lua/furrow_probe_rs5k.lua` measures whether ReaSamplOmatic5000 responds to the controls a Furrow lane sends. It writes a 3-second 1 kHz sine next to the project and loads it into RS5K. RS5K sits between `jsfx/furrow_probe_driver.jsfx`, which sends the MIDI the script asks for, and `jsfx/furrow_probe_meter.jsfx`, which measures each channel's level and counts zero crossings, then silences the track.
 
-- **Notes.** Level, pitch and the level after a note-off, with default settings and with Obey note-offs on. Velocity 64 against 127.
+- **Notes.** The level after a note-off with default settings. Then, with Obey note-offs on, level, pitch and the level after a note-off. Velocity 64 and 1 against 127, at the default and the lowest Gain for minimum velocity.
 - **Raw controllers.** CC 7 and CC 10 sent straight to RS5K. Pitch bend at both extremes.
 - **Parameter links.** CC 7 to Volume and CC 10 to Pan through `param.X.plink.*` with `effect=-100`, the mechanism the spec plans for parameter locks.
 - **MIDI learn.** The same two mappings through `param.X.learn.midi1` and `midi2`.
 
-The script records every RS5K parameter with its value, and reads each link setting back. Save the project first. The results go to `furrow-rs5k-results.txt`.
+The script records every RS5K parameter with its value, and reads each link setting back. It also records Volume and Pan after their links are removed. Before every note-on it measures 0.1 s of output and fails if a voice is still sounding, because a leftover voice adds to the next measurement at an unknown phase. Save the project first. The results go to `furrow-rs5k-results.txt`.
 
 **gmem layout, version 3.** Named gmem `FurrowProbeReceiver`. `gmem[0]` is the layout version. `gmem[2]` and `gmem[3]` count block and sample tempo entries. `gmem[4]` is the project sample of the first sample tempo. `gmem[10 + slot]` counts slot events. Block entries start at 1,000, three numbers each. Project sample, tempo and `beat_position`. Sample tempos start at 200,000. Slot events start at 2,000,000 + slot × 500,000, nine numbers each. Sample, order, lane, bus, destination bus, channel, note, velocity, kind. Kind 1 is a note-on. Kind 0 is a note-off. Sample positions come from `play_position` in each block, so they count from project time zero.
 

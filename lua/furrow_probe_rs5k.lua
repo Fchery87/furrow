@@ -12,6 +12,7 @@ local SAMPLE_SECONDS = 3
 local SINE_HZ = 1000
 local NOTE = 60
 local STATE_ALL = -1
+local SILENCE = 0.001
 
 local lines = {}
 local failures = 0
@@ -99,8 +100,12 @@ local function measure(seconds)
   }
 end
 
--- Plays one note and returns the held level and pitch and the level after the note-off.
+-- A voice still sounding from an earlier note adds to the next measurement at an unknown phase.
 local function play(velocity)
+  local before = measure(0.1)
+  if before.left > SILENCE or before.right > SILENCE then
+    fail("silent before the note-on", string.format("left %.6f, right %.6f", before.left, before.right))
+  end
   send(0x90, NOTE, velocity)
   wait(0.1)
   local held = measure(0.4)
@@ -228,15 +233,41 @@ local function main()
     return
   end
 
-  log("== raw MIDI, default settings")
+  local min_gain = find_param(track, fx, "^gain for minimum velocity")
+  if not min_gain then
+    fail("Gain for minimum velocity parameter found")
+    return
+  end
+
+  log("== note-off, default settings")
   reset_controllers()
+  local unreleased = play(127)
+  result("note-off, default settings, level change dB", db(unreleased.after_off.left / unreleased.left))
+  reaper.TrackFX_SetParamNormalized(track, fx, obey, 1)
+  send(0x80, NOTE, 0)
+  wait(0.1)
+  local stopped = measure(0.1)
+  result("note-off after Obey note-offs is turned on, level", stopped.left)
+
+  log("== Obey note-offs on")
   local baseline = play(127)
   result("baseline held level, left", baseline.left)
   result("baseline held level, right", baseline.right)
   result("baseline pitch Hz", baseline.hz)
-  result("note-off, default settings, level change dB", db(baseline.after_off.left / baseline.left))
-  local soft = play(64)
-  result("velocity 64, level change dB", db(soft.left / baseline.left))
+  result("note-off with Obey note-offs, level change dB", db(baseline.after_off.left / baseline.left))
+  for _, velocity in ipairs({ 64, 1 }) do
+    result("velocity " .. velocity .. ", level change dB", db(play(velocity).left / baseline.left))
+  end
+  local _, default_gain = reaper.TrackFX_GetFormattedParamValue(track, fx, min_gain, "")
+  reaper.TrackFX_SetParamNormalized(track, fx, min_gain, 0)
+  local _, lowest_gain = reaper.TrackFX_GetFormattedParamValue(track, fx, min_gain, "")
+  result("Gain for minimum velocity, default and lowest", default_gain .. " and " .. lowest_gain)
+  for _, velocity in ipairs({ 64, 1 }) do
+    result("lowest minimum-velocity gain, velocity " .. velocity .. ", level change dB", db(play(velocity).left / baseline.left))
+  end
+  reaper.TrackFX_SetParamNormalized(track, fx, min_gain, 0.5)
+
+  log("== raw MIDI")
   controller_cases("raw", track, fx, volume, pan, baseline)
   send(0xE0, 127, 127)
   local up = play(127)
@@ -246,17 +277,16 @@ local function main()
   result("pitch bend minimum, pitch change semitones", 12 * math.log(down.hz / baseline.hz, 2))
   reset_controllers()
 
-  log("== Obey note-offs on")
-  reaper.TrackFX_SetParamNormalized(track, fx, obey, 1)
-  local released = play(127)
-  result("note-off with Obey note-offs, level change dB", db(released.after_off.left / released.left))
-
   log("== parameter links, CC 7 to Volume and CC 10 to Pan")
   result("Volume link settings read back", link(track, fx, volume, 7, true))
   result("Pan link settings read back", link(track, fx, pan, 10, true))
   controller_cases("linked", track, fx, volume, pan, baseline)
   link(track, fx, volume, 7, false)
   link(track, fx, pan, 10, false)
+  result("Volume parameter after the link is removed", reaper.TrackFX_GetParamNormalized(track, fx, volume))
+  result("Pan parameter after the link is removed", reaper.TrackFX_GetParamNormalized(track, fx, pan))
+  reaper.TrackFX_SetParamNormalized(track, fx, volume, 0.5)
+  reaper.TrackFX_SetParamNormalized(track, fx, pan, 0.5)
 
   log("== MIDI learn, CC 7 to Volume and CC 10 to Pan")
   result("Volume learn settings read back", learn(track, fx, volume, 7, true))
