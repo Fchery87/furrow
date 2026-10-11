@@ -61,25 +61,39 @@ local function insert(index, name)
   return track
 end
 
+local missing = nil
+
+local function add_fx(track, name)
+  local index = reaper.TrackFX_AddByName(track, name, false, -1)
+  if index < 0 then
+    missing = missing or name
+  end
+  return index
+end
+
 local folder = insert(start, NAME.folder)
 reaper.SetMediaTrackInfo_Value(folder, "I_FOLDERDEPTH", 1)
 
 local engine = insert(start + 1, NAME.engine)
 reaper.SetMediaTrackInfo_Value(engine, "B_MAINSEND", 0)
 reaper.SetMediaTrackInfo_Value(engine, "I_NCHAN", 8)
-reaper.TrackFX_AddByName(engine, "JS:furrow_probe_engine.jsfx", false, -1)
+add_fx(engine, "JS:furrow_probe_engine.jsfx")
 
 local lane = 0
 while lane < LANE_COUNT do
   local track = insert(start + 2 + lane, string.format("Furrow Probe Lane %d", lane + 1))
   reaper.SetMediaTrackInfo_Value(track, "I_NCHAN", 2)
-  reaper.TrackFX_AddByName(track, "JS:furrow_probe_receiver.jsfx", false, -1)
+  local receiver = add_fx(track, "JS:furrow_probe_receiver.jsfx")
+  if receiver >= 0 then
+    -- Parameter 0 is the receiver slot. Each slot writes its own gmem event region.
+    reaper.TrackFX_SetParam(track, receiver, 0, lane)
+  end
   local send = reaper.CreateTrackSend(engine, track)
   -- Audio source -1 means this send carries no audio. The folder receives lane audio.
   reaper.SetTrackSendInfo_Value(engine, 0, send, "I_SRCCHAN", -1)
-  -- Low 5 bits are the source channel filter. 0 means all. Next 5 bits are the destination channel.
-  -- Lane 1 records as destination channel 1, which is zero-based channel 0.
-  local flags = (1 + lane) << 5
+  -- Low 5 bits are the one-based source channel filter. 0 would pass every lane to every receiver.
+  -- Next 5 bits are the one-based destination channel. Lane 1 keeps zero-based channel 0.
+  local flags = (1 + lane) | ((1 + lane) << 5)
   reaper.SetTrackSendInfo_Value(engine, 0, send, "I_MIDIFLAGS", flags)
   lane = lane + 1
 end
@@ -87,6 +101,22 @@ end
 local last = reaper.GetTrack(0, start + 1 + LANE_COUNT)
 reaper.SetMediaTrackInfo_Value(last, "I_FOLDERDEPTH", -1)
 
+if missing then
+  local index = start + 1 + LANE_COUNT
+  while index >= start do
+    reaper.DeleteTrack(reaper.GetTrack(0, index))
+    index = index - 1
+  end
+end
+
 reaper.PreventUIRefresh(-1)
 reaper.TrackList_AdjustWindows(false)
 reaper.Undo_EndBlock("Create Furrow probe layout", -1)
+
+if missing then
+  reaper.ShowMessageBox(
+    "REAPER could not load " .. missing .. ". Copy both files from jsfx/ into the Effects directory and run this again.",
+    "Furrow probe",
+    0
+  )
+end
