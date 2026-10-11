@@ -121,6 +121,7 @@ return {
   SEED_MAX = 16777215,
   LANES = 64,
   MAX_STEPS = 512,
+  PAGE_STEPS = 16,
   DEFAULT_LENGTH = 16,
 
   -- SeqCore's slider 1 and 2 are FX parameters 0 and 1.
