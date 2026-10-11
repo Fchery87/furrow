@@ -1,0 +1,41 @@
+== L1 user edit during a gesture
+RESULT L1 host first first undo restores the step = true
+RESULT L1 host first first undo removes the gesture's track = false
+RESULT L1 host first first undo keeps the user rename = true
+RESULT L1 host first second undo restores the name = true
+RESULT L1 host first second undo leaves no gesture track = true
+RESULT L1 engine first first undo restores the step = true
+RESULT L1 engine first first undo removes the gesture's track = true
+RESULT L1 engine first first undo keeps the user rename = true
+RESULT L1 engine first second undo restores the name = true
+RESULT L1 engine first second undo leaves no gesture track = true
+== L2 bypass with a pending command
+RESULT L2 heartbeat moves while bypassed = false
+RESULT L2 command acknowledged while bypassed = false
+RESULT L2 command acknowledged after re-enable = true
+RESULT L2 step toggled once after re-enable = true
+RESULT L2 top of undo after bypass and re-enable = 'FX bypass toggle: Track 2 Furrow Probe Engine: Furrow probe engine'
+== L3 offline and online
+RESULT L3 marked heartbeat moves while offline = false
+RESULT L3 marked heartbeat moves after online = true
+RESULT L3 marked edit survives offline and online = true
+RESULT L3 marked top of undo after offline and online = 'FX offline toggle: Track 2 Furrow Probe Engine: Furrow probe engine'
+RESULT L3 marked top of undo before its cleanup undo = 'FX offline toggle: Track 2 Furrow Probe Engine: Furrow probe engine'
+RESULT L3 unmarked heartbeat moves while offline = false
+RESULT L3 unmarked heartbeat moves after online = true
+RESULT L3 unmarked edit survives offline and online = true
+RESULT L3 unmarked top of undo after offline and online = 'FX offline toggle: Track 2 Furrow Probe Engine: Furrow probe engine'
+== L4 project tab switch with a pending command
+RESULT L4 command acknowledged while the engine's tab is in the background = false
+RESULT L4 command acknowledged after returning = true
+RESULT L4 step toggled once = true
+== L5 note cleanup
+RESULT L5 bypass note-off reached the receiver = false
+RESULT L5 bypass controller reached the receiver = false
+RESULT L5 bypass note-off after the engine returned = true
+RESULT L5 offline note-off reached the receiver = false
+RESULT L5 offline controller reached the receiver = false
+RESULT L5 offline note-off after the engine returned = false
+RESULT L5 stop note-off reached the receiver = true
+RESULT L5 stop controller reached the receiver = false
+35 results, 0 failures
