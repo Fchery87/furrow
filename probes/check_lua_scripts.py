@@ -105,6 +105,125 @@ def run(stub, script):
     lua.execute((LUA / script).read_text())
 
 
+class StubUndoReaper(StubReaper):
+    """An engine that applies mailbox commands once per tick, and an undo that snapshots everything."""
+
+    def __init__(self, project, steps, engine_runs=True, restores_fx=True):
+        super().__init__(project=project)
+        for name in ("Furrow Probe Folder", "Furrow Probe Engine", "Furrow Probe Lane 1"):
+            self.InsertTrackAtIndex(len(self.tracks), True)
+            self.tracks[-1]["name"] = name
+        self.steps = list(steps)
+        self.engine_runs = engine_runs
+        self.restores_fx = restores_fx
+        self.gmem = {0: 1}
+        self.last_seq = 0
+        self.pending_seq = 0
+        self.apply_at = 0
+        self.clock = 0
+        self.deferred = None
+        self.history = [("", self.snapshot())]
+        self.cursor = 0
+
+    def table(self, lua):
+        api = super().table(lua)
+        for name in ("GetTrackGUID", "gmem_write", "defer", "time_precise", "Undo_OnStateChangeEx2", "Undo_BeginBlock2",
+                     "Undo_EndBlock2", "Undo_DoUndo2", "Undo_DoRedo2", "Undo_CanUndo2", "OnPlayButton",
+                     "OnStopButton"):
+            api[name] = getattr(self, name)
+        return api
+
+    def snapshot(self):
+        return {"steps": list(self.steps), "tracks": [dict(track) for track in self.tracks]}
+
+    def restore(self, state):
+        if self.restores_fx:
+            self.steps = list(state["steps"])
+            self.gmem[7] = self.gmem.get(7, 0) + 1
+            self.gmem[8] = self.gmem.get(8, 0) + 1
+        self.tracks[:] = [dict(track) for track in state["tracks"]]
+
+    def engine_block(self):
+        if not self.engine_runs:
+            return
+        self.gmem[1] = self.gmem.get(1, 0) + 1
+        seq = self.gmem.get(2, 0)
+        if seq != self.last_seq:
+            if seq != self.pending_seq:
+                self.pending_seq = seq
+                self.apply_at = self.gmem[1] + self.gmem.get(5, 0)
+            if self.gmem[1] >= self.apply_at:
+                index = int(self.gmem.get(4, 0))
+                self.steps[index] = 1 - self.steps[index]
+                self.last_seq = seq
+                self.gmem[6] = seq
+                self.gmem[7] = self.gmem.get(7, 0) + 1
+        for index, value in enumerate(self.steps):
+            self.gmem[100 + index] = value
+
+    def drive(self, limit=200000):
+        while self.deferred is not None and limit > 0:
+            callback, self.deferred = self.deferred, None
+            self.engine_block()
+            self.clock += 1
+            callback()
+            limit -= 1
+
+    def InsertTrackAtIndex(self, index, defaults):
+        super().InsertTrackAtIndex(index, defaults)
+        self.guids = getattr(self, "guids", 0) + 1
+        self.tracks[int(index)]["guid"] = "{%08d}" % self.guids
+
+    def GetTrackGUID(self, track):
+        return track["guid"]
+
+    def gmem_write(self, index, value):
+        self.gmem[int(index)] = value
+
+    def defer(self, callback):
+        self.deferred = callback
+
+    def time_precise(self):
+        return self.clock * 0.001
+
+    def push(self, description):
+        del self.history[self.cursor + 1:]
+        self.history.append((description, self.snapshot()))
+        self.cursor += 1
+
+    def Undo_OnStateChangeEx2(self, project, description, states, track):
+        self.push(description)
+
+    def Undo_BeginBlock2(self, project):
+        pass
+
+    def Undo_EndBlock2(self, project, description, flags):
+        self.push(description)
+
+    def Undo_DoUndo2(self, project):
+        if self.cursor == 0:
+            return 0
+        self.cursor -= 1
+        self.restore(self.history[self.cursor][1])
+        return 1
+
+    def Undo_DoRedo2(self, project):
+        if self.cursor + 1 == len(self.history):
+            return 0
+        self.cursor += 1
+        self.restore(self.history[self.cursor][1])
+        return 1
+
+    def Undo_CanUndo2(self, project):
+        return self.history[self.cursor][0] if self.cursor > 0 else None
+
+    def OnPlayButton(self):
+        pass
+
+    def OnStopButton(self):
+        pass
+
+
 @unittest.skipIf(lua54 is None, "lupa is not installed")
 class LayoutTest(unittest.TestCase):
     def test_each_send_filters_its_own_source_channel(self):
@@ -173,6 +292,39 @@ class DumpTest(unittest.TestCase):
             run(stub, "furrow_probe_dump.lua")
             self.assertEqual(list(Path(directory).iterdir()), [])
             self.assertIn("layout version 2", stub.messages[-1])
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class UndoTest(unittest.TestCase):
+    def run_undo(self, **options):
+        steps = [int(value) for value in "1000100010001000" "0010001000100010" + "0" * 32]
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubUndoReaper(str(Path(directory) / "undo.rpp"), steps, **options)
+            run(stub, "furrow_probe_undo.lua")
+            stub.drive()
+            results = (Path(directory) / "furrow-undo-results.txt").read_text().splitlines()
+        return stub, results
+
+    def test_an_undo_that_restores_engine_state_passes_every_check(self):
+        stub, results = self.run_undo()
+        failed = [line for line in results if line.startswith("FAIL")]
+        self.assertEqual(failed, [])
+        self.assertEqual(results[-1], "0 failures")
+        self.assertEqual(sum(line.startswith("PASS") for line in results), 47)
+        self.assertEqual([track["name"] for track in stub.tracks],
+                         ["Furrow Probe Folder", "Furrow Probe Engine", "Furrow Probe Lane 1"])
+
+    def test_an_undo_that_skips_engine_state_fails_the_step_checks(self):
+        stub, results = self.run_undo(restores_fx=False)
+        failed = [line.split("  ")[0] for line in results if line.startswith("FAIL")]
+        self.assertIn("FAIL stopped A undo restores step", failed)
+        self.assertIn("FAIL stopped C2 one undo restores step and track", failed)
+        self.assertNotIn("FAIL stopped B first undo keeps the rename", failed)
+
+    def test_an_engine_that_never_runs_stops_at_the_first_wait(self):
+        stub, results = self.run_undo(engine_runs=False)
+        self.assertIn("FAIL engine processes while stopped", results)
+        self.assertIn("FAIL engine processes while playing", results)
 
 
 if __name__ == "__main__":
