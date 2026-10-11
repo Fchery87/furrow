@@ -13,7 +13,9 @@ OP_COMMIT, OP_SET_STEP, OP_ADD_LANE, OP_REMOVE_LANE, OP_SET_LANE, OP_SET_RACK, O
 OP_AUDITION = 8
 OK, STALE, INVALID, CAPACITY, ABORTED, LOAD_ERROR = 1, 2, 3, 4, 5, 6
 L_MUTE, L_SOLO, L_VOLUME, L_PAN = 5, 6, 7, 8
-F_ON, F_VEL, F_GATE = 0, 1, 9
+F_ON, F_VEL, F_GATE, F_PROB = 0, 1, 9, 12
+R_SEED, R_SWING, R_TRUNCATE = 1, 4, 5
+L_SWING = 10
 SAMPLES_PER_STEP = 5512.5  # a sixteenth at 120 BPM and 44.1 kHz
 
 
@@ -23,6 +25,25 @@ def add_lane(slot, lane_id=None, note=60, row=None):
 
 def step_on(slot, step, value=1, pattern=0):
     return [OP_SET_STEP, pattern, slot, step, F_ON, value]
+
+
+PROB_M, PROB_A, PROB_B, PROB_C = 67108859, 40503817, 60251237, 9301841
+PROB_VECTORS = [
+    ((0, 0, 0, 0), 59528724), ((0, 0, 0, 1), 30014588), ((1, 0, 0, 0), 10390278),
+    ((0, 1, 0, 0), 63793128), ((0, 0, 1, 0), 27661453), ((12345, 7, 999999, 123456), 58092903),
+    ((16777215, 255, 16777215, 67108858), 58439087),
+]
+
+
+def prob_roll(seed, pattern_key, lane_key, n):
+    """The reference hash. SeqCore and lua/furrow/prob.lua must match it bit for bit."""
+    h = 0
+    for x in (seed, pattern_key, lane_key, n % PROB_M):
+        h = (h + x + 1) % PROB_M
+        h = (h * PROB_A) % PROB_M
+        h = (h * h + PROB_C) % PROB_M
+        h = (h * PROB_B) % PROB_M
+    return (h * h + PROB_C) % PROB_M
 
 
 @unittest.skipIf(SKIP, SKIP)
@@ -249,6 +270,96 @@ class SeqCoreTest(unittest.TestCase):
             reloaded.close()
         self.assertEqual([e[2:4] for e in events[:3]], [(0x80, 60), (0xB0, 123), (0xB1, 123)])
         self.assertEqual(len(events), 65)
+
+    def note_ons(self, bus=0, channel=0):
+        return [e[0] for e in self.rig.events if e[1] == bus and e[2] == 0x90 + channel and e[4] > 0]
+
+    def note_offs(self, bus=0, channel=0):
+        return [e[0] for e in self.rig.events if e[1] == bus and e[2] == 0x80 + channel and e[0] > 0]
+
+    def play(self, blocks):
+        self.rig.events.clear()
+        self.rig.seek(0.0)
+        self.rig.run(blocks)
+
+    def assert_samples(self, got, want):
+        self.assertEqual(len(got), len(want), (got, want))
+        for g, w in zip(got, want):
+            self.assertLessEqual(abs(g - w), 1, (got, want))
+
+    def test_swing_delays_every_second_step_by_a_third_of_a_step_times_both_amounts(self):
+        lanes = [add_lane(0), add_lane(1, note=61), add_lane(2, note=62)]
+        steps = [step_on(slot, 1) for slot in range(3)]
+        tune = [[OP_SET_LANE, 1, L_SWING, 0], [OP_SET_LANE, 2, L_SWING, 5000], [OP_SET_RACK, R_SWING, 10000]]
+        self.rig.apply(lanes + steps + tune)
+        self.play(10)
+        third = SAMPLES_PER_STEP / 3
+        self.assert_samples(self.note_ons(0, 0), [SAMPLES_PER_STEP + third])
+        self.assert_samples(self.note_ons(0, 1), [SAMPLES_PER_STEP])
+        self.assert_samples(self.note_ons(0, 2), [SAMPLES_PER_STEP + third / 2])
+
+    def test_global_swing_zero_leaves_steps_on_the_grid_and_even_steps_never_swing(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1), step_on(0, 2), [OP_SET_RACK, R_SWING, 0]])
+        self.play(14)
+        self.assert_samples(self.note_ons(), [0, SAMPLES_PER_STEP, 2 * SAMPLES_PER_STEP])
+        self.rig.apply([[OP_SET_RACK, R_SWING, 10000]])
+        self.play(14)
+        third = SAMPLES_PER_STEP / 3
+        self.assert_samples(self.note_ons(), [0, SAMPLES_PER_STEP + third, 2 * SAMPLES_PER_STEP])
+
+    def test_truncation_ends_a_swung_note_at_the_next_step_boundary(self):
+        self.rig.apply([add_lane(0), step_on(0, 1), [OP_SET_STEP, 0, 0, 1, F_GATE, 10000],
+                        [OP_SET_RACK, R_SWING, 10000]])
+        self.play(14)
+        third = SAMPLES_PER_STEP / 3
+        self.assert_samples(self.note_offs(), [SAMPLES_PER_STEP + third + SAMPLES_PER_STEP])
+        self.rig.apply([[OP_SET_RACK, R_TRUNCATE, 1]])
+        self.play(14)
+        self.assert_samples(self.note_offs(), [2 * SAMPLES_PER_STEP])
+
+    def test_a_swung_hit_that_crosses_a_block_edge_plays_once_in_the_next_block(self):
+        self.rig.apply([add_lane(0), step_on(0, 1), [OP_SET_RACK, R_SWING, 10000]])
+        # The hit lands at 7,350 samples. Blocks of 64 frames put several edges before it.
+        self.rig.events.clear()
+        self.rig.seek(0.0)
+        for _ in range(130):
+            self.rig.block(frames=64)
+        self.assert_samples(self.note_ons(), [SAMPLES_PER_STEP + SAMPLES_PER_STEP / 3])
+
+    def test_the_hash_matches_its_vectors_in_python_and_in_the_lua_port(self):
+        prob = self.rig.lua.eval('(require("furrow.prob"))')
+        for args, want in PROB_VECTORS:
+            self.assertEqual(prob_roll(*args), want)
+            self.assertEqual(prob.roll(*args), want)
+
+    def test_probability_plays_the_steps_the_reference_hash_picks_and_repeats(self):
+        every = [step_on(0, n) for n in range(16)] + [step_on(1, n) for n in range(16)] + \
+                [step_on(2, n) for n in range(16)]
+        half = [[OP_SET_STEP, 0, 0, n, F_PROB, 50] for n in range(16)]
+        never = [[OP_SET_STEP, 0, 1, n, F_PROB, 0] for n in range(16)]
+        self.rig.apply([add_lane(0), add_lane(1, note=61), add_lane(2, note=62)] + every + half + never +
+                       [[OP_SET_RACK, R_SEED, 12345]], blocks=4)
+        blocks = 350
+        self.play(blocks)
+        limit = blocks * 1024
+        steps = lambda: [round(x / SAMPLES_PER_STEP) for x in self.note_ons(0, 0)]
+        first = steps()
+        want = [n for n in range(int(limit / SAMPLES_PER_STEP) + 1)
+                if n * SAMPLES_PER_STEP < limit and prob_roll(12345, 0, 7, n) * 100 < 50 * PROB_M]
+        self.assertEqual(first, want)
+        self.assertGreater(len(first), 15)
+        self.assertLess(len(first), 50)
+        self.assertEqual(self.note_ons(0, 1), [])
+        self.assertEqual(len(self.note_ons(0, 2)), len([n for n in range(int(limit / SAMPLES_PER_STEP) + 1)
+                                                         if n * SAMPLES_PER_STEP < limit]))
+        self.play(blocks)
+        self.assertEqual(steps(), first)
+        self.rig.apply([[OP_SET_RACK, R_SEED, 999]], blocks=4)
+        self.play(blocks)
+        rerolled = steps()
+        self.assertNotEqual(rerolled, first)
+        self.assertEqual(rerolled, [n for n in range(int(limit / SAMPLES_PER_STEP) + 1)
+                                     if n * SAMPLES_PER_STEP < limit and prob_roll(999, 0, 7, n) * 100 < 50 * PROB_M])
 
 
 if __name__ == "__main__":

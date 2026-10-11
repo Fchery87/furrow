@@ -115,8 +115,10 @@ return {
   F_VEL = 1,
   F_PITCH = 3,
   F_GATE = 9,
+  F_PROB = 12,
   STEP_FIELDS = 16,
 
+  SEED_MAX = 16777215,
   LANES = 64,
   MAX_STEPS = 512,
   DEFAULT_LENGTH = 16,

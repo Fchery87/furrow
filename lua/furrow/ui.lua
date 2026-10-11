@@ -61,6 +61,8 @@ function ui.run(ImGui)
   local coordinator = nil
   local paint = nil
   local shaping = nil
+  local swing_edit = nil
+  local swing_shown = nil
   local edit_slot = nil
   local edit_field = 1
   local open = true
@@ -244,6 +246,36 @@ function ui.run(ImGui)
     end
   end
 
+  -- Global feel controls. A swing drag is one gesture and one undo point.
+  local function feel(c)
+    local snap = c.session and c.session.snapshot
+    if not snap then
+      return
+    end
+    local now = reaper.time_precise()
+    local percent = snap.rack.swing // 100
+    if swing_shown and now < swing_shown.until_time then
+      percent = swing_shown.value
+    end
+    ImGui.SetNextItemWidth(ctx, 180)
+    local changed, value = ImGui.SliderInt(ctx, "Swing", percent, 0, 100, "%d%%")
+    if changed and c:processing() then
+      swing_edit = swing_edit or { gesture = c:begin("set swing") }
+      swing_shown = { value = value, until_time = now + 0.5 }
+      c:add(swing_edit.gesture, { { wire.OP_SET_RACK, wire.R_SWING, value * 100 } })
+    end
+    ImGui.SameLine(ctx, 0, GAP * 4)
+    local cut, cut_value = ImGui.Checkbox(ctx, "Cut swung notes", snap.rack.truncate == 1)
+    if cut and c:processing() then
+      c:run("set swing cut", { { wire.OP_SET_RACK, wire.R_TRUNCATE, cut_value and 1 or 0 } })
+    end
+    ImGui.SameLine(ctx, 0, GAP * 4)
+    if ImGui.Button(ctx, "Reroll chances") and c:processing() then
+      c:run("reroll chances", { { wire.OP_SET_RACK, wire.R_SEED, math.random(0, wire.SEED_MAX) } })
+    end
+    ImGui.Separator(ctx)
+  end
+
   local function drop_zone(c)
     local w = ImGui.GetContentRegionAvail(ctx)
     ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.drop)
@@ -302,6 +334,7 @@ function ui.run(ImGui)
     local c = coordinator
     top_bar(c)
     if c.session and c.session.snapshot then
+      feel(c)
       for _, lane in ipairs(c:lanes()) do
         lane_row(c, lane)
       end
@@ -337,6 +370,10 @@ function ui.run(ImGui)
       coordinator:finish(shaping.gesture)
       shaping = nil
     end
+    if swing_edit and not ImGui.IsMouseDown(ctx, ImGui.MouseButton_Left) then
+      coordinator:finish(swing_edit.gesture)
+      swing_edit = nil
+    end
     if history and not (coordinator and coordinator:busy()) then
       reaper.Main_OnCommand(history, 0)
       history = nil
@@ -357,6 +394,10 @@ function ui.run(ImGui)
         if shaping then
           coordinator:finish(shaping.gesture)
           shaping = nil
+        end
+        if swing_edit then
+          coordinator:finish(swing_edit.gesture)
+          swing_edit = nil
         end
         closing_at = reaper.time_precise()
       end
