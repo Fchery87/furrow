@@ -308,14 +308,6 @@ function ui.run(ImGui)
       editor(c)
       drop_zone(c)
     end
-    if paint and not ImGui.IsMouseDown(ctx, paint.button) then
-      c:finish(paint.gesture)
-      paint = nil
-    end
-    if shaping and not ImGui.IsMouseDown(ctx, ImGui.MouseButton_Left) then
-      c:finish(shaping.gesture)
-      shaping = nil
-    end
     if ImGui.IsWindowFocused(ctx, ImGui.FocusedFlags_RootAndChildWindows) then
       if ImGui.IsKeyPressed(ctx, ImGui.Key_Space, false) then
         reaper.Main_OnCommand(40044, 0)
@@ -334,6 +326,16 @@ function ui.run(ImGui)
     end
     if coordinator then
       coordinator:tick()
+    end
+    -- Released here, not in draw(), so a hidden window or another project tab cannot
+    -- leave a gesture open.
+    if paint and not ImGui.IsMouseDown(ctx, paint.button) then
+      coordinator:finish(paint.gesture)
+      paint = nil
+    end
+    if shaping and not ImGui.IsMouseDown(ctx, ImGui.MouseButton_Left) then
+      coordinator:finish(shaping.gesture)
+      shaping = nil
     end
     if history and not (coordinator and coordinator:busy()) then
       reaper.Main_OnCommand(history, 0)
