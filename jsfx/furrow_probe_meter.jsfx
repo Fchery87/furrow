@@ -1,0 +1,44 @@
+desc: Furrow probe audio meter
+tags: analysis
+in_pin:left
+in_pin:right
+out_pin:left
+out_pin:right
+
+options: gmem=FurrowProbeRS5K
+
+@init
+// While Lua holds gmem[20] at 1, the meter sums squares of each channel and counts
+// zero crossings of the left channel. gmem[21] left sum, gmem[22] right sum,
+// gmem[23] crossings, gmem[24] samples, gmem[25] heartbeat. The meter outputs silence.
+HYSTERESIS = 0.0001;
+measuring = 0;
+sign = 0;
+heartbeat = 0;
+
+@block
+heartbeat += 1;
+gmem[25] = heartbeat;
+gmem[20] == 1 && !measuring ? (
+  sum_left = 0;
+  sum_right = 0;
+  crossings = 0;
+  count = 0;
+  sign = 0;
+);
+measuring = gmem[20] == 1;
+
+@sample
+measuring ? (
+  sum_left += spl0 * spl0;
+  sum_right += spl1 * spl1;
+  count += 1;
+  spl0 > HYSTERESIS ? (sign < 0 ? crossings += 1; sign = 1;);
+  spl0 < -HYSTERESIS ? (sign > 0 ? crossings += 1; sign = -1;);
+  gmem[21] = sum_left;
+  gmem[22] = sum_right;
+  gmem[23] = crossings;
+  gmem[24] = count;
+);
+spl0 = 0;
+spl1 = 0;
