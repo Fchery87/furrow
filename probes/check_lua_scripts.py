@@ -5,6 +5,7 @@ Needs the lupa package for an embedded Lua 5.4. The stub records what the
 scripts ask REAPER to do. It does not prove REAPER honours those calls.
 """
 
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -527,6 +528,121 @@ class MemoryTest(unittest.TestCase):
         self.assertIn("RESULT Furrow Memory B1 runs = true", results[second:background])
         self.assertIn("RESULT Furrow Memory B1 runs = false", results[background:])
         self.assertIn("RESULT Furrow Memory A1 sees the Lua nonce = true", results[background:])
+
+
+class StubStateReaper(StubReaper):
+    """A state probe whose file_var keeps doubles exactly, or rounds them to 32-bit floats."""
+
+    VALUES = [0.0, -0.0, -16.25, 1 / 3, 288000 + 1 / 3, -(2.0 ** 30) - 1 / 7, 2.0 ** 52 + 2, 2.0 ** -30]
+    SEEDS = [0, 16777215, 16777217]
+
+    def __init__(self, project, float32=False):
+        super().__init__(project=project)
+        self.float32 = float32
+        self.gmem = {0: 1}
+        self.clock = 0
+        self.deferred = None
+        self.tokens = 0
+        self.stored = None
+
+    def table(self, lua):
+        api = super().table(lua)
+        for name in ("gmem_write", "defer", "time_precise", "GetTrackStateChunk", "SetTrackStateChunk",
+                     "Main_SaveProject"):
+            api[name] = getattr(self, name)
+        return api
+
+    def file_var(self, value):
+        return struct.unpack("<f", struct.pack("<f", value))[0] if self.float32 else value
+
+    def new_instance(self):
+        self.tokens += 1
+        self.gmem[3] = 1000 + self.tokens
+
+    def write_state(self):
+        words = [struct.unpack("<4H", struct.pack("<d", 0.0 if v == 0 else v)) for v in self.VALUES]
+        return {"words": [[self.file_var(w) for w in group] for group in words],
+                "raw": self.file_var(1 / 3), "seeds": [self.file_var(seed) for seed in self.SEEDS]}
+
+    def read_state(self, state):
+        for i, (value, words) in enumerate(zip(self.VALUES, state["words"])):
+            decoded = struct.unpack("<d", struct.pack("<4H", *[int(w) for w in words]))[0]
+            self.gmem[100 + i] = decoded
+            self.gmem[200 + i] = 1 if decoded == value else 0
+            for w, word in enumerate(words):
+                self.gmem[1000 + 4 * i + w] = word
+        self.gmem[300], self.gmem[301] = state["raw"], 1 if state["raw"] == 1 / 3 else 0
+        for k, seed in enumerate(state["seeds"]):
+            self.gmem[400 + k], self.gmem[410 + k] = seed, 1 if seed == self.SEEDS[k] else 0
+        self.gmem[4] = self.gmem[3]
+        self.gmem[1] = self.gmem.get(1, 0) + 1
+
+    def TrackFX_AddByName(self, track, name, record, instantiate):
+        self.new_instance()
+        return super().TrackFX_AddByName(track, name, record, instantiate)
+
+    def GetTrackStateChunk(self, track, buffer, undo):
+        return True, "<TRACK>"
+
+    def SetTrackStateChunk(self, track, chunk, undo):
+        state = self.write_state()
+        self.new_instance()
+        self.read_state(state)
+        return True
+
+    def Main_SaveProject(self, project, ask):
+        self.stored = self.write_state()
+
+    def reload(self):
+        self.new_instance()
+        self.read_state(self.stored)
+
+    def drive(self, limit=100000):
+        while self.deferred is not None and limit > 0:
+            callback, self.deferred = self.deferred, None
+            self.gmem[2] = self.gmem.get(2, 0) + 1
+            self.clock += 1
+            callback()
+            limit -= 1
+
+    def gmem_write(self, index, value):
+        self.gmem[int(index)] = value
+
+    def defer(self, callback):
+        self.deferred = callback
+
+    def time_precise(self):
+        return self.clock * 0.001
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class StateTest(unittest.TestCase):
+    def run_state(self, reopen=True, **options):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubStateReaper(str(Path(directory) / "state.rpp"), **options)
+            run(stub, "furrow_probe_state.lua")
+            stub.drive()
+            if reopen:
+                stub.reload()
+            run(stub, "furrow_probe_state.lua")
+            stub.drive()
+            return (Path(directory) / "furrow-state-results.txt").read_text().splitlines()
+
+    def test_exact_file_var_passes_both_runs(self):
+        results = self.run_state()
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
+        self.assertEqual([line for line in results if line.endswith("failures")], ["0 failures", "0 failures"])
+        self.assertIn("RESULT reload seed 16777217, above the spec's bound = 16777217", results)
+
+    def test_float32_file_var_keeps_words_and_bounded_seeds(self):
+        results = self.run_state(float32=True)
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
+        self.assertIn("RESULT reload raw 1/3 through file_var = 0.3333333432674408, exact false", results)
+        self.assertIn("RESULT reload seed 16777217, above the spec's bound = 16777216", results)
+
+    def test_a_second_run_without_reopening_fails(self):
+        results = self.run_state(reopen=False)
+        self.assertTrue(any(line.startswith("FAIL the project was reopened") for line in results))
 
 
 if __name__ == "__main__":
