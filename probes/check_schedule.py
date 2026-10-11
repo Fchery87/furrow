@@ -37,6 +37,11 @@ class ScheduleTest(unittest.TestCase):
         got = schedule.seconds_at(4.0, [(0.0, 100.0), (4.0, 140.0)])
         self.assertAlmostEqual(got, 6.0 * math.log(1.4), places=9)
 
+    def test_partial_ramp_uses_the_tempo_at_that_beat(self):
+        # Halfway through the 100 to 140 ramp the tempo is 120, so the integral is 6 * ln(1.2).
+        got = schedule.seconds_at(2.0, [(0.0, 100.0), (4.0, 140.0)])
+        self.assertAlmostEqual(got, 6.0 * math.log(1.2), places=9)
+
     def test_pattern_counts_and_first_pair(self):
         lines = schedule.schedule(
             ROOT / "pattern-4x16.txt",

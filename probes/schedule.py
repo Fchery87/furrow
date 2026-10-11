@@ -80,7 +80,8 @@ def seconds_at(beat, points):
             return elapsed + seconds_across(bpm, bpm, beat - start)
         end, next_bpm = points[index + 1]
         if beat <= end:
-            return elapsed + seconds_across(bpm, next_bpm, beat - start)
+            bpm_at_beat = bpm + (next_bpm - bpm) * (beat - start) / (end - start)
+            return elapsed + seconds_across(bpm, bpm_at_beat, beat - start)
         elapsed += seconds_across(bpm, next_bpm, end - start)
     raise ValueError("beat is outside the tempo map")
 
