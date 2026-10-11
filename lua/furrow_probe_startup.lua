@@ -141,8 +141,12 @@ end
 local function main()
   local _, path = reaper.EnumProjects(-1, "")
   local engine = find_track(ENGINE)
-  if not path or path == "" or not engine or not find_track(FOLDER) then
-    fail("saved project with the probe layout")
+  if not path or path == "" then
+    fail("project saved before the run", "the active project tab has no file")
+    return
+  end
+  if not engine or not find_track(FOLDER) then
+    fail("probe layout found", "run furrow_probe_layout.lua in this project first")
     return
   end
   reaper.OnStopButton()
