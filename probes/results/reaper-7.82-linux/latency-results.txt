@@ -1,0 +1,12 @@
+RESULT sample rate = 44100
+RESULT latency 0, lane 2 delay reports = pdc 0, chain_pdc_reporting 0, chain_pdc_actual 0
+RESULT latency 0, lane 1 clicks at the folder = 4 of 4 events, error 0.0 to 0.0 samples
+RESULT latency 0, lane 2 clicks at the folder = 4 of 4 events, error 0.0 to 0.0 samples
+RESULT latency 0, lane 1 note-ons at its receiver = 4 of 4 events, error 0.0 to 0.0 samples
+RESULT latency 0, lane 2 note-ons at its receiver = 4 of 4 events, error 0.0 to 0.0 samples
+RESULT latency 1000, lane 2 delay reports = pdc 1000, chain_pdc_reporting 1000, chain_pdc_actual 1024
+RESULT latency 1000, lane 1 clicks at the folder = 4 of 4 events, error 0.0 to 0.0 samples
+RESULT latency 1000, lane 2 clicks at the folder = 4 of 4 events, error 0.0 to 0.0 samples
+RESULT latency 1000, lane 1 note-ons at its receiver = 4 of 4 events, error 0.0 to 0.0 samples
+RESULT latency 1000, lane 2 note-ons at its receiver = 4 of 4 events, error 0.0 to 0.0 samples
+11 results, 0 failures

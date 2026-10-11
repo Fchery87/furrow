@@ -231,3 +231,17 @@ Both runs agree on the receivers. Playback never sends All Notes Off, so the pai
 - The startup release covers offline and online and project load. Bypass needs no startup release, because SeqCore keeps its memory and releases through its own stop and seek handling, as the lifecycle run showed.
 - REAPER writes SeqCore's state as it goes offline. SeqCore could therefore save its held notes and release exactly those pitches on load, instead of relying on All Notes Off. Whether RS5K and other receivers honour All Notes Off was not tested.
 - Inferred, named gmem does not survive a moment with no attached instance or script. Taking SeqCore offline with the rack window closed, or reopening a project, can clear the mailbox, the mirror and any counters. SeqCore must rebuild everything it publishes from its own state on its first block. The coordinator must treat a zeroed segment as a fresh session.
+
+## Plugin latency
+
+`lua/furrow_probe_latency.lua` played the probe engine's first two lanes at 120 BPM and 44.1 kHz. Lane 2 had a plugin that delays audio and reports that delay. `latency-results.txt` has 11 results and no failures.
+
+| Lane 2 latency | REAPER reports | Clicks at the folder | Note-ons at the receivers |
+| --- | --- | --- | --- |
+| 0 samples | `pdc` 0, `chain_pdc_reporting` 0, `chain_pdc_actual` 0 | Both lanes exact on every step | Both lanes exact |
+| 1,000 samples | `pdc` 1000, `chain_pdc_reporting` 1000, `chain_pdc_actual` 1024 | Both lanes exact on every step | Both lanes exact |
+
+**What this means for the spec.**
+- Delay compensation keeps a lane with plugin latency on time when SeqCore drives it through a send. The gate passed with no change to the routing.
+- REAPER compensated 1,024 samples for a reported 1,000. Inferred, it rounds a chain's compensation up to the block size and pads the rest. The audio still landed on the exact sample.
+- A lane's receiver logged its note-ons at the exact project sample even though its chain carries latency. SeqCore and a lane's receivers see the same project time.
