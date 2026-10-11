@@ -36,6 +36,8 @@ class StubReaper:
         self.log = []
         self.deferred = []
         self.project_open = True
+        self.proj_ext = {}
+        self.fail_rs5k = False
         self.clock = 1000.0
         self.selected = None
 
@@ -60,6 +62,14 @@ class StubReaper:
 
     def ValidatePtr2(self, proj, pointer, kind):
         return self.project_open
+
+    def SetProjExtState(self, proj, section, key, value):
+        self.proj_ext[(section, key)] = value
+        return 0
+
+    def GetProjExtState(self, proj, section, key):
+        value = self.proj_ext.get((section, key))
+        return (1, value) if value else (0, "")
 
     def EnumProjects(self, index, *rest):
         return "project" if index in (-1, 0) else None
@@ -114,6 +124,8 @@ class StubReaper:
         if name == "JS:furrow_seqcore.jsfx":
             track.fx.append({"name": "JS: Furrow SeqCore", "engine": self.rig.engine})
         elif name == "ReaSamplOmatic5000":
+            if self.fail_rs5k:
+                raise RuntimeError("RS5K failed to load")
             track.fx.append({"name": "VSTi: ReaSamplOmatic5000 (Cockos)", "params": [0.5] * len(RS5K_PARAMS),
                              "config": {}})
         else:
@@ -175,6 +187,20 @@ class StubReaper:
     def Undo_EndBlock2(self, proj, name, flags):
         self.undo.append(name)
 
+    def GetAppVersion(self):
+        return "stub"
+
+    def RecursiveCreateDirectory(self, path, flags):
+        import os
+        os.makedirs(path, exist_ok=True)
+        return 1
+
+    def ShowConsoleMsg(self, text):
+        self.log.append(("console", text))
+
+    def Undo_CanUndo2(self, proj):
+        return self.undo[-1] if self.undo else None
+
     def Master_GetTempo(self):
         return 120.0
 
@@ -195,6 +221,7 @@ class RackTest(unittest.TestCase):
         lua.globals().reaper = self.stub.table(lua)
         self.host = lua.eval('(require("furrow.host"))')
         coordinator = lua.eval('(require("furrow.coordinator"))')
+        self.coordinator_module = coordinator
         rack = pair(self.host.create_rack())[0]
         self.assertIsNotNone(rack)
         self.rack = rack
@@ -303,6 +330,165 @@ class RackTest(unittest.TestCase):
         self.assertEqual(self.stub.tracks[1].info["I_FOLDERDEPTH"], -1.0)
         self.assertEqual(self.stub.undo[-1], "Furrow: delete lane")
         self.assertEqual(self.rig.engine.var("lane_count"), 0)
+
+    def journal(self):
+        return self.stub.proj_ext.get(("Furrow", "journal " + self.coordinator.engine_guid), "")
+
+    def replace_coordinator(self):
+        """A new coordinator for the same rack, as after a closed window or a stopped script."""
+        self.stub.clock += 2.0
+        self.coordinator = self.coordinator_module.new("project", self.rack)
+        self.tick(12)
+
+    def test_a_lost_coordinator_after_the_engine_applied_an_add_leaves_no_orphan_lane(self):
+        self.c("add_sample", "/samples/kick.wav")
+        self.assertEqual(self.journal().startswith("lane "), True)
+        self.rig.block(playing=False)
+        self.assertEqual(self.rig.engine.var("lane_count"), 1)
+        self.replace_coordinator()
+        self.assertEqual(self.rig.engine.var("lane_count"), 0)
+        self.assertEqual([t.name for t in self.stub.tracks], ["Furrow Rack", "Furrow Engine"])
+        self.assertEqual((self.journal(), self.stub.undo), ("", []))
+        self.assertEqual(self.coordinator.status, "ready")
+
+    def test_a_lost_coordinator_before_the_engine_applied_an_add_changes_nothing(self):
+        self.c("add_sample", "/samples/kick.wav")
+        self.replace_coordinator()
+        self.assertEqual(self.rig.engine.var("lane_count"), 0)
+        self.assertEqual([t.name for t in self.stub.tracks], ["Furrow Rack", "Furrow Engine"])
+        self.assertEqual((self.journal(), self.stub.undo), ("", []))
+
+    def test_a_lost_coordinator_mid_delete_finishes_the_delete(self):
+        self.c("add_sample", "/samples/clap.wav")
+        self.settle()
+        self.tick(6)
+        self.c("remove_lane", self.c("lanes")[1])
+        self.rig.block(playing=False)
+        self.assertEqual(self.rig.engine.var("lane_count"), 0)
+        self.assertEqual(len(self.stub.tracks), 3)
+        self.replace_coordinator()
+        self.assertEqual([t.name for t in self.stub.tracks], ["Furrow Rack", "Furrow Engine"])
+        self.assertEqual(self.rack_links(), "1")
+        self.assertEqual(self.journal(), "")
+
+    def test_a_lost_coordinator_mid_drag_keeps_applied_edits_and_adds_one_undo_point(self):
+        self.c("add_sample", "/samples/hat.wav")
+        self.settle()
+        self.stub.undo.clear()
+        gesture = self.c("begin", "paint steps")
+        for step in (1, 3, 5):
+            commands = self.rig.lua.table_from([self.rig.lua.table_from([OP_SET_STEP, 0, 0, step, F_ON, 1])])
+            self.c("add", gesture, commands)
+        self.rig.run(6, playing=False)
+        self.assertEqual(self.rig.engine.var("nd_count"), 3)
+        self.replace_coordinator()
+        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in range(6)], [0, 1, 0, 1, 0, 1])
+        self.assertEqual(self.stub.undo, ["Furrow: recover edits"])
+        self.assertEqual(self.journal(), "")
+
+    def test_a_thrown_error_while_building_a_lane_rolls_everything_back(self):
+        self.stub.fail_rs5k = True
+        self.c("add_sample", "/samples/boom.wav")
+        self.settle()
+        self.assertEqual([t.name for t in self.stub.tracks], ["Furrow Rack", "Furrow Engine"])
+        self.assertEqual(self.stub.undo, [])
+        self.assertIn("failed", self.coordinator.message)
+        self.tick(6)
+        self.assertEqual(self.rig.engine.var("lane_count"), 0)
+        self.assertEqual(self.journal(), "")
+
+    def two_lanes(self):
+        for name in ("kick", "snare"):
+            self.c("add_sample", "/samples/%s.wav" % name)
+        self.settle()
+        self.tick(8)
+        self.stub.undo.clear()
+
+    def random_edits(self, count):
+        import random
+        rng = random.Random(500)
+        return [(rng.randrange(2), rng.randrange(16), rng.randrange(2)) for _ in range(count)]
+
+    def edit(self, lane, step, value):
+        lua = self.rig.lua
+        commands = lua.table_from([lua.table_from([OP_SET_STEP, 0, lane, step, F_ON, value])])
+        overlay = lua.table_from([lua.table_from([lane, step, F_ON, value])])
+        return commands, overlay
+
+    def assert_clean_timing(self):
+        budget_us = self.rig.block_size / self.rig.srate * 1e6
+        self.assertEqual(self.rig.engine.var("overruns"), 0)
+        self.assertLess(self.rig.engine.var("block_max_us"), budget_us)
+
+    def test_500_rapid_edits_in_one_drag_keep_the_final_state_and_every_result(self):
+        self.two_lanes()
+        edits = self.random_edits(500)
+        before = self.coordinator.completed
+        gesture = self.c("begin", "paint steps")
+        for lane, step, value in edits:
+            self.c("add", gesture, *self.edit(lane, step, value))
+        self.c("finish", gesture)
+        self.settle(200)
+        self.tick(10)
+        self.assertEqual(self.coordinator.completed - before, 500)
+        self.assertIsNone(self.coordinator.message)
+        final = {}
+        for lane, step, value in edits:
+            final[(lane, step)] = value
+        shown = {(lane, step): self.c("step_value", lane, step, F_ON) for lane in range(2) for step in range(16)}
+        self.assertEqual(shown, {k: final.get(k, 0) for k in shown})
+        self.assertEqual(self.stub.undo, ["Furrow: paint steps"])
+        self.assertEqual(len(list(self.coordinator.overlay.values())), 0)
+        self.assert_clean_timing()
+
+    def test_500_separate_gestures_each_get_a_result_and_an_undo_point(self):
+        self.two_lanes()
+        edits = self.random_edits(500)
+        before = self.coordinator.completed
+        for lane, step, value in edits:
+            gesture = self.c("begin", "paint steps")
+            self.c("add", gesture, *self.edit(lane, step, value))
+            self.c("finish", gesture)
+            self.tick()
+        self.settle(200)
+        self.tick(10)
+        self.assertEqual(self.coordinator.completed - before, 500)
+        self.assertEqual(self.stub.undo, ["Furrow: paint steps"] * 500)
+        final = {}
+        for lane, step, value in edits:
+            final[(lane, step)] = value
+        shown = {(lane, step): self.c("step_value", lane, step, F_ON) for lane in range(2) for step in range(16)}
+        self.assertEqual(shown, {k: final.get(k, 0) for k in shown})
+        self.assert_clean_timing()
+
+    def test_the_stress_script_passes_against_the_engine(self):
+        import os
+        self.c("add_sample", "/samples/kick.wav")
+        self.settle()
+        self.tick(8)
+        self.stub.clock += 2.0
+        script = os.path.join(os.path.dirname(__file__), "..", "lua", "Furrow_Stress.lua")
+        report = os.path.join(os.path.dirname(script), "..", "diag", "stress.txt")
+        if os.path.exists(report):
+            os.remove(report)
+        self.rig.lua.eval('function(path) return dofile(path) end')(script)
+        for _ in range(400):
+            pending, self.stub.deferred = self.stub.deferred, []
+            if not pending:
+                break
+            for fn in pending:
+                fn()
+            self.rig.block(playing=True)
+            self.stub.clock += 0.03
+        self.assertEqual(self.stub.deferred, [])
+        with open(report) as handle:
+            text = handle.read()
+        self.assertIn("RESULT PASS", text)
+        self.assertIn("results received 500", text)
+        self.assertIn("mismatches 0", text)
+
+    def rack_links(self):
+        return self.rack["rack"].ext.get("P_EXT:Furrow", "")
 
 
 class FakeImGui:

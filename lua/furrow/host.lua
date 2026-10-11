@@ -267,16 +267,21 @@ end
 function host.create_sample_lane(rack, engine, file, slot)
   local name = file:match("([^/\\]+)$"):gsub("%.[^.]*$", "")
   local track = host.append_child(rack, name)
-  local fx = reaper.TrackFX_AddByName(track, host.RS5K, false, -1)
-  local ok, err = fx >= 0, "REAPER could not add RS5K"
-  if ok then
-    ok, err = host.configure_rs5k(track, fx, file)
-  end
-  if not ok then
+  local built, ok, err = pcall(function()
+    local fx = reaper.TrackFX_AddByName(track, host.RS5K, false, -1)
+    if fx < 0 then
+      return false, "REAPER could not add RS5K"
+    end
+    local configured, message = host.configure_rs5k(track, fx, file)
+    if configured then
+      host.add_send(engine, track, slot)
+    end
+    return configured, message
+  end)
+  if not built or not ok then
     host.delete_child(track)
-    return nil, err
+    return nil, built and err or ok
   end
-  host.add_send(engine, track, slot)
   return track
 end
 
