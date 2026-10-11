@@ -260,3 +260,19 @@ With `--tolerance 0`, each render also matches its live capture, `constant-120-e
 **Host behavior.** Each 3-second render took about 0.13 s. The receivers logged 130 block tempo entries, so the render counted as playback, and every block was 1,024 samples, the same as the audio device. The engine sent no startup release during the render, so the render did not reload it. A render with a different block size was not tested.
 
 **What this means for the spec.** Offline render produces the same MIDI on the same samples as live playback, at the same block size. The timing gate's offline condition passed for these two cases.
+
+## Cleanup messages and gmem lifetime
+
+`lua/furrow_probe_cleanup.lua` ran once in a new project. `cleanup-results.txt` has 7 results and no failures.
+
+| Case | Result |
+| --- | --- |
+| Segment no JSFX holds, read back at once after the script attached elsewhere | 0. The value was gone |
+| The same, read back after 0.5 s | 0 |
+| Segment the running meter JSFX holds, read back after 0.5 s | The value survived |
+| All Notes Off, CC 123, Obey note-offs on and off | The held note stopped, -310 dB, both ways |
+| All Sound Off, CC 120, Obey note-offs on and off | The held note stopped, -310 dB, both ways |
+
+**What this means for the spec.**
+- REAPER frees a named gmem segment the moment nothing attaches to it, and a later attach finds it zeroed. This confirms what the startup runs implied. A segment survives while any JSFX instance holds it.
+- RS5K stops a held voice on All Notes Off even with Obey note-offs off. SeqCore's startup release reaches RS5K lanes. Third-party instruments remain untested.
