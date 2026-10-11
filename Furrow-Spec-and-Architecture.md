@@ -2,7 +2,7 @@
 
 Oct 10, 2026 · No Chaserz
 
-**Status.** Revised on 11 October 2026 after the first milestone 1 probes on REAPER 7.82 for Linux. Routing, constant-tempo timing, tempo ramps, tempo steps on the beat grid and native undo of an acknowledged engine edit passed. The evidence is in `probes/results/reaper-7.82-linux/`. Other REAPER-dependent behavior remains unverified, and Windows and macOS have not run. The rack, page allocator and item bridge must wait for their stated gates.
+**Status.** Revised on 11 October 2026 after the first milestone 1 probes on REAPER 7.82 for Linux. Routing, constant-tempo timing, tempo ramps, tempo steps on the beat grid, native undo of an acknowledged engine edit, and save and reload of the origin and seed encoding passed. Named gmem scope and size were measured. The evidence is in `probes/results/reaper-7.82-linux/`. Other REAPER-dependent behavior remains unverified, and Windows and macOS have not run. The rack, page allocator and item bridge must wait for their stated gates.
 
 ## Overview
 
@@ -221,7 +221,14 @@ MIDI pitch bend and CCs affect a channel. They do not affect one note inside tha
 
 ### gmem protocol
 
-SeqCore declares `options:gmem=Furrow` and `options:maxmem=8388608`. Named gmem and local engine memory are separate budgets. The [JSFX language reference](https://www.reaper.fm/sdk/js/basiccode.php) describes named gmem as a shared buffer of about 8 million entries accessible to matching JSFX instances. The [JSFX options reference](https://www.reaper.fm/sdk/js/js.php) defines `maxmem` for local memory. The scope of sharing across project tabs is unverified. Measure actual size and cross-instance and cross-tab visibility before fixing offsets or the number of simultaneous sessions.
+SeqCore declares `options:gmem=Furrow` and `options:maxmem=8388608`. Named gmem and local engine memory are separate budgets. The [JSFX language reference](https://www.reaper.fm/sdk/js/basiccode.php) gives the default named gmem as about 1,048,576 entries. The [JSFX options reference](https://www.reaper.fm/sdk/js/js.php) defines `maxmem` for local memory. The milestone 1 memory probe on REAPER 7.82 for Linux measured the rest.
+
+- Named gmem is one store for the whole REAPER process. Instances in one project, a copied FX and an instance in another project tab all see the same values, and so does Lua.
+- Every index tested, up to 33,554,431, round-tripped from Lua and from an instance. Higher indices were not tested.
+- `maxmem=8388608` gives exactly 8,388,608 local values. Pattern storage uses 5,259,264, which leaves 3,129,344 for queues, snapshots and transaction staging.
+- An instance in a background project tab stops processing. Its last gmem report stays in place and looks current.
+
+Fix offsets and the number of simultaneous sessions within the measured size.
 
 The wire format has its own version. Milestone 1 must produce a non-overlapping address map and a bound on simultaneous sessions, including command payloads, acknowledgements, two snapshot banks and V2 lock data. Freeze offsets only after these regions fit the verified shared-memory budget.
 
@@ -233,7 +240,7 @@ The wire format has its own version. Milestone 1 must produce a non-overlapping 
 | Playhead | Current pattern, pending switch, lane positions, transport state and playback mode |
 | Snapshot banks | Two banks for a 64-lane by 128-step window, requested window identity, musical settings and lock values; published revision and read acknowledgement |
 
-**Ownership.** One Lua coordinator owns the command producer for a rack. Multiple windows use that coordinator or focus the existing window. Audio instances must not claim the same slot with an unprotected check-then-write. Slot arbitration, host instance discovery and recovery after a coordinator exits are milestone 1 feasibility requirements. Persistent rack IDs do not serve as session tokens. Project tabs and duplicated FX receive distinct runtime identities. A copied rack must receive a new persistent ID and reconciled track links before accepting edits. A rack without a UI session must still play its saved state.
+**Ownership.** One Lua coordinator owns the command producer for a rack. Multiple windows use that coordinator or focus the existing window. Audio instances must not claim the same slot with an unprotected check-then-write. Because named gmem spans every open project tab, slot arbitration covers all racks in the REAPER process, not only those in one project. Slot arbitration, host instance discovery and recovery after a coordinator exits are milestone 1 feasibility requirements. A rack in a background tab does not process, so its coordinator refuses edits and auditions until the rack's heartbeat advances again. Persistent rack IDs do not serve as session tokens. Project tabs and duplicated FX receive distinct runtime identities. A copied rack must receive a new persistent ID and reconciled track links before accepting edits. A copied SeqCore keeps the original's persistent ID, because the ID lives in saved state, and starts with a new runtime token. Two live reports with the same persistent ID and different runtime tokens identify the copy. A rack without a UI session must still play its saved state.
 
 **Commands.** The producer writes a complete entry before publishing it. SeqCore consumes at most 256 entries per block, within a measured work budget. A full ring applies backpressure; never overwrite unread commands. Do not discard gesture endpoints or reorder transactions. A matching success acknowledgement is what advances the editor's revision. A consumed entry does not. Deduplicate command delivery by session, generation and sequence number. Multiple ordered commands may share a transaction ID. Deduplicate final transaction publication by session, generation and transaction ID, returning its prior result on repeated publication. Retire result records only after the producer acknowledges them; capacity exhaustion applies backpressure.
 
@@ -332,9 +339,13 @@ All authoritative musical data saves inside the REAPER project through SeqCore's
 | Window size, dock state, last pattern shown | REAPER ExtState | Per user, not per project |
 | Exported patterns and kits | .furrow files (JSON) | Explicit Export and Import commands |
 
-**Serialization.** Write the encoded representation before freezing format version 1. Serialize stable IDs and strings explicitly, fixed-width integer fields exactly, and fractional musical values as scaled integers. Shift and gate use units of 1/10,000 of a step; swing, volume and pan use units of 1/10,000. The editor and engine use these quantized values consistently. Do not depend on arbitrary double precision surviving `@serialize`; the [JSFX serialization reference](https://www.reaper.fm/sdk/js/js.php) documents a compact 32-bit representation. Save a coherent acknowledged revision. Reconstruct page allocation on load, validate all references and ranges, and reject truncated, unsupported or over-capacity state without silently replacing it with an empty rack.
+**Serialization.** Write the encoded representation before freezing format version 1. Serialize stable IDs and strings explicitly, fixed-width integer fields exactly, and fractional musical values as scaled integers. Shift and gate use units of 1/10,000 of a step; swing, volume and pan use units of 1/10,000. The editor and engine use these quantized values consistently. Do not depend on arbitrary double precision surviving `@serialize`. The [JSFX serialization reference](https://www.reaper.fm/sdk/js/js.php) documents a compact 32-bit representation, and the save and reload probe confirmed that a raw double comes back rounded to 32 bits. Save a coherent acknowledged revision. Reconstruct page allocation on load, validate all references and ranges, and reject truncated, unsupported or over-capacity state without silently replacing it with an empty rack.
 
-`phase_origin_beats` and the commit origin need a lossless encoding. The proposed encoding writes each finite IEEE-754 binary64 beat value as four unsigned 16-bit words, least-significant word first, then reassembles the same binary64 value on load. It normalizes negative zero to zero and rejects NaN and infinity. Each proposed word fits in a 32-bit slot. Do not quantize absolute beat positions to the step-control precision. This encoding stays proposed until the first save/load probe shows bit-exact round trips for negative origins, nonzero fractional origins and large valid project positions. The documented compact 32-bit storage form is not that proof. The same probe must save and reload the seed values 0 and 16,777,215 and show that both return unchanged. Do not treat the 32-bit storage form as proof that the seed bound survives.
+`phase_origin_beats` and the commit origin use a lossless encoding. Each finite IEEE-754 binary64 beat value is written as four unsigned 16-bit words, least-significant word first, then reassembled into the same binary64 value on load. The encoding normalizes negative zero to zero and rejects NaN and infinity. EEL2 has no bit cast, so SeqCore splits the value by exact arithmetic on the exponent and mantissa. Do not quantize absolute beat positions to the step-control precision.
+
+The save and reload probe on REAPER 7.82 for Linux adopted this encoding. Negative, fractional and large origins round-tripped bit for bit through a track chunk and through a saved and reopened project, and the words matched the IEEE layout. The seeds 0 and 16,777,215 came back unchanged, and 16,777,217 became 16,777,216. Seeds therefore stay within 0 to 16,777,215 and are stored as single values.
+
+EEL2's `===` reported a reloaded 32-bit value equal to the original binary64 value, although the language reference says `===` tests exact equality. Until a probe explains that, SeqCore does not rely on `===` to prove two values are identical. Exactness tests compare encoded words.
 
 **Undo.** Each gesture produces one native REAPER undo point covering every affected engine, track, FX, routing and item change. Associate all commands in that gesture with a transaction ID. Queue consumption alone is insufficient. When REAPER restores engine state, invalidate pending command generations and publish a new snapshot before accepting another edit.
 
@@ -400,8 +411,8 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 | Risk | Why it matters | Plan |
 | --- | --- | --- |
 | Native undo and asynchronous edits | Engine and host objects must restore as one operation | Passed on REAPER 7.82 for Linux with a Lua-side revision parameter change before one undo point. Interleaved user edits, bypass and project switches remain open |
-| gmem sessions and publication | Stale commands or reused slots could edit another state or rack | Validate ownership, generations, acknowledgements and snapshots in milestone 1 |
-| Engine memory and bounded work | Pattern storage alone reserves 5,259,264 values; transactions and snapshots need additional capacity | Budget local and shared memory separately; preflight operations and bound audio-block work |
+| gmem sessions and publication | Stale commands or reused slots could edit another state or rack. Named gmem spans every open project tab | Arbitrate slots across the REAPER process. Validate ownership, generations, acknowledgements and snapshots in milestone 1 |
+| Engine memory and bounded work | Pattern storage alone reserves 5,259,264 of the 8,388,608 measured local values | Budget the remaining 3,129,344 for queues, snapshots and staging. Preflight operations and bound audio-block work |
 | Routing and plugin latency | Feedback routing invalidates the intended delay-compensation behavior | Use a separate engine child and test routing and delay compensation in milestone 1 |
 | Tempo ramps and block timing | REAPER reports one tempo per block and does not split blocks at tempo markers | Continue a verified ramp slope through each block. Accept up to one block of error after an off-grid tempo marker. Repeat on Windows and macOS |
 | MIDI source metadata | Ordinary emitted MIDI cannot recover generative source state | Verify persistent item metadata and make edited-MIDI conversion explicit |
@@ -431,3 +442,6 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 - An event after an off-grid tempo marker inside the same block may be off by up to one block. Furrow accepts this instead of adding lookahead latency.
 - Native undo uses a Lua-side change to SeqCore's hidden State revision parameter, then one `Undo_OnStateChangeEx2` point, after the acknowledgement.
 - Every undoable change goes through a Lua command. SeqCore does not change authoritative state on its own.
+- Slot arbitration covers every rack in the REAPER process, because named gmem spans all project tabs.
+- A rack in a background tab refuses edits until its heartbeat advances.
+- The four-word origin encoding is adopted. Seeds stay within 0 to 16,777,215.
