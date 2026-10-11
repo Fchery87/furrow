@@ -80,6 +80,8 @@ def seconds_at(beat, points):
             return elapsed + seconds_across(bpm, bpm, beat - start)
         end, next_bpm = points[index + 1]
         if beat <= end:
+            if end == start:
+                return elapsed
             bpm_at_beat = bpm + (next_bpm - bpm) * (beat - start) / (end - start)
             return elapsed + seconds_across(bpm, bpm_at_beat, beat - start)
         elapsed += seconds_across(bpm, next_bpm, end - start)

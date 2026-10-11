@@ -111,7 +111,7 @@ class LayoutTest(unittest.TestCase):
         stub = StubReaper()
         run(stub, "furrow_probe_layout.lua")
         flags = [stub.send_info[(send, "I_MIDIFLAGS")] for send in range(4)]
-        self.assertEqual(flags, [33, 66, 99, 132])
+        self.assertEqual(flags, [4210721, 4210754, 4210787, 4210820])
 
     def test_each_receiver_gets_its_own_slot(self):
         stub = StubReaper()

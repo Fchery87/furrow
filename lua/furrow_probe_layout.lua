@@ -93,7 +93,8 @@ while lane < LANE_COUNT do
   reaper.SetTrackSendInfo_Value(engine, 0, send, "I_SRCCHAN", -1)
   -- Low 5 bits are the one-based source channel filter. 0 would pass every lane to every receiver.
   -- Next 5 bits are the one-based destination channel. Lane 1 keeps zero-based channel 0.
-  local flags = (1 + lane) | ((1 + lane) << 5)
+  -- Bits 14 and 22 hold the one-based source and destination bus. 1 is JSFX bus 0, and 0 would mean all.
+  local flags = (1 + lane) | ((1 + lane) << 5) | (1 << 14) | (1 << 22)
   reaper.SetTrackSendInfo_Value(engine, 0, send, "I_MIDIFLAGS", flags)
   lane = lane + 1
 end
