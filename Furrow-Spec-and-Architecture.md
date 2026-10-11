@@ -2,7 +2,7 @@
 
 Oct 10, 2026 · No Chaserz
 
-**Status.** Revised on 11 October 2026 after the first milestone 1 probes on REAPER 7.82 for Linux. Routing, constant-tempo timing, tempo ramps, tempo steps on the beat grid, native undo of an acknowledged engine edit, and save and reload of the origin and seed encoding passed. Named gmem scope and size, and the host lifecycle around bypass, offline, project tabs and held notes, were measured. The evidence is in `probes/results/reaper-7.82-linux/`. Other REAPER-dependent behavior remains unverified, and Windows and macOS have not run. The rack, page allocator and item bridge must wait for their stated gates.
+**Status.** Revised on 11 October 2026 after the first milestone 1 probes on REAPER 7.82 for Linux. Routing, constant-tempo timing, tempo ramps, tempo steps on the beat grid, native undo of an acknowledged engine edit, and save and reload of the origin and seed encoding passed. Named gmem scope and size, the host lifecycle around bypass, offline, project tabs and held notes, and RS5K's response to notes, velocity and controllers were measured. The evidence is in `probes/results/reaper-7.82-linux/`. Other REAPER-dependent behavior remains unverified, and Windows and macOS have not run. The rack, page allocator and item bridge must wait for their stated gates.
 
 ## Overview
 
@@ -213,7 +213,13 @@ V1 permits one held MIDI note per lane. Before a new hit, send note-off for any 
 
 MIDI pitch bend and CCs affect a channel. They do not affect one note inside that channel. Reserve a destination track and channel for one Furrow lane within the project. Reject conflicting Furrow assignments. External MIDI on that channel can still interfere with controllers and note-offs; users must give it a separate channel for independent control. See the [MIDI channel-message reference](https://midi.org/about-midi-part-3midi-messages).
 
-- Configure built-in RS5K lanes to respond to the required volume, pan and bend controls. Verify those mappings in milestone 1; emitting a CC alone is not evidence that RS5K responds.
+- Configure every RS5K that Furrow creates as follows. Each rule comes from the RS5K 7.82 runs in `probes/results/reaper-7.82-linux/`.
+  - Turn Obey note-offs on. With it off, RS5K ignores note-off and plays the whole sample, so gate does nothing.
+  - Set Gain for minimum velocity below its default of +0.0 dB. At the default, velocity 1 and 127 play at the same level. At -inf, velocity 64 plays 6.02 dB below 127 and velocity 1 is silent. Furrow sets a finite floor so velocity 1 stays audible. The floor value is a product choice that has not been measured.
+  - RS5K ignores raw CC 7 and CC 10. Link CC 7 to Volume and CC 10 to Pan with parameter modulation MIDI links, `param.N.plink.*` with `effect` -100, `midi_msg` 176 and `midi_msg2` set to the CC. Every key reads back the value written. MIDI learn on the same CCs had no effect.
+  - A link with `scale` 1 and `offset` 0 maps CC 0 to 127 linearly onto the whole parameter. On Volume that is silence at CC 0 and +6.02 dB at CC 127, and CC 100 gives +3.9 dB. On Pan, CC 0 is hard left, CC 127 hard right and CC 64 reads 0.5039, slightly right of centre. Lane volume and pan pick their CC from the level and position they want, or set `scale` and `offset`. Other `scale` and `offset` values have not been measured. Neither has the `midi_chan` filter, which was 0 in the runs.
+  - RS5K responds to pitch bend directly. Its default bend range of 2 semitones measured +1.99 and -1.98.
+  - Removing a link leaves the parameter at its last linked value. When Furrow removes a link, it restores the parameter's base value in the same undoable gesture.
 - Existing instruments require a receiver configuration. Volume and pan use CC 7 and CC 10. Mod A and Mod B default to CC 74 and CC 71. Show unsupported controls as unavailable. Do not present them as working.
 - Map fine pitch to pitch bend using the configured receiver range. Built-in lanes default to a two-semitone range. An external receiver must use the same range. Reset bend to centre when releasing the lane on stop, mute, retarget or mode change.
 - Lane pan is the baseline. Add the step pan offset to the baseline CC 10 value and clamp to 0 through 127. A centred lane maps to 64. Each hit writes its complete effective controller state before note-on.
@@ -252,7 +258,7 @@ The wire format has its own version. Milestone 1 must produce a non-overlapping 
 
 ### Parameter locks (V2)
 
-A lock is one of eight stable slots on the lane. The Lua side links its CC to the chosen FX parameter using REAPER's parameter modulation MIDI link through the TrackFX named-config API. SeqCore sends the step's lock value just before the note, or the stored baseline when no lock value is present. Links identify the FX instance and parameter and become unavailable if either disappears. Deleting a lock removes its stored step values in the same undoable operation. Prove exact API keys and instrument behavior before V2 implementation.
+A lock is one of eight stable slots on the lane. The Lua side links its CC to the chosen FX parameter using REAPER's parameter modulation MIDI link through the TrackFX named-config API. Those keys work on RS5K, as the instrument contract records. SeqCore sends the step's lock value just before the note, or the stored baseline when no lock value is present. Links identify the FX instance and parameter and become unavailable if either disappears. Deleting a lock removes its stored step values in the same undoable operation. Prove the same keys on two popular third-party synths before V2 implementation.
 
 ## Engine timing design
 
@@ -394,7 +400,7 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
    - Latency proof: verify delay compensation with a known-latency instrument or test effect. Compare receiver MIDI timestamps, not instrument attack times. If the timing or routing proof fails, revise the architecture before adding UI work.
    - Memory-scope proof: measure usable named gmem size and whether two JSFX instances in one project or separate project tabs see the same values. Test duplicated FX. Only then define slot arbitration, the wire address map and simultaneous-session capacity. Confirm local `maxmem` capacity separately.
    - Edit and undo proof: add one gmem command that toggles one step and one matching acknowledgement. The undo test is open until it passes. Show that native undo and redo restore the step after the audio thread has acknowledged the command. Repeat with an unrelated REAPER edit between them and with a host object created or changed in the same gesture. These three passed on REAPER 7.82 for Linux. The save/load test uses the proposed four-word origin encoding and the seed values 0 and 16,777,215. Adopt that encoding only after the save/load test passes. Defer the 4,096-entry ring until sharing and native undo are proven.
-   - Receiver and item-storage proof: verify RS5K volume, pan, bend and release behavior. Record receiver settings or links required. Confirm item extension metadata survives save/load and duplication at the maximum supported source-snapshot size.
+   - Receiver and item-storage proof: verify RS5K volume, pan, bend and release behavior. Record receiver settings or links required. The RS5K part passed on REAPER 7.82 for Linux, and the instrument contract records the settings. Confirm item extension metadata survives save/load and duplication at the maximum supported source-snapshot size.
    - Exit artifact: a feasibility report with host and dependency versions, event fixtures and diffs, routing and state observations, failures and resulting spec amendments. Before milestone 2, also test stopped transport, bypass, project switching, window closure and session recovery. Do not start milestone 2 with an unresolved gate.
 2. **Bridge and rack window.** The gmem ring and mirror, plus a ReaImGui window with the grid, mute and solo, and sample drop that creates tracks and RS5K.
    - Exit check: 500 rapid edits preserve their final intended state, each transaction has a result, snapshots remain coherent, and block-time measurements show no missed deadlines. Separately attempt more than 4,096 unconsumed entries, exhaust the base page pool and interrupt a transaction. Each case must reject or recover without partial state. Exercise lock-pool exhaustion in V2.
@@ -436,7 +442,7 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 | Managed item mute | A user may unmute an owned item directly while Furrow is in Live mode | Milestone 4 gate. Show that a direct edit cannot play Live notes and committed notes together. The proof needs more than native mute |
 | Controller support and overlapping notes | Instruments differ; channel controllers cannot isolate overlapping voices | Use monophonic lanes, configured receiver mappings and explicit channel ownership |
 | Many short pooled items in song mode | Large songs may slow the arrange view | Benchmark before committing to V3's design |
-| Parameter-link setup through the API | The named-config keys for MIDI links must be set exactly | Spike it early in V2 on RS5K and two popular synths |
+| Parameter-link setup through the API | The named-config keys for MIDI links must be set exactly | The keys work on RS5K 7.82. Spike them early in V2 on two popular synths |
 | Programming speed versus FL Studio | Users should finish a simple beat in about the time the success criterion states | Test with FL users at the public beta and fix the top complaints first |
 
 ### Decisions (10 October 2026)
@@ -464,3 +470,5 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 - The four-word origin encoding is adopted. Seeds stay within 0 to 16,777,215.
 - A gesture applies host changes after the engine acknowledges, in the same callback as its revision change and undo point.
 - Furrow does not claim stuck-note protection for bypass or offline. SeqCore releases every lane route on its first block after loading.
+- Every RS5K that Furrow creates has Obey note-offs on and a finite Gain for minimum velocity below +0.0 dB.
+- Built-in lanes reach RS5K Volume and Pan through parameter links, not raw CCs and not MIDI learn. Removing a link restores the base value.
