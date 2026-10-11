@@ -1,0 +1,1160 @@
+desc: Furrow SeqCore
+tags: instrument midi sequencer
+in_pin: none
+out_pin: none
+
+options: maxmem=8388608 gmem=Furrow
+
+slider1:0<0,16777215,1>-State revision
+slider2:-1<-1,63,1>-Session slot
+
+@init
+ext_midi_bus = 1;
+ext_noinit = 1;
+
+// Wire format 1. lua/furrow/wire.lua holds the same numbers, and
+// probes/check_lua_scripts.py fails when the two disagree.
+MAGIC = 4617586;
+WIRE_VERSION = 1;
+STATE_FORMAT = 1;
+SLOTS = 64;
+SLOT_SIZE = 131072;
+SLOT_BASE = 1024;
+DIR_MAGIC = 0;
+DIR_WIRE = 1;
+DIR_SLOTS = 2;
+DIR_SLOT_SIZE = 3;
+DIR_SLOT_BASE = 4;
+DIR_OWNER = 64;
+
+H_TOKEN = 0;
+H_RACK_ID = 1;
+H_GENERATION = 2;
+H_HEARTBEAT = 3;
+H_CAPS = 4;
+H_LANES_MAX = 5;
+H_MAGIC = 6;
+H_REVISION = 7;
+H_PLAYING = 8;
+H_BEAT = 9;
+H_PATTERN = 10;
+H_PENDING_PATTERN = 11;
+H_MODE = 12;
+H_SESSION = 13;
+H_CMD_PROD = 14;
+H_CMD_CONS = 15;
+H_ACK_PROD = 16;
+H_ACK_CONS = 17;
+H_COORD_BEAT = 18;
+H_SNAP_REQ = 19;
+H_SNAP_PATTERN = 20;
+H_SNAP_L0 = 21;
+H_SNAP_NL = 22;
+H_SNAP_S0 = 23;
+H_SNAP_NS = 24;
+H_POOL_FREE = 25;
+H_ND_COUNT = 26;
+H_LOAD_ERROR = 27;
+H_LANE_COUNT = 28;
+H_BLOCK_US = 29;
+H_BLOCK_MAX_US = 30;
+H_OVERRUNS = 31;
+H_WIRE = 32;
+H_SRATE = 33;
+H_BLOCK_SIZE = 34;
+H_SNAP_SEQ = 35;
+H_STAGED = 36;
+H_FORMAT = 37;
+HEADER_SIZE = 256;
+PLAYHEAD = 256;
+RING = 512;
+RING_SIZE = 4096;
+ENTRY = 10;
+ACK = 41472;
+ACK_ENTRY = 4;
+BANK0 = 57856;
+BANK_STRIDE = 34368;
+B_STATE = 0;
+B_REVISION = 1;
+B_GENERATION = 2;
+B_REQ = 3;
+B_PATTERN = 4;
+B_L0 = 5;
+B_NL = 6;
+B_S0 = 7;
+B_NS = 8;
+B_SEQ = 9;
+B_RACK = 32;
+B_LANES = 64;
+B_LANE_STRIDE = 16;
+B_STEPS = 1088;
+BANK_FREE = 0;
+BANK_WRITING = 1;
+BANK_PUBLISHED = 2;
+WINDOW_MAX = 2048;
+PUBLISH_BUDGET = 4096;
+
+ACK_OK = 1;
+ACK_STALE = 2;
+ACK_INVALID = 3;
+ACK_CAPACITY = 4;
+ACK_ABORTED = 5;
+ACK_LOAD_ERROR = 6;
+
+OP_COMMIT = 1;
+OP_SET_STEP = 2;
+OP_ADD_LANE = 3;
+OP_REMOVE_LANE = 4;
+OP_SET_LANE = 5;
+OP_SET_RACK = 6;
+OP_SET_LENGTH = 7;
+OP_AUDITION = 8;
+OP_PANIC = 9;
+
+R_ID = 0;
+R_SEED = 1;
+R_PATTERN = 2;
+R_MODE = 3;
+R_SWING = 4;
+R_TRUNCATE = 5;
+
+L_ACTIVE = 0;
+L_ID = 1;
+L_PROB_KEY = 2;
+L_ROW = 3;
+L_NOTE = 4;
+L_MUTE = 5;
+L_SOLO = 6;
+L_VOLUME = 7;
+L_PAN = 8;
+L_BEND = 9;
+L_SWING = 10;
+L_RATE = 11;
+L_DIRECTION = 12;
+L_MOD_A = 13;
+L_MOD_B = 14;
+LANE_FIELDS = 15;
+
+F_ON = 0;
+F_VEL = 1;
+F_PITCH = 3;
+F_GATE = 9;
+STEP_FIELDS = 16;
+
+LANES = 64;
+PATTERNS = 256;
+MAX_STEPS = 512;
+PAGE_STEPS = 16;
+PAGES_PER_LANE = 32;
+PAGE_VALUES = 256;
+POOL_PAGES = 16384;
+DEFAULT_LENGTH = 16;
+STEP_BEATS = 0.25;
+CMD_BUDGET = 256;
+ND_MAX = 824000;
+
+ERR_FORMAT = 1;
+ERR_TRUNCATED = 2;
+ERR_RANGE = 3;
+ERR_CAPACITY = 4;
+ERR_TOO_LARGE = 5;
+
+// Local memory. Pattern storage follows the spec's table. Lock pages are reserved for V2.
+PAGE_TABLE = 0;
+POOL = 524288;
+LOCK_PTR = 4718592;
+LOCK_POOL = 4734976;
+FREE = 5259264;
+OWNER = 5275648;
+LANE = 5292032;
+LANE_STRIDE = 24;
+LEN = 5293568;
+STAGE = 5309952;
+STAGE_MAX = 4096;
+RESULT = 5350912;
+MARK = 5355008;
+SMALL = 5879296;
+DEF = SMALL;
+FMIN = SMALL + 16;
+FMAX = SMALL + 32;
+HELD = SMALL + 64;
+REL = SMALL + 128;
+AUD = SMALL + 192;
+SAVED_HELD = SMALL + 256;
+POSN = SMALL + 320;
+SIM = SMALL + 384;
+LMIN = SMALL + 448;
+LMAX = SMALL + 464;
+LDEF = SMALL + 480;
+RAW = 5880320;
+RAW_MAX = 2508288;
+
+function table16(base, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15) (
+  base[0] = a0; base[1] = a1; base[2] = a2; base[3] = a3;
+  base[4] = a4; base[5] = a5; base[6] = a6; base[7] = a7;
+  base[8] = a8; base[9] = a9; base[10] = a10; base[11] = a11;
+  base[12] = a12; base[13] = a13; base[14] = a14; base[15] = a15;
+);
+
+// on, velocity, release, pitch, fine, pan, Mod A, Mod B, shift, gate, ratchet, curve,
+// probability, condition kind, A, B. Shift and gate are 1/10,000 of a step.
+table16(DEF, 0, 100, 64, 0, 0, 0, 64, 64, 0, 5000, 1, 0, 100, 0, 0, 0);
+table16(FMIN, 0, 1, 0, -24, -100, -64, 0, 0, 0, 500, 1, 0, 0, 0, 0, 0);
+table16(FMAX, 1, 127, 127, 24, 100, 63, 127, 127, 9900, 160000, 8, 2, 100, 6, 64, 64);
+// Lane fields from row. V1 fixes rate to 1/16 (index 1) and direction to forward.
+table16(LDEF, 0, 0, 0, 0, 60, 0, 0, 5000, 0, 2, 10000, 1, 0, 74, 71, 0);
+table16(LMIN, 0, 1, 0, 0, 0, 0, 0, 0, -10000, 0, 0, 1, 0, 0, 0, 0);
+table16(LMAX, 1, 16777215, 16777215, 63, 127, 1, 1, 10000, 10000, 48, 10000, 1, 0, 127, 127, 0);
+
+function is_int(v) ( v == floor(v) );
+function in_range(v, lo, hi) ( is_int(v) && v >= lo && v <= hi );
+
+function reset_state() local(i) (
+  memset(PAGE_TABLE, -1, PATTERNS * LANES * PAGES_PER_LANE);
+  i = 0;
+  loop(POOL_PAGES,
+    FREE[i] = POOL_PAGES - 1 - i;
+    OWNER[i] = -1;
+    i += 1;
+  );
+  free_top = POOL_PAGES;
+  nd_count = 0;
+  memset(LANE, 0, LANES * LANE_STRIDE);
+  memset(LEN, DEFAULT_LENGTH, PATTERNS * LANES);
+  len_count = 0;
+  lane_count = 0;
+  rack_id = 0;
+  seed = 0;
+  pattern = 0;
+  mode = 0;
+  swing = 0;
+  truncate = 0;
+  o0 = 0; o1 = 0; o2 = 0; o3 = 0;
+  origin = 0;
+);
+
+function lane_at(s) ( LANE + s * LANE_STRIDE );
+function pt_of(p, s, step) ( (p * LANES + s) * PAGES_PER_LANE + floor(step / PAGE_STEPS) );
+function cell_of(page, step, f) ( page * PAGE_VALUES + (step % PAGE_STEPS) * STEP_FIELDS + f );
+function lane_get(s, f) ( LANE[s * LANE_STRIDE + f] );
+
+function get_value(p, s, step, f) local(page) (
+  page = PAGE_TABLE[pt_of(p, s, step)];
+  page < 0 ? DEF[f] : POOL[cell_of(page, step, f)];
+);
+
+function page_is_default(page) local(i, base, same) (
+  base = POOL + page * PAGE_VALUES;
+  same = 1;
+  i = 0;
+  while (same && i < PAGE_VALUES) (
+    base[i] != DEF[i % STEP_FIELDS] ? same = 0;
+    i += 1;
+  );
+  same;
+);
+
+function free_page(pt) local(page) (
+  page = PAGE_TABLE[pt];
+  page >= 0 ? (
+    FREE[free_top] = page;
+    free_top += 1;
+    OWNER[page] = -1;
+    PAGE_TABLE[pt] = -1;
+  );
+);
+
+// Callers preflight capacity, so a set never finds the pool empty.
+function set_value(p, s, step, f, v) local(pt, page, old, i, base) (
+  pt = pt_of(p, s, step);
+  page = PAGE_TABLE[pt];
+  old = page < 0 ? DEF[f] : POOL[cell_of(page, step, f)];
+  old != v ? (
+    page < 0 ? (
+      free_top -= 1;
+      page = FREE[free_top];
+      PAGE_TABLE[pt] = page;
+      OWNER[page] = pt;
+      base = POOL + page * PAGE_VALUES;
+      i = 0;
+      loop(PAGE_VALUES,
+        base[i] = DEF[i % STEP_FIELDS];
+        i += 1;
+      );
+    );
+    POOL[cell_of(page, step, f)] = v;
+    old == DEF[f] ? nd_count += 1;
+    v == DEF[f] ? (
+      nd_count -= 1;
+      page_is_default(page) ? free_page(pt);
+    );
+  );
+);
+
+function set_length(p, s, n) (
+  LEN[p * LANES + s] != DEFAULT_LENGTH && n == DEFAULT_LENGTH ? len_count -= 1;
+  LEN[p * LANES + s] == DEFAULT_LENGTH && n != DEFAULT_LENGTH ? len_count += 1;
+  LEN[p * LANES + s] = n;
+);
+
+function clear_lane_steps(s) local(p, k, pt, page, base, i) (
+  p = 0;
+  loop(PATTERNS,
+    k = 0;
+    loop(PAGES_PER_LANE,
+      pt = (p * LANES + s) * PAGES_PER_LANE + k;
+      page = PAGE_TABLE[pt];
+      page >= 0 ? (
+        base = POOL + page * PAGE_VALUES;
+        i = 0;
+        loop(PAGE_VALUES,
+          base[i] != DEF[i % STEP_FIELDS] ? nd_count -= 1;
+          i += 1;
+        );
+        free_page(pt);
+      );
+      k += 1;
+    );
+    set_length(p, s, DEFAULT_LENGTH);
+    p += 1;
+  );
+);
+
+function midi_route(s) ( midi_bus = floor(s / 16); s % 16; );
+
+// Inverts beats = (tempo * x + slope * x^2 / 2) / (60 * srate) for the sample offset x.
+function offset_of(beat) local(beats, root, x) (
+  beats = beat - beat_position;
+  root = tempo * tempo + 2 * slope * 60 * srate * beats;
+  x = root > 0 ? 120 * srate * beats / (tempo + sqrt(root)) : 60 * srate * beats / tempo;
+  x = floor(x + 0.5);
+  max(0, min(samplesblock - 1, x));
+);
+
+function send_off(s, offset) local(ch) (
+  HELD[s] >= 0 ? (
+    ch = midi_route(s);
+    midisend(offset, $x80 + ch, HELD[s], 0);
+    HELD[s] = -1;
+  );
+  REL[s] = -1;
+  AUD[s] = -1;
+);
+
+// Sends due note-offs in beat order. Inclusive puts a release at the limit before a hit there.
+function flush_releases(limit, inclusive) local(s, best, best_beat, due) (
+  best = 0;
+  while (best >= 0) (
+    best = -1;
+    s = 0;
+    loop(LANES,
+      due = inclusive ? REL[s] <= limit : REL[s] < limit;
+      REL[s] >= 0 && due && (best < 0 || REL[s] < best_beat) ? (
+        best = s;
+        best_beat = REL[s];
+      );
+      s += 1;
+    );
+    best >= 0 ? send_off(best, offset_of(best_beat));
+  );
+);
+
+function release_all() local(s) (
+  s = 0;
+  loop(LANES,
+    send_off(s, 0);
+    s += 1;
+  );
+);
+
+function any_solo() local(s, found) (
+  found = 0;
+  s = 0;
+  loop(LANES,
+    lane_get(s, L_ACTIVE) && lane_get(s, L_SOLO) ? found = 1;
+    s += 1;
+  );
+  found;
+);
+
+function audible(s, solo_on) local(l) (
+  l = lane_at(s);
+  l[L_ACTIVE] && !l[L_MUTE] && (!solo_on || l[L_SOLO]);
+);
+
+function release_inaudible() local(s, solo_on) (
+  solo_on = any_solo();
+  s = 0;
+  loop(LANES,
+    !audible(s, solo_on) ? send_off(s, 0);
+    s += 1;
+  );
+);
+
+function volume_cc(v) ( floor(v * 127 / 10000 + 0.5) );
+function pan_cc(v) ( v < 0 ? floor(64 + v * 64 / 10000 + 0.5) : floor(64 + v * 63 / 10000 + 0.5) );
+
+// Releases the lane's held note first, then writes its controllers, then the note-on.
+function send_hit(s, offset, note, vel) local(ch, l) (
+  l = lane_at(s);
+  send_off(s, offset);
+  ch = midi_route(s);
+  midisend(offset, $xB0 + ch, 7, volume_cc(l[L_VOLUME]));
+  midi_bus = floor(s / 16);
+  midisend(offset, $xB0 + ch, 10, pan_cc(l[L_PAN]));
+  midi_bus = floor(s / 16);
+  midisend(offset, $x90 + ch, note, vel);
+  HELD[s] = note;
+);
+
+reset_state();
+memset(HELD, -1, LANES);
+memset(REL, -1, LANES);
+memset(AUD, -1, LANES);
+memset(SAVED_HELD, -1, LANES);
+memset(POSN, -1, LANES);
+
+token = 1 + floor(rand(16777214));
+slot = -1;
+base = -1;
+generation = 1;
+revision = 0;
+session = 0;
+cons = 0;
+ack_prod = 0;
+last_seq = 0;
+last_txn = 0;
+open_txn = -1;
+staged = 0;
+stage_overflow = 0;
+pub_bank = -1;
+pub_rev = -1;
+pub_req = -1;
+pub_gen = -1;
+pub_seq = 0;
+load_error = 0;
+raw_count = 0;
+parse_stamp = 0;
+state_replaced = 0;
+startup_release = 1;
+block_max_us = 0;
+overruns = 0;
+was_playing = 0;
+block_end_beat = 0;
+prev_tempo = -1;
+slope = 0;
+next_k = 0;
+RAMP_FIT_BEATS = 0.000001;
+
+// WDL's EEL2 source takes atomic_setifequal(dest, cmp, value). Some documentation gives
+// (dest, value, cmp). Test the order once on a local value and use the one that works.
+order_test = 0;
+atomic_setifequal(order_test, 0, 1);
+cmp_first = order_test == 1;
+
+function claim() local(s) (
+  slot = -1;
+  s = 0;
+  while (slot < 0 && s < SLOTS) (
+    cmp_first ? atomic_setifequal(gmem[DIR_OWNER + s], 0, token) : atomic_setifequal(gmem[DIR_OWNER + s], token, 0);
+    gmem[DIR_OWNER + s] === token ? slot = s;
+    s += 1;
+  );
+  slot >= 0 ? (
+    base = SLOT_BASE + slot * SLOT_SIZE;
+    s = 0;
+    loop(HEADER_SIZE + LANES,
+      gmem[base + s] = 0;
+      s += 1;
+    );
+    gmem[base + BANK0 + B_STATE] = BANK_FREE;
+    gmem[base + BANK0 + BANK_STRIDE + B_STATE] = BANK_FREE;
+    gmem[base + H_TOKEN] = token;
+    gmem[base + H_MAGIC] = MAGIC;
+    gmem[base + H_WIRE] = WIRE_VERSION;
+    gmem[base + H_LANES_MAX] = LANES;
+    cons = 0;
+    ack_prod = 0;
+    session = 0;
+    last_seq = 0;
+    last_txn = 0;
+    open_txn = -1;
+    staged = 0;
+    pub_bank = -1;
+    pub_rev = -1;
+    generation += 1;
+  ) : (
+    base = -1;
+  );
+  slider2 != slot ? (
+    slider2 = slot;
+    sliderchange(slider2);
+  );
+);
+
+function write_ack(txn, code) local(at) (
+  at = base + ACK + (ack_prod % RING_SIZE) * ACK_ENTRY;
+  gmem[at] = txn;
+  gmem[at + 1] = revision;
+  gmem[at + 2] = code;
+  gmem[at + 3] = generation;
+  ack_prod += 1;
+  gmem[base + H_ACK_PROD] = ack_prod;
+);
+
+function clear_stage() (
+  staged = 0;
+  stage_overflow = 0;
+  open_txn = -1;
+);
+
+// Checks every staged command against the state it would see, without changing anything.
+// Returns an ack code. Lane activity is simulated so a lane added earlier in the same
+// transaction can be configured by a later command.
+function preflight(count) local(i, e, op, a, b, c, d, v, need, adds, code, pt, stamp, lo, hi) (
+  code = ACK_OK;
+  stage_overflow ? code = ACK_CAPACITY;
+  code == ACK_OK && count != staged ? code = ACK_INVALID;
+  i = 0;
+  loop(LANES,
+    SIM[i] = lane_get(i, L_ACTIVE);
+    i += 1;
+  );
+  need = 0;
+  adds = 0;
+  stamp = generation * 16777216 + open_txn;
+  i = 0;
+  while (code == ACK_OK && i < staged) (
+    e = STAGE + i * ENTRY;
+    op = e[4]; a = e[5]; b = e[6]; c = e[7]; d = e[8]; v = e[9];
+    op == OP_SET_STEP ? (
+      !(in_range(a, 0, PATTERNS - 1) && in_range(b, 0, LANES - 1) && in_range(c, 0, MAX_STEPS - 1)
+        && in_range(d, 0, STEP_FIELDS - 1)) || !SIM[b] || !in_range(v, FMIN[d], FMAX[d]) ? (
+        code = ACK_INVALID;
+      ) : (
+        v != DEF[d] ? (
+          adds += 1;
+          pt = pt_of(a, b, c);
+          PAGE_TABLE[pt] < 0 && MARK[pt] != stamp ? (
+            MARK[pt] = stamp;
+            need += 1;
+          );
+        );
+      );
+    ) : op == OP_ADD_LANE ? (
+      !in_range(a, 0, LANES - 1) || SIM[a] || !in_range(b, 1, 16777215) || !in_range(c, 0, 16777215)
+        || !in_range(d, 0, 127) || !in_range(v, 0, LANES - 1) ? (code = ACK_INVALID) : (SIM[a] = 1);
+    ) : op == OP_REMOVE_LANE ? (
+      !in_range(a, 0, LANES - 1) || !SIM[a] ? (code = ACK_INVALID) : (SIM[a] = 0);
+    ) : op == OP_SET_LANE ? (
+      !in_range(a, 0, LANES - 1) || !SIM[a] || !in_range(b, L_ROW, L_MOD_B) || !in_range(c, LMIN[b], LMAX[b])
+        ? code = ACK_INVALID;
+    ) : op == OP_SET_RACK ? (
+      lo = -1;
+      hi = -1;
+      a == R_ID ? (lo = 1; hi = 16777215);
+      a == R_SEED ? (lo = 0; hi = 16777215);
+      a == R_PATTERN ? (lo = 0; hi = PATTERNS - 1);
+      a == R_MODE ? (lo = 0; hi = 1);
+      a == R_SWING ? (lo = 0; hi = 10000);
+      a == R_TRUNCATE ? (lo = 0; hi = 1);
+      hi < 0 || !in_range(b, lo, hi) ? code = ACK_INVALID;
+    ) : op == OP_SET_LENGTH ? (
+      !in_range(a, 0, PATTERNS - 1) || !in_range(b, 0, LANES - 1) || !SIM[b] || !in_range(c, 1, MAX_STEPS)
+        ? code = ACK_INVALID;
+    ) : (
+      code = ACK_INVALID;
+    );
+    i += 1;
+  );
+  code == ACK_OK && (need > free_top || nd_count + adds > ND_MAX) ? code = ACK_CAPACITY;
+  code;
+);
+
+function apply_staged() local(i, e, op, a, b, c, d, v, l, f) (
+  i = 0;
+  loop(staged,
+    e = STAGE + i * ENTRY;
+    op = e[4]; a = e[5]; b = e[6]; c = e[7]; d = e[8]; v = e[9];
+    op == OP_SET_STEP ? set_value(a, b, c, d, v);
+    op == OP_ADD_LANE ? (
+      l = lane_at(a);
+      f = 0;
+      loop(LANE_FIELDS,
+        l[f] = LDEF[f];
+        f += 1;
+      );
+      l[L_ACTIVE] = 1;
+      l[L_ID] = b;
+      l[L_PROB_KEY] = c;
+      l[L_NOTE] = d;
+      l[L_ROW] = v;
+      lane_count += 1;
+    );
+    op == OP_REMOVE_LANE ? (
+      send_off(a, 0);
+      clear_lane_steps(a);
+      memset(lane_at(a), 0, LANE_STRIDE);
+      lane_count -= 1;
+    );
+    op == OP_SET_LANE ? (
+      b == L_NOTE && lane_get(a, L_NOTE) != c ? send_off(a, 0);
+      LANE[a * LANE_STRIDE + b] = c;
+    );
+    op == OP_SET_RACK ? (
+      a == R_ID ? rack_id = b;
+      a == R_SEED ? seed = b;
+      a == R_PATTERN ? (
+        pattern != b ? release_all();
+        pattern = b;
+      );
+      a == R_MODE ? (
+        mode != b ? release_all();
+        mode = b;
+      );
+      a == R_SWING ? swing = b;
+      a == R_TRUNCATE ? truncate = b;
+    );
+    op == OP_SET_LENGTH ? set_length(a, b, c);
+    i += 1;
+  );
+  release_inaudible();
+);
+
+function immediate(op, a, b) local(i) (
+  op == OP_AUDITION ? (
+    !was_playing && in_range(a, 0, LANES - 1) && lane_get(a, L_ACTIVE) && in_range(b, 1, 127) ? (
+      send_hit(a, 0, lane_get(a, L_NOTE), b);
+      AUD[a] = floor(0.1 * srate);
+    );
+  ) : (
+    op == OP_PANIC ? (
+      release_all();
+      i = 0;
+      loop(LANES,
+        midisend(0, $xB0 + midi_route(i), 123, 0);
+        i += 1;
+      );
+    );
+  );
+);
+
+// Consumes up to CMD_BUDGET ring entries. Stops when the acknowledgement ring is full,
+// so an unread result is never overwritten.
+function consume() local(prod, n, e, j, code) (
+  prod = gmem[base + H_CMD_PROD];
+  n = 0;
+  while (n < CMD_BUDGET && cons < prod && ack_prod - gmem[base + H_ACK_CONS] < RING_SIZE) (
+    e = base + RING + (cons % RING_SIZE) * ENTRY;
+    gmem[e] != session || gmem[e + 1] != generation ? (
+      gmem[e + 4] == OP_COMMIT ? write_ack(gmem[e + 3], ACK_STALE);
+    ) : gmem[e + 2] > last_seq ? (
+      last_seq = gmem[e + 2];
+      gmem[e + 3] == 0 ? (
+        immediate(gmem[e + 4], gmem[e + 5], gmem[e + 6]);
+      ) : gmem[e + 3] <= last_txn ? (
+        gmem[e + 4] == OP_COMMIT ? write_ack(gmem[e + 3], RESULT[gmem[e + 3] % RING_SIZE]);
+      ) : (
+        gmem[e + 3] != open_txn ? (
+          staged > 0 ? write_ack(open_txn, ACK_ABORTED);
+          clear_stage();
+          open_txn = gmem[e + 3];
+        );
+        gmem[e + 4] == OP_COMMIT ? (
+          code = load_error ? ACK_LOAD_ERROR : preflight(gmem[e + 5]);
+          code == ACK_OK ? (
+            apply_staged();
+            revision += 1;
+          );
+          last_txn = open_txn;
+          RESULT[open_txn % RING_SIZE] = code;
+          write_ack(open_txn, code);
+          clear_stage();
+        ) : staged >= STAGE_MAX ? (
+          stage_overflow = 1;
+        ) : (
+          j = 0;
+          loop(ENTRY,
+            STAGE[staged * ENTRY + j] = gmem[e + j];
+            j += 1;
+          );
+          staged += 1;
+        );
+      );
+    );
+    cons += 1;
+    n += 1;
+  );
+  gmem[base + H_CMD_CONS] = cons;
+);
+
+function bank_at(i) ( base + BANK0 + i * BANK_STRIDE );
+
+function begin_publish() local(i, b, l, s, f, at) (
+  i = 0;
+  pub_bank = -1;
+  while (pub_bank < 0 && i < 2) (
+    gmem[bank_at(i) + B_STATE] == BANK_FREE ? pub_bank = i;
+    i += 1;
+  );
+  pub_bank >= 0 ? (
+    b = bank_at(pub_bank);
+    gmem[b + B_STATE] = BANK_WRITING;
+    pub_req = gmem[base + H_SNAP_REQ];
+    pub_pattern = max(0, min(PATTERNS - 1, floor(gmem[base + H_SNAP_PATTERN])));
+    pub_l0 = max(0, min(LANES - 1, floor(gmem[base + H_SNAP_L0])));
+    pub_nl = max(0, min(LANES - pub_l0, floor(gmem[base + H_SNAP_NL])));
+    pub_s0 = max(0, min(MAX_STEPS - 1, floor(gmem[base + H_SNAP_S0])));
+    pub_ns = max(0, min(MAX_STEPS - pub_s0, floor(gmem[base + H_SNAP_NS])));
+    pub_nl * pub_ns > WINDOW_MAX ? pub_ns = floor(WINDOW_MAX / max(1, pub_nl));
+    gmem[b + B_REVISION] = revision;
+    gmem[b + B_GENERATION] = generation;
+    gmem[b + B_REQ] = pub_req;
+    gmem[b + B_PATTERN] = pub_pattern;
+    gmem[b + B_L0] = pub_l0;
+    gmem[b + B_NL] = pub_nl;
+    gmem[b + B_S0] = pub_s0;
+    gmem[b + B_NS] = pub_ns;
+    gmem[b + B_RACK + R_ID] = rack_id;
+    gmem[b + B_RACK + R_SEED] = seed;
+    gmem[b + B_RACK + R_PATTERN] = pattern;
+    gmem[b + B_RACK + R_MODE] = mode;
+    gmem[b + B_RACK + R_SWING] = swing;
+    gmem[b + B_RACK + R_TRUNCATE] = truncate;
+    gmem[b + B_RACK + 6] = lane_count;
+    gmem[b + B_RACK + 7] = free_top;
+    gmem[b + B_RACK + 8] = nd_count;
+    gmem[b + B_RACK + 9] = load_error;
+    s = 0;
+    loop(LANES,
+      l = lane_at(s);
+      at = b + B_LANES + s * B_LANE_STRIDE;
+      f = 0;
+      loop(LANE_FIELDS,
+        gmem[at + f] = l[f];
+        f += 1;
+      );
+      gmem[at + 15] = LEN[pub_pattern * LANES + s];
+      s += 1;
+    );
+    pub_cell = 0;
+    pub_rev = revision;
+    pub_gen = generation;
+  );
+);
+
+// Writes at most PUBLISH_BUDGET values a block. Commands wait while a bank is being
+// written, so a published bank shows one revision.
+function continue_publish() local(b, cells, s, step, f, at, page, n) (
+  b = bank_at(pub_bank);
+  cells = pub_nl * pub_ns;
+  n = 0;
+  while (pub_cell < cells && n < PUBLISH_BUDGET) (
+    s = pub_l0 + floor(pub_cell / pub_ns);
+    step = pub_s0 + pub_cell % pub_ns;
+    at = b + B_STEPS + pub_cell * STEP_FIELDS;
+    page = PAGE_TABLE[pt_of(pub_pattern, s, step)];
+    f = 0;
+    loop(STEP_FIELDS,
+      gmem[at + f] = page < 0 ? DEF[f] : POOL[cell_of(page, step, f)];
+      f += 1;
+    );
+    pub_cell += 1;
+    n += STEP_FIELDS;
+  );
+  pub_cell >= cells ? (
+    pub_seq += 1;
+    gmem[b + B_SEQ] = pub_seq;
+    gmem[b + B_STATE] = BANK_PUBLISHED;
+    gmem[base + H_SNAP_SEQ] = pub_seq;
+    pub_bank = -1;
+  );
+);
+
+// Splits a finite double into four 16-bit words, least significant first, by exact
+// arithmetic. The save and reload probe proved this round trip on REAPER 7.82.
+function encode(x) local(a, e, biased, mant, sign, m) (
+  x === 0 ? (
+    w0 = 0; w1 = 0; w2 = 0; w3 = 0;
+  ) : (
+    sign = x < 0;
+    a = abs(x);
+    e = floor(log(a) / log(2));
+    a / 2 ^ e >= 2 ? e += 1;
+    a / 2 ^ e < 1 ? e -= 1;
+    e < -1022 ? (
+      biased = 0;
+      mant = a / 2 ^ -1074;
+    ) : (
+      biased = e + 1023;
+      mant = (a / 2 ^ e - 1) * 2 ^ 52;
+    );
+    m = mant;
+    w0 = m - floor(m / 65536) * 65536;
+    m = floor(m / 65536);
+    w1 = m - floor(m / 65536) * 65536;
+    m = floor(m / 65536);
+    w2 = m - floor(m / 65536) * 65536;
+    m = floor(m / 65536);
+    w3 = m + biased * 16 + sign * 32768;
+  );
+);
+
+function decode(a0, a1, a2, a3) local(top, biased, sign, mant, a) (
+  top = floor(a3 / 16);
+  biased = top - floor(top / 2048) * 2048;
+  sign = floor(a3 / 32768);
+  mant = (((a3 - top * 16) * 65536 + a2) * 65536 + a1) * 65536 + a0;
+  a = biased === 0 ? mant * 2 ^ -1074 : (1 + mant / 2 ^ 52) * 2 ^ (biased - 1023);
+  sign ? -a : a;
+);
+
+// State format 1, one value a word:
+// magic, format, rack id, seed, pattern, mode, swing, truncate, origin words 0 to 3,
+// lane count, then per lane: slot, id, probability key, row, note, mute, solo, volume,
+// pan, bend, swing, rate, direction, Mod A CC, Mod B CC, held pitch;
+// length count, then per length: pattern * 64 + slot, length;
+// value count, then per non-default step value: pattern * 64 + slot, step * 16 + field, value.
+function write_state() local(s, l, f, k, page, pt, i, w, word) (
+  w = MAGIC; file_var(0, w);
+  w = STATE_FORMAT; file_var(0, w);
+  file_var(0, rack_id);
+  file_var(0, seed);
+  file_var(0, pattern);
+  file_var(0, mode);
+  file_var(0, swing);
+  file_var(0, truncate);
+  encode(origin);
+  file_var(0, w0); file_var(0, w1); file_var(0, w2); file_var(0, w3);
+  file_var(0, lane_count);
+  s = 0;
+  loop(LANES,
+    l = lane_at(s);
+    l[L_ACTIVE] ? (
+      file_var(0, s);
+      f = L_ID;
+      loop(LANE_FIELDS - 1,
+        w = l[f];
+        file_var(0, w);
+        f += 1;
+      );
+      w = HELD[s];
+      file_var(0, w);
+    );
+    s += 1;
+  );
+  file_var(0, len_count);
+  k = 0;
+  loop(PATTERNS * LANES,
+    LEN[k] != DEFAULT_LENGTH ? (
+      file_var(0, k);
+      w = LEN[k];
+      file_var(0, w);
+    );
+    k += 1;
+  );
+  file_var(0, nd_count);
+  page = 0;
+  loop(POOL_PAGES,
+    pt = OWNER[page];
+    pt >= 0 ? (
+      i = 0;
+      loop(PAGE_VALUES,
+        word = POOL[page * PAGE_VALUES + i];
+        word != DEF[i % STEP_FIELDS] ? (
+          w = floor(pt / PAGES_PER_LANE);
+          file_var(0, w);
+          w = (pt % PAGES_PER_LANE) * PAGE_STEPS * STEP_FIELDS + i;
+          file_var(0, w);
+          file_var(0, word);
+        );
+        i += 1;
+      );
+    );
+    page += 1;
+  );
+);
+
+// Pass one validates RAW without touching state. Pass two replaces state.
+// Returns 0 or an ERR code.
+function parse_state(apply) local(at, err, n, s, f, v, k, key, cell, p, stamp, need, step) (
+  err = 0;
+  raw_count < 13 || RAW[0] != MAGIC ? err = ERR_FORMAT;
+  !err && RAW[1] != STATE_FORMAT ? err = ERR_FORMAT;
+  !err && (!in_range(RAW[2], 0, 16777215) || !in_range(RAW[3], 0, 16777215) || !in_range(RAW[4], 0, PATTERNS - 1)
+    || !in_range(RAW[5], 0, 1) || !in_range(RAW[6], 0, 10000) || !in_range(RAW[7], 0, 1)) ? err = ERR_RANGE;
+  !err && apply ? (
+    reset_state();
+    rack_id = RAW[2]; seed = RAW[3]; pattern = RAW[4]; mode = RAW[5]; swing = RAW[6]; truncate = RAW[7];
+    o0 = RAW[8]; o1 = RAW[9]; o2 = RAW[10]; o3 = RAW[11];
+    origin = decode(o0, o1, o2, o3);
+  );
+  at = 12;
+  !err ? (
+    n = RAW[at];
+    at += 1;
+    !in_range(n, 0, LANES) ? err = ERR_RANGE;
+    !apply ? memset(SIM, 0, LANES);
+    while (!err && n > 0) (
+      at + 16 > raw_count ? (err = ERR_TRUNCATED) : (
+        s = RAW[at];
+        !in_range(s, 0, LANES - 1) || (!apply && SIM[s]) ? err = ERR_RANGE;
+        f = L_ID;
+        while (!err && f < LANE_FIELDS) (
+          !in_range(RAW[at + f], LMIN[f], LMAX[f]) ? err = ERR_RANGE;
+          f += 1;
+        );
+        !err && !in_range(RAW[at + 15], -1, 127) ? err = ERR_RANGE;
+        !err ? (
+          !apply ? (SIM[s] = 1) : (
+            f = L_ID;
+            loop(LANE_FIELDS - 1,
+              LANE[s * LANE_STRIDE + f] = RAW[at + f];
+              f += 1;
+            );
+            LANE[s * LANE_STRIDE + L_ACTIVE] = 1;
+            SAVED_HELD[s] = RAW[at + 15];
+            lane_count += 1;
+          );
+        );
+        at += 16;
+        n -= 1;
+      );
+    );
+  );
+  !err ? (
+    at >= raw_count ? (err = ERR_TRUNCATED) : (
+      n = RAW[at];
+      at += 1;
+      !in_range(n, 0, PATTERNS * LANES) ? err = ERR_RANGE;
+      while (!err && n > 0) (
+        at + 2 > raw_count ? (err = ERR_TRUNCATED) : (
+          k = RAW[at];
+          !in_range(k, 0, PATTERNS * LANES - 1) || !in_range(RAW[at + 1], 1, MAX_STEPS) ? err = ERR_RANGE;
+          !err && apply ? set_length(floor(k / LANES), k % LANES, RAW[at + 1]);
+          at += 2;
+          n -= 1;
+        );
+      );
+    );
+  );
+  !err ? (
+    at >= raw_count ? (err = ERR_TRUNCATED) : (
+      n = RAW[at];
+      at += 1;
+      !in_range(n, 0, ND_MAX) ? err = ERR_CAPACITY;
+      parse_stamp -= 1;
+      stamp = parse_stamp;
+      need = 0;
+      while (!err && n > 0) (
+        at + 3 > raw_count ? (err = ERR_TRUNCATED) : (
+          key = RAW[at];
+          cell = RAW[at + 1];
+          v = RAW[at + 2];
+          !in_range(key, 0, PATTERNS * LANES - 1) || !in_range(cell, 0, MAX_STEPS * STEP_FIELDS - 1) ? (err = ERR_RANGE) : (
+            p = floor(key / LANES);
+            s = key % LANES;
+            step = floor(cell / STEP_FIELDS);
+            f = cell % STEP_FIELDS;
+            !in_range(v, FMIN[f], FMAX[f]) ? err = ERR_RANGE;
+            !err && !apply && !SIM[s] ? err = ERR_RANGE;
+            !err ? (
+              apply ? set_value(p, s, step, f, v) : (
+                MARK[pt_of(p, s, step)] != stamp ? (
+                  MARK[pt_of(p, s, step)] = stamp;
+                  need += 1;
+                  need > POOL_PAGES ? err = ERR_CAPACITY;
+                );
+              );
+            );
+          );
+          at += 3;
+          n -= 1;
+        );
+      );
+    );
+  );
+  !err && at != raw_count ? err = ERR_TRUNCATED;
+  err;
+);
+
+@block
+t0 = time_precise();
+gmem[DIR_MAGIC] = MAGIC;
+gmem[DIR_WIRE] = WIRE_VERSION;
+gmem[DIR_SLOTS] = SLOTS;
+gmem[DIR_SLOT_SIZE] = SLOT_SIZE;
+gmem[DIR_SLOT_BASE] = SLOT_BASE;
+// A coordinator frees only slots that no SeqCore in any open project reports, so losing
+// the slot here means it was reclaimed by mistake. Claim a fresh one rather than share it.
+slot < 0 || gmem[DIR_OWNER + slot] !== token ? claim();
+slider2 != slot ? (
+  slider2 = slot;
+  sliderchange(slider2);
+);
+
+startup_release ? (
+  s = 0;
+  loop(LANES,
+    ch = midi_route(s);
+    SAVED_HELD[s] >= 0 ? midisend(0, $x80 + ch, SAVED_HELD[s], 0);
+    midi_bus = floor(s / 16);
+    midisend(0, $xB0 + ch, 123, 0);
+    SAVED_HELD[s] = -1;
+    s += 1;
+  );
+  startup_release = 0;
+);
+
+state_replaced ? (
+  release_all();
+  generation += 1;
+  revision += 1;
+  clear_stage();
+  last_txn = 0;
+  last_seq = 0;
+  pub_bank >= 0 ? (
+    gmem[bank_at(pub_bank) + B_STATE] = BANK_FREE;
+    pub_bank = -1;
+  );
+  was_playing = 0;
+  state_replaced = 0;
+);
+
+base >= 0 ? (
+  gmem[base + H_SESSION] != session ? (
+    session = gmem[base + H_SESSION];
+    clear_stage();
+    last_txn = 0;
+    last_seq = 0;
+  );
+  pub_bank < 0 ? consume();
+);
+
+playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
+!playing ? (
+  was_playing ? release_all();
+  was_playing = 0;
+  prev_tempo = -1;
+  memset(POSN, -1, LANES);
+  s = 0;
+  loop(LANES,
+    AUD[s] >= 0 ? (
+      AUD[s] < samplesblock ? send_off(s, AUD[s]) : (AUD[s] -= samplesblock);
+    );
+    s += 1;
+  );
+) : (
+  // A tempo change inside the last block moves this block's start by less than that block's
+  // beats, so only a larger jump is a seek or loop wrap.
+  jumped = !was_playing || abs(beat_position - block_end_beat) > block_beats;
+  jumped ? (
+    release_all();
+    next_k = ceil((beat_position - origin) / STEP_BEATS - 0.000001);
+  );
+  // REAPER 7.82 reports tempo once per block and ramps linearly in time. Continue the last
+  // block's tempo change only if that block advanced exactly as a ramp would.
+  slope = 0;
+  !jumped && prev_tempo >= 0 ? (
+    ramp_beats = (prev_tempo + tempo) * prev_block / (120 * srate);
+    abs(beat_position - prev_beat - ramp_beats) < RAMP_FIT_BEATS ? slope = (tempo - prev_tempo) / prev_block;
+  );
+  prev_tempo = tempo;
+  prev_beat = beat_position;
+  prev_block = samplesblock;
+  was_playing = 1;
+  block_beats = (tempo * samplesblock + slope * samplesblock * samplesblock / 2) / (60 * srate);
+  block_end_beat = beat_position + block_beats;
+  solo_on = any_solo();
+  while (origin + next_k * STEP_BEATS < block_end_beat) (
+    hit = origin + next_k * STEP_BEATS;
+    flush_releases(hit, 1);
+    next_k >= 0 ? (
+      s = 0;
+      loop(LANES,
+        audible(s, solo_on) ? (
+          pos = next_k % LEN[pattern * LANES + s];
+          POSN[s] = pos;
+          get_value(pattern, s, pos, F_ON) ? (
+            note = lane_get(s, L_NOTE) + get_value(pattern, s, pos, F_PITCH);
+            note >= 0 && note <= 127 ? (
+              send_hit(s, offset_of(hit), note, get_value(pattern, s, pos, F_VEL));
+              REL[s] = hit + get_value(pattern, s, pos, F_GATE) / 10000 * STEP_BEATS;
+            );
+          );
+        );
+        s += 1;
+      );
+    );
+    next_k += 1;
+  );
+  flush_releases(block_end_beat, 0);
+);
+
+base >= 0 ? (
+  pub_bank < 0 && (revision != pub_rev || gmem[base + H_SNAP_REQ] != pub_req || generation != pub_gen)
+    ? begin_publish();
+  pub_bank >= 0 ? continue_publish();
+  gmem[base + H_GENERATION] = generation;
+  gmem[base + H_REVISION] = revision;
+  gmem[base + H_RACK_ID] = rack_id;
+  gmem[base + H_PLAYING] = playing;
+  gmem[base + H_BEAT] = beat_position;
+  gmem[base + H_PATTERN] = pattern;
+  gmem[base + H_MODE] = mode;
+  gmem[base + H_POOL_FREE] = free_top;
+  gmem[base + H_ND_COUNT] = nd_count;
+  gmem[base + H_LOAD_ERROR] = load_error;
+  gmem[base + H_LANE_COUNT] = lane_count;
+  gmem[base + H_SRATE] = srate;
+  gmem[base + H_BLOCK_SIZE] = samplesblock;
+  gmem[base + H_STAGED] = staged;
+  gmem[base + H_FORMAT] = STATE_FORMAT;
+  s = 0;
+  loop(LANES,
+    gmem[base + PLAYHEAD + s] = POSN[s];
+    s += 1;
+  );
+  dt = (time_precise() - t0) * 1000000;
+  block_max_us = max(block_max_us, dt);
+  dt > samplesblock / srate * 1000000 ? overruns += 1;
+  gmem[base + H_BLOCK_US] = dt;
+  gmem[base + H_BLOCK_MAX_US] = block_max_us;
+  gmem[base + H_OVERRUNS] = overruns;
+  gmem[base + H_HEARTBEAT] += 1;
+);
+
+@serialize
+file_avail(0) >= 0 ? (
+  // ysfx reports 1 while data remains and REAPER's count here is unmeasured, so read word
+  // by word. The inner loop stays below EEL2's per-loop iteration limit.
+  raw_count = 0;
+  more = file_avail(0) > 0;
+  while (more && raw_count < RAW_MAX) (
+    k = 0;
+    while (more && k < 65536 && raw_count < RAW_MAX) (
+      file_var(0, word);
+      RAW[raw_count] = word;
+      raw_count += 1;
+      k += 1;
+      more = file_avail(0) > 0;
+    );
+  );
+  raw_count == 0 ? (
+    reset_state();
+    load_error = 0;
+  ) : more ? (
+    load_error = ERR_TOO_LARGE;
+    raw_count = 0;
+  ) : (
+    load_error = parse_state(0);
+    !load_error ? (
+      parse_state(1);
+      raw_count = 0;
+    );
+  );
+  state_replaced = 1;
+) : (
+  // A state this build cannot read is written back unchanged, never replaced by an empty rack.
+  load_error && raw_count > 0 ? file_mem(0, RAW, raw_count) : write_state();
+);

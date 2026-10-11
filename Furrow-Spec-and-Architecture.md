@@ -236,6 +236,28 @@ SeqCore declares `options:gmem=Furrow` and `options:maxmem=8388608`. Named gmem 
 
 Fix offsets and the number of simultaneous sessions within the measured size.
 
+**Wire format 1.** Milestone 2 fixes this map. `jsfx/furrow_seqcore.jsfx` and `lua/furrow/wire.lua` hold the same numbers, and `tests/test_seqcore.py` fails when they differ.
+
+| Region | Named gmem `Furrow` indices | Content |
+| --- | --- | --- |
+| Directory | 0 to 127 | Magic 4,617,586, wire version 1, slot count and size, then one owner token for each of the 64 slots at 64 to 127 |
+| Slot n | 1,024 + n × 131,072 | One rack's session, laid out below |
+| Total | 8,389,632 values | Within the 33,554,431 indices measured |
+
+| Slot region | Offset | Content |
+| --- | --- | --- |
+| Header | 0 to 255 | Token, rack ID, generation, heartbeat, magic, wire version, revision, transport, coordinator session and heartbeat, ring and acknowledgement counters, snapshot request, storage counts, load error and block time |
+| Playhead | 256 to 319 | The step each route slot last played, or -1 |
+| Command ring | 512 | 4,096 entries of 10 values: session, generation, sequence, transaction, operation and five parameters |
+| Acknowledgements | 41,472 | 4,096 entries of 4 values: transaction, revision, result code and generation |
+| Snapshot banks | 57,856 and 92,224 | Each has a header, the rack fields, all 64 lane records with the lane's length, and up to 2,048 step cells of 16 values |
+
+- **Slots.** A SeqCore claims the first free slot on its first block with `atomic_setifequal` and reports it in its hidden Session slot parameter. WDL's EEL2 source takes `atomic_setifequal(dest, cmp, value)`, while some documentation gives `(dest, value, cmp)`. SeqCore tests the order on a local value at load and uses the one that works. REAPER's order has not been measured.
+- **Reclaiming slots.** JSFX has no destructor, so a deleted or reloaded SeqCore leaves its slot claimed. A coordinator frees a slot only when no SeqCore in any open project tab reports it, never on a stalled heartbeat. A SeqCore that finds its slot freed claims a new one.
+- **Transactions.** SeqCore stages a transaction's commands until its commit entry, checks all of them against the state they would see, including pages they would allocate, then applies all or none. A new transaction ID before a commit aborts the staged one. A full acknowledgement ring stops consumption, so no result is overwritten. While a snapshot bank is being written over several blocks, SeqCore consumes no commands, so a bank shows one revision.
+- **Codes.** 1 applied, 2 stale (an older session or generation), 3 invalid, 4 out of capacity, 5 aborted, 6 the saved state could not be read.
+- **Audition and panic** carry transaction 0. They change no state and get no result.
+
 The wire format has its own version. Milestone 1 must produce a non-overlapping address map and a bound on simultaneous sessions, including command payloads, acknowledgements, two snapshot banks and V2 lock data. Freeze offsets only after these regions fit the verified shared-memory budget.
 
 | Region | Required content |
@@ -394,6 +416,10 @@ A closed window or a lost coordinator while a gesture is pending has not been te
 
 Ctrl+Z must use REAPER's own undo. A separate Lua history does not meet that requirement. If native atomic undo cannot be demonstrated, stop feature implementation and revise the state ownership or transaction design. Document any proposed reduction in behavior before proceeding.
 
+**State format 1.** SeqCore writes a magic word, the format, the rack fields and the four origin words, then one 16-word record per lane, then each non-default lane length, then one 3-word record per non-default step value: pattern × 64 + slot, step × 16 + field, value. Loading validates the whole state before replacing anything. A state that fails validation leaves the current state in place, stops playback and edits, and is written back unchanged on the next save. SeqCore reads saved words one at a time until none remain, because ysfx reports only whether data remains and REAPER's `file_avail` count in `@serialize` has not been measured. The read buffer holds 2,508,288 words, which caps non-default step values at 824,000. An edit past that cap fails with a capacity error.
+
+EEL2 ignores case in names, so a local `pt` and a table `PT` are one variable. A test fails when two names in SeqCore differ only by case.
+
 **Upgrades.** The header stores a format version. Newer SeqCore versions migrate supported older formats and write the newest. Maintain fixtures for every released format. Unsupported future versions fail with an explicit compatibility message. Temporary gmem state and runtime condition epochs never participate in migration.
 
 **Missing tracks.** If a lane's target track was deleted, the lane is shown in red and keeps its steps. The user can re-link it or let Furrow recreate the track.
@@ -413,6 +439,8 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
    - Receiver and item-storage proof: verify RS5K volume, pan, bend and release behavior. Record receiver settings or links required. Both parts passed on REAPER 7.82 for Linux. The instrument contract records the RS5K settings, and the commit section records the item storage rules.
    - Exit artifact: a feasibility report with host and dependency versions, event fixtures and diffs, routing and state observations, failures and resulting spec amendments. Before milestone 2, also test stopped transport, bypass, project switching, window closure and session recovery. Do not start milestone 2 with an unresolved gate. Stopped transport, bypass and project switching were measured. Window closure and session recovery need the rack window, so they move to milestone 2's exit check. Windows and macOS runs repeat every milestone 1 probe and gate the public beta, not milestone 2.
 2. **Bridge and rack window.** The gmem ring and mirror, plus a ReaImGui window with the grid, mute and solo, and sample drop that creates tracks and RS5K.
+   - Built so far. `jsfx/furrow_seqcore.jsfx` holds the page pool, wire format 1, transactions, snapshots, state format 1 and 1/16 playback with velocity, gate, pitch, lane length, mute and solo. `lua/Furrow_Rack.lua` opens the rack window. It creates a rack, adds an RS5K lane for each dropped audio file, paints and erases steps, toggles mute and solo, auditions a lane and deletes a lane. Each gesture is one native undo point.
+   - Engine tests. `tools/jsfx_host/` builds a small library over ysfx, an independent JSFX host, so `tests/` can run SeqCore and the real Lua modules together without REAPER. ysfx is not REAPER, so these tests do not replace a REAPER run.
    - Exit check: closing the window or losing the coordinator while a gesture is pending rolls back partial host changes, resolves whether the engine applied the transaction and leaves a coherent state. A new coordinator recovers the session. 500 rapid edits preserve their final intended state, each transaction has a result, snapshots remain coherent, and block-time measurements show no missed deadlines. Separately attempt more than 4,096 unconsumed entries, exhaust the base page pool and interrupt a transaction. Each case must reject or recover without partial state. Exercise lock-pool exhaustion in V2.
 3. **V1 features.** Step lane editor, swing, per-lane length, patterns, probability, fill and rotate tools, undo, save and load.
    - Exit check: a saved project restores the same quantized musical state; every gesture undoes and redoes in one native step. Test unequal lane lengths, reordered lanes, mid-pattern starts, pattern switches, monophonic retriggers and controller resets.
@@ -489,3 +517,8 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 - Source snapshots live in item extension data as printable text with no NUL byte.
 - The commit fingerprint covers item position, length and take start offset.
 - Milestone 1 closes on Linux. Window closure and session recovery move to milestone 2's exit check. Windows and macOS runs gate the public beta.
+- Wire format 1 has 64 slots of 131,072 values. A coordinator frees a slot only when no open SeqCore reports it.
+- Engine lane records use stable route slots and 24-bit integer lane IDs. Lane names come from the lane's track, linked through the rack track's `P_EXT:Furrow`.
+- Built-in lanes play note 60, which RS5K played at the sample's own pitch in the probe. Volume 5,000 and pan 0 send CC 7 = 64 and CC 10 = 64.
+- RS5K's Gain for minimum velocity is set to -30 dB. This is a product choice, not a measurement.
+- Closing the rack window keeps its coordinator running for up to 3 seconds, until pending gestures get their results, host changes and undo points.
