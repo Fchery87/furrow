@@ -1,0 +1,10 @@
+== gmem lifetime
+RESULT segment nothing else attaches, read at once, value read back = 0.0000
+RESULT segment nothing else attaches, read after 0.5 s, value read back = 0.0000
+RESULT segment a running JSFX attaches, read after 0.5 s, value read back = 4242.5000
+== All Notes Off and All Sound Off
+RESULT All Notes Off, Obey note-offs on, level change dB = -310.0004
+RESULT All Sound Off, Obey note-offs on, level change dB = -309.9984
+RESULT All Notes Off, Obey note-offs off, level change dB = -310.0004
+RESULT All Sound Off, Obey note-offs off, level change dB = -309.9985
+7 results, 0 failures
