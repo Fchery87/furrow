@@ -199,6 +199,7 @@ local function decode_bank(mem, at)
       pattern = r(wire.B_RACK + wire.R_PATTERN),
       mode = r(wire.B_RACK + wire.R_MODE),
       swing = r(wire.B_RACK + wire.R_SWING),
+      truncate = r(wire.B_RACK + wire.R_TRUNCATE),
       lane_count = r(wire.B_RACK + 6),
       pool_free = r(wire.B_RACK + 7),
       value_count = r(wire.B_RACK + 8),
@@ -220,6 +221,7 @@ local function decode_bank(mem, at)
         solo = r(lane + wire.L_SOLO) == 1,
         volume = r(lane + wire.L_VOLUME),
         pan = r(lane + wire.L_PAN),
+        swing = r(lane + wire.L_SWING),
         length = r(lane + wire.LANE_LENGTH),
       }
     end

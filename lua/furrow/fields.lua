@@ -20,6 +20,7 @@ fields.list = {
   { name = "Velocity", field = wire.F_VEL, min = 1, max = 127, text = whole },
   { name = "Gate", field = wire.F_GATE, min = 500, max = 10000, text = percent },
   { name = "Pitch", field = wire.F_PITCH, min = -24, max = 24, centered = true, text = signed },
+  { name = "Probability", field = wire.F_PROB, min = 0, max = 100, text = function(v) return string.format("%d%%", v) end },
 }
 
 -- Where a value sits in the bar, from 0 at the bottom to 1 at the top.

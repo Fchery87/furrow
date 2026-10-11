@@ -139,6 +139,7 @@ F_ON = 0;
 F_VEL = 1;
 F_PITCH = 3;
 F_GATE = 9;
+F_PROB = 12;
 STEP_FIELDS = 16;
 
 LANES = 64;
@@ -186,6 +187,10 @@ SIM = SMALL + 384;
 LMIN = SMALL + 448;
 LMAX = SMALL + 464;
 LDEF = SMALL + 480;
+PH_T = SMALL + 512;
+PH_NOTE = SMALL + 576;
+PH_VEL = SMALL + 640;
+PH_END = SMALL + 704;
 RAW = 5880320;
 RAW_MAX = 2508288;
 
@@ -339,6 +344,7 @@ function send_off(s, offset) local(ch) (
   );
   REL[s] = -1;
   AUD[s] = -1;
+  PH_T[s] = -1;
 );
 
 // Sends due note-offs in beat order. Inclusive puts a release at the limit before a hit there.
@@ -407,8 +413,69 @@ function send_hit(s, offset, note, vel) local(ch, l) (
   HELD[s] = note;
 );
 
+// Probability hash. It uses only double arithmetic below 2^53, so the Lua port in
+// lua/furrow/prob.lua gives the same bits. The modulus is the prime 2^26 - 5.
+PROB_M = 67108859;
+PROB_A = 40503817;
+PROB_B = 60251237;
+PROB_C = 9301841;
+
+function pmod(x) local(q, r) (
+  q = floor(x / PROB_M);
+  r = x - q * PROB_M;
+  r < 0 ? r += PROB_M;
+  r >= PROB_M ? r -= PROB_M;
+  r;
+);
+
+function prob_mix(h, x) (
+  h = pmod(h + x + 1);
+  h = pmod(h * PROB_A);
+  h = pmod(h * h + PROB_C);
+  pmod(h * PROB_B);
+);
+
+function prob_roll(sd, pk, lk, n) local(h) (
+  h = prob_mix(0, sd);
+  h = prob_mix(h, pk);
+  h = prob_mix(h, lk);
+  h = prob_mix(h, pmod(n));
+  pmod(h * h + PROB_C);
+);
+
+// A step with probability p plays when its roll is below p percent. The project step number
+// is the floor of the hit's absolute beat over the step length.
+function step_plays(s, hit, pos) local(p) (
+  p = get_value(pattern, s, pos, F_PROB);
+  p >= 100 ? 1 : (p <= 0 ? 0 :
+    prob_roll(seed, pattern, lane_get(s, L_PROB_KEY), floor(hit / STEP_BEATS + 0.000001)) * 100 < p * PROB_M
+  );
+);
+
+// Sends swung hits that fall before limit, earliest first and lowest lane first on a tie.
+function flush_pending(limit) local(s, best, best_beat) (
+  best = 0;
+  while (best >= 0) (
+    best = -1;
+    s = 0;
+    loop(LANES,
+      PH_T[s] >= 0 && PH_T[s] < limit && (best < 0 || PH_T[s] < best_beat) ? (
+        best = s;
+        best_beat = PH_T[s];
+      );
+      s += 1;
+    );
+    best >= 0 ? (
+      flush_releases(best_beat, 1);
+      send_hit(best, offset_of(best_beat), PH_NOTE[best], PH_VEL[best]);
+      REL[best] = PH_END[best];
+    );
+  );
+);
+
 reset_state();
 memset(HELD, -1, LANES);
+memset(PH_T, -1, LANES);
 memset(REL, -1, LANES);
 memset(AUD, -1, LANES);
 memset(SAVED_HELD, -1, LANES);
@@ -1068,6 +1135,7 @@ playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
   solo_on = any_solo();
   while (origin + next_k * STEP_BEATS < block_end_beat) (
     hit = origin + next_k * STEP_BEATS;
+    flush_pending(hit);
     flush_releases(hit, 1);
     next_k >= 0 ? (
       s = 0;
@@ -1075,11 +1143,17 @@ playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
         audible(s, solo_on) ? (
           pos = next_k % LEN[pattern * LANES + s];
           POSN[s] = pos;
-          get_value(pattern, s, pos, F_ON) ? (
+          get_value(pattern, s, pos, F_ON) && step_plays(s, hit, pos) ? (
             note = lane_get(s, L_NOTE) + get_value(pattern, s, pos, F_PITCH);
             note >= 0 && note <= 127 ? (
-              send_hit(s, offset_of(hit), note, get_value(pattern, s, pos, F_VEL));
-              REL[s] = hit + get_value(pattern, s, pos, F_GATE) / 10000 * STEP_BEATS;
+              // Swing delays every second step by a third of a step at full global and lane swing.
+              hit_t = next_k % 2 == 1 ? hit + swing / 10000 * lane_get(s, L_SWING) / 10000 * STEP_BEATS / 3 : hit;
+              hit_end = hit_t + get_value(pattern, s, pos, F_GATE) / 10000 * STEP_BEATS;
+              truncate ? hit_end = min(hit_end, hit + STEP_BEATS);
+              PH_T[s] = hit_t;
+              PH_NOTE[s] = note;
+              PH_VEL[s] = get_value(pattern, s, pos, F_VEL);
+              PH_END[s] = hit_end;
             );
           );
         );
@@ -1088,6 +1162,7 @@ playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
     );
     next_k += 1;
   );
+  flush_pending(block_end_beat);
   flush_releases(block_end_beat, 0);
 );
 

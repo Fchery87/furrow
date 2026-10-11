@@ -10,6 +10,8 @@ from harness import LUA, Rig, missing, pair
 SKIP = missing()
 
 OP_SET_STEP = 2
+OP_SET_RACK = 6
+R_SEED, R_SWING, R_TRUNCATE = 1, 4, 5
 F_ON = 0
 RS5K_PARAMS = ["Volume", "Pan", "Gain for minimum velocity", "Note range start", "Note range end",
                "Pitch for start note", "Pitch for end note", "MIDI channel", "Max voices", "Attack", "Release",
@@ -523,6 +525,36 @@ class RackTest(unittest.TestCase):
         self.assertAlmostEqual(fields.fraction(pitch, 0), 0.5)
         self.assertEqual(fields.fraction(velocity, 500), 1)
 
+    def test_swing_cut_and_reroll_reach_the_snapshot_as_separate_undo_points(self):
+        self.c("add_sample", "/samples/kick.wav")
+        self.settle()
+        self.stub.undo.clear()
+        lua = self.rig.lua
+        for name, field, value in (("set swing", R_SWING, 3000), ("set swing cut", R_TRUNCATE, 1),
+                                   ("reroll chances", R_SEED, 4242)):
+            commands = lua.table_from([lua.table_from([OP_SET_RACK, field, value])])
+            self.c("run", name, commands)
+            self.settle()
+        self.tick(6)
+        rack = self.coordinator.session.snapshot.rack
+        self.assertEqual((rack.swing, rack.truncate, rack.seed), (3000, 1, 4242))
+        self.assertEqual(self.stub.undo, ["Furrow: set swing", "Furrow: set swing cut", "Furrow: reroll chances"])
+        self.assertEqual(self.c("lanes")[1].swing, 10000)
+
+    def test_a_probability_bar_edit_reaches_the_step(self):
+        self.c("add_sample", "/samples/kick.wav")
+        self.settle()
+        fields = self.rig.lua.eval('(require("furrow.fields"))')
+        probability = fields.list[4]
+        self.assertEqual((probability.name, probability.min, probability.max), ("Probability", 0, 100))
+        gesture = self.c("begin", "edit probability")
+        self.assertTrue(self.c("set_field", gesture, 0, 3, probability.field, 40))
+        self.c("finish", gesture)
+        self.settle()
+        self.tick(6)
+        self.assertEqual(self.c("step_value", 0, 3, 12), 40)
+        self.assertEqual(self.c("step_value", 0, 4, 12), 100)
+
     def rack_links(self):
         return self.rack["rack"].ext.get("P_EXT:Furrow", "")
 
@@ -584,6 +616,8 @@ class WindowTest(unittest.TestCase):
             self.assertEqual([t.name for t in stub.tracks], ["Furrow Rack", "Furrow Engine", "perc"])
             self.assertIn("InvisibleButton", imgui.calls)
             self.assertIn("Dummy", imgui.calls)
+            self.assertIn("SliderInt", imgui.calls)
+            self.assertIn("Checkbox", imgui.calls)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
         finally:
             rig.close()
