@@ -11,6 +11,7 @@ local CELL = 22
 local GAP = 3
 local NAME_WIDTH = 150
 local LENGTH_CHANGES = { -16, -1, 1, 16 }
+local PAGE_BUTTON_WIDTH = 84
 local BAR_HEIGHT = 84
 local GRID_OFFSET = 2 * CELL + NAME_WIDTH + 5 * GAP
 local DRAIN_SECONDS = 3
@@ -64,6 +65,7 @@ function ui.run(ImGui)
   local shaping = nil
   local swing_edit = nil
   local length_shown = nil
+  local length_typed = nil
   local swing_shown = nil
   local edit_slot = nil
   local edit_field = 1
@@ -101,7 +103,7 @@ function ui.run(ImGui)
     if playing and c.session:playhead(lane.slot) == step then
       ImGui.DrawList_AddRect(draw, x1, y1, x1 + CELL, y1 + CELL, COLOR.playhead, 3, 0, 2)
     end
-    if not c:processing() then
+    if not c:processing() or not c:page_ready() then
       return
     end
     local hovered = ImGui.IsItemHovered(ctx, ImGui.HoveredFlags_AllowWhenBlockedByActiveItem)
@@ -221,7 +223,8 @@ function ui.run(ImGui)
     end
     local on = c:step_value(lane.slot, step, wire.F_ON) == 1
     ImGui.DrawList_AddRectFilled(draw, x1 + 2, top, x1 + CELL - 2, bottom, on and COLOR.on or COLOR.bar_off, 2)
-    if not c:processing() or not ImGui.IsItemHovered(ctx, ImGui.HoveredFlags_AllowWhenBlockedByActiveItem) then
+    if not c:processing() or not c:page_ready()
+        or not ImGui.IsItemHovered(ctx, ImGui.HoveredFlags_AllowWhenBlockedByActiveItem) then
       return
     end
     local _, my = ImGui.GetMousePos(ctx)
@@ -270,16 +273,34 @@ function ui.run(ImGui)
       shown = length_shown.value
     end
     ImGui.Text(ctx, "Length " .. shown)
+    local function set_length(target)
+      target = math.max(1, math.min(wire.MAX_STEPS, target))
+      length_typed = nil
+      if target ~= shown then
+        length_shown = { slot = lane.slot, value = target, until_time = now + 0.5 }
+        c:set_length(lane.slot, target)
+        shown = target
+      end
+    end
     for _, change in ipairs(LENGTH_CHANGES) do
       ImGui.SameLine(ctx, 0, GAP)
       if ImGui.SmallButton(ctx, string.format("%+d##length%d", change, change)) and c:processing() then
-        local target = math.max(1, math.min(wire.MAX_STEPS, shown + change))
-        if target ~= shown then
-          length_shown = { slot = lane.slot, value = target, until_time = now + 0.5 }
-          c:set_length(lane.slot, target)
-          shown = target
-        end
+        set_length(shown + change)
       end
+    end
+    -- A typed length waits for the Set button, so a half-typed number is never sent.
+    if length_typed and length_typed.slot ~= lane.slot then
+      length_typed = nil
+    end
+    ImGui.SameLine(ctx, 0, GAP * 4)
+    ImGui.SetNextItemWidth(ctx, 90)
+    local edited, typed = ImGui.InputInt(ctx, "##lengthtyped", length_typed and length_typed.value or shown, 0, 0)
+    if edited then
+      length_typed = { slot = lane.slot, value = typed }
+    end
+    ImGui.SameLine(ctx, 0, GAP)
+    if ImGui.SmallButton(ctx, "Set##lengthset") and length_typed and c:processing() then
+      set_length(length_typed.value)
     end
     local def = fields.list[edit_field]
     ImGui.Dummy(ctx, GRID_OFFSET - GAP * 3, BAR_HEIGHT)
@@ -338,8 +359,11 @@ function ui.run(ImGui)
       return
     end
     ImGui.Text(ctx, "Steps")
+    local per_row = math.max(1, math.floor(ImGui.GetContentRegionAvail(ctx) / PAGE_BUTTON_WIDTH))
     for page = 0, pages - 1 do
-      ImGui.SameLine(ctx, 0, GAP * 2)
+      if page % per_row ~= 0 then
+        ImGui.SameLine(ctx, 0, GAP * 2)
+      end
       local active = page == c.page
       if active then
         ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.on)

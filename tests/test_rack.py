@@ -570,8 +570,11 @@ class RackTest(unittest.TestCase):
         self.assertEqual(self.stub.undo, ["Furrow: set length", "Furrow: paint steps"])
         self.assertEqual(self.c("lanes")[1].length, 40)
         self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [1, 0])
+        self.assertTrue(self.c("page_ready"))
         self.c("set_page", 2)
+        self.assertFalse(self.c("page_ready"))
         self.tick(8)
+        self.assertTrue(self.c("page_ready"))
         self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [0, 1])
         self.c("set_page", 99)
         self.assertEqual(self.coordinator.page, 31)
@@ -681,6 +684,7 @@ class FakeImGui:
         self.small_labels = []
         self.press = None
         self.menu_open = False
+        self.typed = None
 
     def table(self, lua):
         fake = self
@@ -688,6 +692,9 @@ class FakeImGui:
         def call(name):
             def fn(*args):
                 fake.calls.append(name)
+                if name == "InputInt" and fake.typed is not None:
+                    typed, fake.typed = fake.typed, None
+                    return True, typed
                 if name == "BeginPopupContextItem":
                     return fake.menu_open
                 if name == "MenuItem" and args[1] == fake.press:
@@ -762,8 +769,12 @@ class WindowTest(unittest.TestCase):
             for frame in range(60):
                 if frame == 6:
                     imgui.drop.append("/samples/perc.wav")
-                if frame in (25, 35):
+                if frame == 25:
                     imgui.press = "+16##length16"
+                if frame == 35:
+                    imgui.typed = 100
+                if frame == 36:
+                    imgui.press = "Set##lengthset"
                 pending, stub.deferred = stub.deferred, []
                 for fn in pending:
                     fn()
@@ -772,7 +783,8 @@ class WindowTest(unittest.TestCase):
             self.assertIn("1-16##page0", imgui.small_labels)
             self.assertIn("17-32##page1", imgui.small_labels)
             self.assertIn("33-48##page2", imgui.small_labels)
-            self.assertNotIn("49-64##page3", imgui.small_labels)
+            self.assertIn("97-112##page6", imgui.small_labels)
+            self.assertNotIn("113-128##page7", imgui.small_labels)
         finally:
             rig.close()
 
