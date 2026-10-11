@@ -133,3 +133,27 @@ Each result holds both stopped and playing. With the lua mark, one native undo r
 **Unexplained.** The JSFX compared the reloaded raw value with the original 1/3 using `===`, and reported a match. The JSFX reference says `===` means exactly equal. The two values differ after the eighth significant digit. The verdict above does not depend on `===`, because the Lua script compared every decoded value exactly and checked its words against the IEEE layout. Until `===` is tested on its own, Furrow should not rely on it for exactness.
 
 **Other reference notes.** The JSFX reference gives the default named gmem as about 1,048,576 slots. The memory probe used indices up to 33,554,431 without error. The spec's figure of about 8 million needs correcting.
+
+## Host lifecycle
+
+`lua/furrow_probe_lifecycle.lua` measured five cases. `lifecycle-v2-results.txt` has 35 results and no failures.
+
+**First run.** `lifecycle-v1-results.txt` lost the engine after L3. The cleanup undo in L3 assumed the probe's own undo point was on top. REAPER's own "FX offline toggle" point was on top instead, so the undo took the engine offline again. Every later test then found it stopped. The second run undoes only its own points.
+
+| Case | Result |
+| --- | --- |
+| L1, user edit with its own undo point while a gesture waits for the engine | When the gesture's track change runs before the command, the user's undo point captures the track. One undo of the gesture restores the step and leaves the track. When the track change runs after the acknowledgement, just before the gesture's point, one undo removes both, and the user's rename stays separate. Both runs agree |
+| L2, bypass with a command pending | A bypassed engine does not process or acknowledge. After re-enable, the command applies once. REAPER adds its own "FX bypass toggle" undo point |
+| L3, offline and online | The engine stops while offline and resumes online. An edit survives with or without the State revision mark. REAPER adds its own "FX offline toggle" undo point |
+| L4, new project tab with a command pending | The engine does not acknowledge while its tab is in the background. On return, the command applies once |
+| L5, held note at bypass | No note-off or controller reaches the receiver. The note is released only when the engine is re-enabled and SeqCore releases it |
+| L5, held note at offline | No note-off or controller reaches the receiver, and none follows when the engine comes back online. The note stays held |
+| L5, held note at stop | A note-off reaches the receiver |
+
+**What this means for the spec.**
+- A gesture applies host changes after the engine acknowledges, immediately before its single undo point, in the same callback. Applying them first lets a user edit capture them in its own undo point.
+- REAPER records bypass and offline changes as undo points. A user's Ctrl+Z can therefore bypass SeqCore or take it offline. The coordinator detects that through the heartbeat, as the spec requires.
+- An offline SeqCore leaves held notes held, and so does a bypassed one until it returns. The host sends no cleanup. Furrow cannot claim stuck-note protection for these transitions. It needs the rack panic action, and SeqCore should release every lane route when it starts. That release has not been tested.
+- Taking SeqCore offline keeps its current state even without the revision mark. The undo mark is still needed for undo, as the edit and undo runs showed.
+
+**Not tested.** A coordinator that exits while a command is pending and a new one that recovers. The ReaImGui window does not exist yet.
