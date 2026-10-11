@@ -1,0 +1,51 @@
+== one project
+RESULT Furrow Memory A1 runs = true
+RESULT Furrow Memory A1 sees the Lua nonce = true
+RESULT Furrow Memory A1 gmem report visible to Lua = true
+RESULT Furrow Memory A1 gmem report saw the Lua nonce = true
+RESULT Furrow Memory A2 runs = true
+RESULT Furrow Memory A2 sees the Lua nonce = true
+RESULT Furrow Memory A2 gmem report visible to Lua = true
+RESULT Furrow Memory A2 gmem report saw the Lua nonce = true
+RESULT Furrow Memory A3 copy of A1 runs = true
+RESULT Furrow Memory A3 copy of A1 sees the Lua nonce = true
+RESULT Furrow Memory A3 copy of A1 gmem report visible to Lua = true
+RESULT Furrow Memory A3 copy of A1 gmem report saw the Lua nonce = true
+RESULT A1 and A2 runtime tokens differ = true
+RESULT A3 copy runtime token differs from A1 = true
+RESULT A3 copy persistent id equals A1 = true
+== second project tab
+RESULT Furrow Memory B1 runs = true
+RESULT Furrow Memory B1 sees the Lua nonce = true
+RESULT Furrow Memory B1 gmem report visible to Lua = true
+RESULT Furrow Memory B1 gmem report saw the Lua nonce = true
+RESULT B1 runtime token differs from A1 = true
+== first tab active, second tab in the background
+RESULT Furrow Memory A1 runs = true
+RESULT Furrow Memory A1 sees the Lua nonce = true
+RESULT Furrow Memory A1 gmem report visible to Lua = true
+RESULT Furrow Memory A1 gmem report saw the Lua nonce = true
+RESULT Furrow Memory B1 runs = false
+RESULT Furrow Memory B1 sees the Lua nonce = false
+RESULT Furrow Memory B1 gmem report visible to Lua = true
+RESULT Furrow Memory B1 gmem report saw the Lua nonce = false
+== named gmem size
+RESULT Lua reads back its own write at 1048575 = true
+RESULT Lua reads back its own write at 2097151 = true
+RESULT Lua reads back its own write at 4194303 = true
+RESULT Lua reads back its own write at 8388607 = true
+RESULT Lua reads back its own write at 8388608 = true
+RESULT Lua reads back its own write at 16777215 = true
+RESULT Lua reads back its own write at 33554431 = true
+RESULT A1 highest Lua marker index it read back = 33554431
+RESULT Lua reads an instance write at 1048575 = true
+RESULT Lua reads an instance write at 2097151 = true
+RESULT Lua reads an instance write at 4194303 = true
+RESULT Lua reads an instance write at 8388607 = true
+RESULT Lua reads an instance write at 8388608 = true
+RESULT Lua reads an instance write at 16777215 = true
+RESULT Lua reads an instance write at 33554431 = true
+== local memory
+RESULT A1 local memory top = 8388608
+RESULT A1 local write at 8388607 read back = true
+45 results, 0 failures

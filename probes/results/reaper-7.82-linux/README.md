@@ -94,3 +94,25 @@ Each result holds both stopped and playing. With the lua mark, one native undo r
 - A user edit made between a gesture's host mutation and its undo point.
 - Save and reload of the origin and seed encoding.
 - Bypass, project tab switching, a closed window and session recovery.
+
+## Memory scope and size
+
+`lua/furrow_probe_memory.lua` loaded `jsfx/furrow_probe_memory.jsfx` on two tracks, copied one to a third, and opened a second project tab with a fourth. Each instance reported through hidden parameters as well as gmem. `memory-results.txt` has 45 results and no failures.
+
+| Question | Result |
+| --- | --- |
+| Do instances in one project share named gmem? | Yes. Both saw Lua's value, and Lua saw both reports |
+| Does a copied FX share it? | Yes |
+| Does an instance in another project tab share it? | Yes, while that tab was active. Named gmem is one store for the whole REAPER process |
+| Does a background tab keep processing? | No. Once its tab went to the background, the instance's heartbeat stopped and it missed Lua's next value. Its last gmem report stayed in place |
+| Does a copied FX keep the original's persistent id? | Yes, because the id lives in a saved slider. The copy got a new runtime token |
+| Which named gmem indices round-trip? | Every index tested, up to 33,554,431, both from Lua and from an instance. That is four times the "about 8 million" in the JSFX reference. Higher indices were not tested |
+| How much local memory does `maxmem=8388608` give? | `__memtop()` returned 8,388,608, and a write at 8,388,607 read back |
+
+**What this means for the spec.**
+- Every rack in every open project tab shares one named gmem. Slot arbitration has to cover tabs, not only racks within one project.
+- A rack in a background tab stops processing. It cannot acknowledge commands, and its last report stays in gmem and looks current. The heartbeat is the only sign. This matches the spec's rule that a stalled heartbeat means processing is unavailable, not that the owner has exited.
+- A copied FX carries the original's persistent id. Two live reports with the same persistent id and different runtime tokens identify the copy. The spec's rule to give a copy a new id before it accepts edits needs that check.
+- Named gmem fits the protocol with room to spare. Local memory is exactly 8,388,608 values. Pattern storage takes 5,259,264 of them, which leaves 3,129,344 for queues, snapshots and transaction staging.
+
+**Not tested.** REAPER may have a setting that keeps background projects running. Separate REAPER processes were not tested. Neither were removing an instance, project switching while a command is pending, or offline render.
