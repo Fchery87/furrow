@@ -150,7 +150,7 @@ function Session:poll()
     self.generation = generation
     self:fail_pending(results)
     self:free_banks()
-    self:request(self.window)
+    self:request(self.window, self.side ~= nil)
     return results, "replaced"
   end
   return results
@@ -170,8 +170,12 @@ function Session:fail_pending(results)
 end
 
 -- Asks for a snapshot of window = { pattern, l0, nl, s0, ns } in route slots and steps.
-function Session:request(window)
+-- A side window is a one-off read for a tool. Its snapshot goes to side_snapshot and never
+-- replaces the snapshot the grid draws.
+function Session:request(window, side)
   self.window = window
+  self.side = side and window or nil
+  self.side_snapshot = nil
   self:set_h(wire.H_SNAP_PATTERN, window.pattern)
   self:set_h(wire.H_SNAP_L0, window.l0)
   self:set_h(wire.H_SNAP_NL, window.nl)
@@ -263,6 +267,11 @@ function Session:read_snapshot()
   end
   if snap then
     self.last_snap = snap.seq
+    local side = self.side
+    if side and snap.l0 == side.l0 and snap.nl == side.nl and snap.s0 == side.s0 and snap.ns == side.ns then
+      self.side_snapshot = snap
+      return nil
+    end
     self.snapshot = snap
   end
   return snap

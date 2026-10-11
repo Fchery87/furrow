@@ -168,6 +168,25 @@ function ui.run(ImGui)
       ImGui.PopStyleColor(ctx, 1)
     end
     if ImGui.BeginPopupContextItem(ctx, "lane menu") then
+      local ready = c:processing() and not c.tool
+      for _, every in ipairs({ 2, 3, 4, 8 }) do
+        if ImGui.MenuItem(ctx, "Fill every " .. every, nil, false, ready) then
+          c:lane_tool(lane.slot, "fill", every)
+        end
+      end
+      if ImGui.MenuItem(ctx, "Rotate left", nil, false, ready) then
+        c:lane_tool(lane.slot, "rotate", -1)
+      end
+      if ImGui.MenuItem(ctx, "Rotate right", nil, false, ready) then
+        c:lane_tool(lane.slot, "rotate", 1)
+      end
+      if ImGui.MenuItem(ctx, "Invert steps", nil, false, ready) then
+        c:lane_tool(lane.slot, "invert")
+      end
+      if ImGui.MenuItem(ctx, "Clear steps", nil, false, ready) then
+        c:lane_tool(lane.slot, "clear")
+      end
+      ImGui.Separator(ctx)
       if ImGui.MenuItem(ctx, "Delete lane", nil, false, c:processing()) then
         c:remove_lane(lane)
       end

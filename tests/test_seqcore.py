@@ -54,6 +54,9 @@ class WireTest(unittest.TestCase):
         shared = sorted(set(engine) & set(lua))
         self.assertGreater(len(shared), 90)
         self.assertEqual({k: lua[k] for k in shared}, {k: engine[k] for k in shared})
+        defaults = re.search(r"^table16\(DEF, ([^)]*)\);", SEQCORE.read_text(), re.M).group(1)
+        wire_defaults = re.search(r"STEP_DEFAULTS = \{ \[0\] = ([^}]*) \}", (LUA / "furrow" / "wire.lua").read_text())
+        self.assertEqual([int(x) for x in wire_defaults.group(1).split(",")], [int(x) for x in defaults.split(",")])
         self.assertEqual(lua["LANE_LENGTH"], "15")
         self.assertEqual(engine["LANE_FIELDS"], "15")
 

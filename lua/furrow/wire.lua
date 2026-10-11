@@ -111,6 +111,9 @@ return {
   L_MOD_B = 14,
   LANE_LENGTH = 15,
 
+  -- Step field defaults, in field order. tests/test_seqcore.py checks them against SeqCore.
+  STEP_DEFAULTS = { [0] = 0, 100, 64, 0, 0, 0, 64, 64, 0, 5000, 1, 0, 100, 0, 0, 0 },
+
   F_ON = 0,
   F_VEL = 1,
   F_PITCH = 3,

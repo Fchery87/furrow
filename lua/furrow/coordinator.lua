@@ -10,6 +10,7 @@
 local wire = require("furrow.wire")
 local Session = require("furrow.session")
 local host = require("furrow.host")
+local tools = require("furrow.tools")
 
 local Coordinator = {}
 Coordinator.__index = Coordinator
@@ -19,6 +20,9 @@ local UNDO_FX = 2
 local STALL_SECONDS = 0.5
 local OTHER_COORDINATOR_SECONDS = 1.0
 local JOURNAL_SECTION = "Furrow"
+local TOOL_CHUNK = 200
+local TOOL_TIMEOUT_SECONDS = 2
+local TOOL_SETTLE_SECONDS = 5
 
 local mem = {
   read = function(i) return reaper.gmem_read(i) end,
@@ -37,6 +41,7 @@ function Coordinator.new(proj, rack)
   self.message = nil
   self.recovered = false
   self.page = 0
+  self.tool = nil
   self.completed = 0
   self.journaled = nil
   return self
@@ -326,6 +331,7 @@ function Coordinator:tick()
   self:handle(results)
   if note == "restarted" then
     self.session = nil
+    self.tool = nil
     self.overlay = {}
     self.reserved = {}
     self.status = "connecting"
@@ -361,6 +367,109 @@ function Coordinator:tick()
   end
   self:flush()
   self:settle()
+  self:step_tool()
+end
+
+local TOOL_LABEL = {
+  invert = "invert steps",
+  clear = "clear steps",
+}
+
+local function tool_label(kind, arg)
+  if kind == "fill" then
+    return "fill every " .. arg
+  elseif kind == "rotate" then
+    return arg < 0 and "rotate left" or "rotate right"
+  end
+  return TOOL_LABEL[kind]
+end
+
+-- Starts a lane tool: "fill" with arg = every N steps, "rotate" with arg = -1 or 1, "invert"
+-- or "clear". The tool waits until pending edits land, reads the lane's whole length through
+-- a one-lane side window and sends the result as one gesture.
+function Coordinator:lane_tool(slot, kind, arg)
+  if self.tool then
+    self.message = "another lane tool is still running"
+    return
+  end
+  if not (self.session and self.session.snapshot and self.session.snapshot.lanes[slot]) then
+    self.message = "the rack is not connected yet"
+    return
+  end
+  self.tool = { slot = slot, kind = kind, arg = arg, stage = "settling", created = reaper.time_precise() }
+end
+
+function Coordinator:end_tool()
+  self.tool = nil
+  if self.session then
+    self.session:request(self:window())
+  end
+end
+
+function Coordinator:step_tool()
+  local tool = self.tool
+  if not tool then
+    return
+  end
+  local session = self.session
+  local lane = session.snapshot and session.snapshot.lanes[tool.slot]
+  local now = reaper.time_precise()
+  if not lane then
+    self:end_tool()
+  elseif tool.stage == "settling" then
+    if self:busy() or #self.overlay > 0 or self.status ~= "ready" then
+      if now - tool.created > TOOL_SETTLE_SECONDS then
+        self.message = "the lane tool gave up waiting for pending edits"
+        self:end_tool()
+      end
+      return
+    end
+    tool.length = lane.length
+    tool.since = now
+    tool.stage = "waiting"
+    session:request({ pattern = 0, l0 = tool.slot, nl = 1, s0 = 0, ns = lane.length }, true)
+  elseif session.side_snapshot then
+    local side = session.side_snapshot
+    self:end_tool()
+    self:run_tool(tool, side)
+  elseif now - tool.since > TOOL_TIMEOUT_SECONDS then
+    self.message = "the lane tool timed out"
+    self:end_tool()
+  end
+end
+
+function Coordinator:run_tool(tool, snap)
+  local rows = snap.steps[tool.slot] or {}
+  for step = 0, tool.length - 1 do
+    if not rows[step] then
+      self.message = "the lane tool could not read the lane"
+      return
+    end
+  end
+  local edits
+  if tool.kind == "fill" then
+    edits = tools.fill(tool.arg, tool.length, rows)
+  elseif tool.kind == "rotate" then
+    edits = tools.rotate(tool.arg, tool.length, rows)
+  elseif tool.kind == "invert" then
+    edits = tools.invert(tool.length, rows)
+  else
+    edits = tools.clear(tool.length, rows)
+  end
+  if #edits == 0 then
+    return
+  end
+  local gesture = self:begin(tool_label(tool.kind, tool.arg))
+  for first = 1, #edits, TOOL_CHUNK do
+    local commands, overlay = {}, {}
+    for i = first, math.min(first + TOOL_CHUNK - 1, #edits) do
+      local e = edits[i]
+      commands[#commands + 1] = { wire.OP_SET_STEP, 0, tool.slot, e[1], e[2], e[3] }
+      overlay[#overlay + 1] = { tool.slot, e[1], e[2], e[3] }
+    end
+    self:add(gesture, commands, overlay)
+  end
+  self:finish(gesture)
 end
 
 -- Finishes what a lost coordinator left half done. A lane the journal names is removed
