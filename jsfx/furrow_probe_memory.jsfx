@@ -1,0 +1,67 @@
+desc: Furrow probe memory
+tags: utility
+in_pin:left
+in_pin:right
+out_pin:left
+out_pin:right
+
+options: gmem=FurrowProbeMemory maxmem=8388608
+
+slider1:0<0,63,1>Slot
+slider2:0<0,16777215,1>-Seen nonce
+slider3:0<0,1000000000,1>-Heartbeat
+slider4:0<0,16777215,1>-Runtime token
+slider5:0<0,16777215,1>-Persistent id
+slider6:0<0,100000000,1>-Local memory top
+slider7:-1<-1,100000000,1>-Highest Lua marker seen
+slider8:0<0,1,1>-Local write at 8388607 read back
+
+@init
+// gmem[1] nonce from Lua. gmem[2] phase from Lua, 2 asks each instance to write its markers.
+// Slot s reports at gmem[100 + 4 * s]: runtime token, heartbeat, persistent id, seen nonce.
+// Lua writes index + 0.25 at each marker index. An instance writes index + 0.5 in phase 2.
+REPORT = 100;
+marker_count = 7;
+markers = 1000;
+markers[0] = 1048575;
+markers[1] = 2097151;
+markers[2] = 4194303;
+markers[3] = 8388607;
+markers[4] = 8388608;
+markers[5] = 16777215;
+markers[6] = 33554431;
+// Two instances that load in the same block still differ, because rand() advances per call.
+token = (floor(time_precise() * 1000003) + floor(rand(16777216))) % 16777215 + 1;
+heartbeat = 0;
+
+@block
+heartbeat += 1;
+slider5 == 0 ? slider5 = (token * 7919) % 16777215 + 1;
+slot = floor(slider1 + 0.5);
+at = REPORT + 4 * slot;
+gmem[at] = token;
+gmem[at + 1] = heartbeat;
+gmem[at + 2] = slider5;
+gmem[at + 3] = gmem[1];
+slider2 = gmem[1];
+slider3 = heartbeat;
+slider4 = token;
+slider6 = __memtop();
+mem_probe = 8388607;
+mem_probe[0] = 1.5;
+slider8 = mem_probe[0] == 1.5;
+highest = -1;
+i = 0;
+loop(marker_count,
+  gmem[markers[i]] == markers[i] + 0.25 ? highest = markers[i];
+  i += 1;
+);
+slider7 = highest;
+gmem[2] == 2 ? (
+  i = 0;
+  loop(marker_count,
+    gmem[markers[i]] = markers[i] + 0.5;
+    i += 1;
+  );
+);
+sliderchange(2 + 4 + 8 + 16 + 32 + 64 + 128);

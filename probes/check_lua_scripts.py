@@ -361,5 +361,173 @@ class UndoTest(unittest.TestCase):
         self.assertIn("FAIL engine processes while playing", results)
 
 
+class StubMemoryReaper:
+    """Project tabs whose memory JSFX instances run once per tick.
+
+    shared_gmem gives every tab one named gmem. Otherwise each tab has its own, and Lua
+    sees the first tab's. background_runs keeps a tab that is not active processing.
+    """
+
+    SIZE = 8388608
+
+    def __init__(self, directory, shared_gmem=True, background_runs=True):
+        self.directory = directory
+        self.shared_gmem = shared_gmem
+        self.background_runs = background_runs
+        self.projects = [{"name": "first", "tracks": [], "gmem": {}}]
+        self.active = self.projects[0]
+        self.instances = []
+        self.clock = 0
+        self.deferred = None
+        self.messages = []
+        self.tokens = 0
+
+    def table(self, lua):
+        names = ["EnumProjects", "SelectProjectInstance", "Main_OnCommand", "CountTracks", "GetTrack",
+                 "InsertTrackAtIndex", "GetSetMediaTrackInfo_String", "TrackFX_AddByName", "TrackFX_SetParam",
+                 "TrackFX_GetParam", "TrackFX_CopyToTrack", "gmem_attach", "gmem_read", "gmem_write",
+                 "time_precise", "defer", "ShowConsoleMsg", "GetResourcePath"]
+        return lua.table_from({name: getattr(self, name) for name in names})
+
+    def gmem_of(self, project):
+        return self.projects[0]["gmem"] if self.shared_gmem else project["gmem"]
+
+    def new_instance(self, project, params=None):
+        self.tokens += 1
+        instance = {"project": project, "token": 1000 + self.tokens, "params": list(params or [0] * 8)}
+        instance["params"][6] = -1
+        self.instances.append(instance)
+        return instance
+
+    def tick_instances(self):
+        for instance in self.instances:
+            project = instance["project"]
+            if project is not self.active and not self.background_runs:
+                continue
+            gmem, params = self.gmem_of(project), instance["params"]
+            params[2] += 1
+            if params[4] == 0:
+                params[4] = instance["token"] * 7 % 16777215 + 1
+            at = 100 + 4 * int(params[0])
+            gmem[at], gmem[at + 1], gmem[at + 2], gmem[at + 3] = instance["token"], params[2], params[4], gmem.get(1, 0)
+            params[1], params[3], params[5], params[7] = gmem.get(1, 0), instance["token"], self.SIZE, 1
+            markers = (1048575, 2097151, 4194303, 8388607, 8388608, 16777215, 33554431)
+            seen = [index for index in markers if gmem.get(index) == index + 0.25]
+            params[6] = max(seen) if seen else -1
+            if gmem.get(2) == 2:
+                for index in markers:
+                    if index < self.SIZE:
+                        gmem[index] = index + 0.5
+
+    def drive(self, limit=100000):
+        while self.deferred is not None and limit > 0:
+            callback, self.deferred = self.deferred, None
+            self.tick_instances()
+            self.clock += 1
+            callback()
+            limit -= 1
+
+    def EnumProjects(self, index, buffer):
+        if int(index) == -1:
+            return self.active, str(Path(self.directory) / (self.active["name"] + ".rpp"))
+        project = self.projects[int(index)]
+        return project, str(Path(self.directory) / (project["name"] + ".rpp"))
+
+    def SelectProjectInstance(self, project):
+        self.active = project
+
+    def Main_OnCommand(self, command, flag):
+        if int(command) == 40859:
+            self.projects.append({"name": "second", "tracks": [], "gmem": {}})
+            self.active = self.projects[-1]
+
+    def CountTracks(self, project):
+        return len(project["tracks"])
+
+    def GetTrack(self, project, index):
+        return project["tracks"][int(index)]
+
+    def InsertTrackAtIndex(self, index, defaults):
+        self.active["tracks"].insert(int(index), {"name": "", "fx": [], "project": self.active})
+
+    def GetSetMediaTrackInfo_String(self, track, key, value, set_new):
+        if set_new:
+            track["name"] = value
+        return True, track["name"]
+
+    def TrackFX_AddByName(self, track, name, record, instantiate):
+        track["fx"].append(self.new_instance(track["project"]))
+        return len(track["fx"]) - 1
+
+    def TrackFX_CopyToTrack(self, source, source_fx, dest, dest_fx, move):
+        dest["fx"].insert(int(dest_fx), self.new_instance(dest["project"], source["fx"][int(source_fx)]["params"]))
+
+    def TrackFX_SetParam(self, track, fx, param, value):
+        track["fx"][int(fx)]["params"][int(param)] = value
+
+    def TrackFX_GetParam(self, track, fx, param):
+        return float(track["fx"][int(fx)]["params"][int(param)]), 0.0, 1.0
+
+    def gmem_attach(self, name):
+        pass
+
+    def gmem_read(self, index):
+        return self.projects[0]["gmem"].get(int(index), 0) if int(index) < self.SIZE else 0
+
+    def gmem_write(self, index, value):
+        if int(index) < self.SIZE:
+            self.projects[0]["gmem"][int(index)] = value
+
+    def time_precise(self):
+        return self.clock * 0.001
+
+    def defer(self, callback):
+        self.deferred = callback
+
+    def ShowConsoleMsg(self, text):
+        self.messages.append(text)
+
+    def GetResourcePath(self):
+        return self.directory
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class MemoryTest(unittest.TestCase):
+    def run_memory(self, **options):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubMemoryReaper(directory, **options)
+            run(stub, "furrow_probe_memory.lua")
+            stub.drive()
+            return (Path(directory) / "furrow-memory-results.txt").read_text().splitlines()
+
+    def test_shared_gmem_with_running_background_tabs(self):
+        results = self.run_memory()
+        self.assertEqual(results[-1], "45 results, 0 failures")
+        for line in (
+            "RESULT Furrow Memory A2 sees the Lua nonce = true",
+            "RESULT A3 copy runtime token differs from A1 = true",
+            "RESULT A3 copy persistent id equals A1 = true",
+            "RESULT Furrow Memory B1 sees the Lua nonce = true",
+            "RESULT Lua reads back its own write at 8388607 = true",
+            "RESULT Lua reads back its own write at 8388608 = false",
+            "RESULT A1 highest Lua marker index it read back = 8388607",
+            "RESULT Lua reads an instance write at 4194303 = true",
+            "RESULT A1 local memory top = 8388608",
+        ):
+            self.assertIn(line, results)
+        background = results.index("== first tab active, second tab in the background")
+        self.assertIn("RESULT Furrow Memory B1 runs = true", results[background:])
+
+    def test_separate_gmem_and_paused_background_tabs(self):
+        results = self.run_memory(shared_gmem=False, background_runs=False)
+        self.assertEqual(results[-1], "45 results, 0 failures")
+        second = results.index("== second project tab")
+        background = results.index("== first tab active, second tab in the background")
+        self.assertIn("RESULT Furrow Memory B1 sees the Lua nonce = false", results[second:background])
+        self.assertIn("RESULT Furrow Memory B1 runs = true", results[second:background])
+        self.assertIn("RESULT Furrow Memory B1 runs = false", results[background:])
+        self.assertIn("RESULT Furrow Memory A1 sees the Lua nonce = true", results[background:])
+
+
 if __name__ == "__main__":
     unittest.main()
