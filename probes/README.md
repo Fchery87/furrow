@@ -18,7 +18,7 @@ Each gesture marks the engine state as changed before its undo point, in one of 
 - **B.** Toggle a step that the engine applies 20 blocks later, and rename the folder track with its own undo point while the toggle is pending. The first undo must restore only the step, and the second only the name.
 - **C.** Toggle a step and add a track, wait for the acknowledgement, mark, then create one undo point for both. One undo must remove both.
 
-The first REAPER 7.82 run had no mark. REAPER created no FX-only undo point, never asked the engine to reload its state, and closed an undo block left open across deferred callbacks as "ReaScript: Run". See `probes/results/reaper-7.82-linux/undo-v1-results.txt`.
+On REAPER 7.82 only the `lua` mark passed. With no mark or the `engine` mark, REAPER created no FX-only undo point and never asked the engine to reload its state. See the edit and undo section of `probes/results/reaper-7.82-linux/README.md`.
 
 The engine saves its steps through `@serialize` and counts each restore in `gmem[8]`. The script writes `furrow-undo-results.txt` next to the project. `probes/check_lua_scripts.py` runs it against a simulated REAPER, once with an undo that rereads engine state and once with an undo that rereads it only when a parameter changes. That shows the script reports each case. It does not show what REAPER does.
 

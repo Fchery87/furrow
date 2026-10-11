@@ -64,3 +64,33 @@ The engine in this run treats a position error below one block's beats as tempo 
 **Host behavior.** REAPER kept every block at 1,024 samples, including the blocks that contain a ramp edge or a tempo step. It does not split a block at a tempo marker. `beat_position` matched the exact tempo map within 5e-13 beats in all three runs. The ramp-edge block tempos matched the time-linear map within 5e-11 BPM.
 
 **The step-off-grid miss.** The step falls at sample 54,436, inside the block that starts at 54,272. The step 10 note-ons follow it in the same block. The engine reads only that block's starting tempo, 120 BPM, so it places them as if the step had not happened. A Python copy of the engine predicted the same 689 samples before the run. No engine that reads one tempo per block can place an event that follows a tempo change inside the same block. The error is at most one block, 23 ms at 1,024 samples and 5.8 ms at 256. Removing it would need one block of lookahead, reported to REAPER as plugin delay, which has not been tested.
+
+## Edit and undo
+
+`lua/furrow_probe_undo.lua` sends a step toggle through the engine's gmem mailbox, waits for the engine's acknowledgement, and then creates a native undo point. The engine saves its steps through `@serialize`. Each test runs stopped and again while playing.
+
+**First run, no change mark.** `undo-v1-results.txt`, 17 of 47 checks failed.
+- REAPER created no FX-only undo point after the engine applied a toggle.
+- An undo point that also covered a new track undid the track and left the step changed.
+- The engine's restore count stayed at 0, so REAPER never called `@serialize` to restore it.
+- An undo block left open across deferred callbacks was closed by REAPER as "ReaScript: Run".
+
+**Second run, three change marks.** `undo-v2-results.txt`, 66 checks passed and 8 failed.
+
+| Mark before the undo point | A, toggle | B, rename while pending | C, toggle and new track |
+| --- | --- | --- | --- |
+| none | Fail, no undo point | Not run | Not run |
+| lua, `TrackFX_SetParam` on the hidden State revision slider after the acknowledgement | Pass | Pass | Pass |
+| engine, `sliderchange` on that slider from `@block` | Fail, no undo point | Fail, no undo point | Fail, the track was undone and the step was not |
+
+Each result holds both stopped and playing. With the lua mark, one native undo restored the step, the engine counted the restore, redo reapplied it, a pending toggle stayed separate from an unrelated rename, and one undo removed a step change and a new track together.
+
+**What this means for the spec.** Native undo can cover an edit the audio thread applied. It needs three conditions.
+- The host waits for the acknowledgement, then changes an engine parameter from Lua, then creates one undo point with `Undo_OnStateChangeEx2`.
+- A change made only inside the engine is invisible to REAPER's undo, even with `sliderchange` from `@block`.
+- The spec's plan to begin an undo block before the first mutation and end it after the acknowledgement does not work across deferred callbacks.
+
+**Still open.** These parts of the gate have no test yet.
+- A user edit made between a gesture's host mutation and its undo point.
+- Save and reload of the origin and seed encoding.
+- Bypass, project tab switching, a closed window and session recovery.

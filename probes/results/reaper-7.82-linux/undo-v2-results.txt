@@ -1,0 +1,77 @@
+PASS engine mailbox present  gmem[0] = 1.0
+PASS engine track found
+PASS engine processes while stopped
+== stopped transport
+PASS stopped A-none ack  sequence 1.0
+PASS stopped A-none applied  step 0
+FAIL stopped A-none undo point  top of undo is ''
+PASS stopped A-lua ack  sequence 2.0
+PASS stopped A-lua applied  step 1
+PASS stopped A-lua undo point  top of undo is 'Furrow probe stopped A-lua: toggle step 1'
+PASS stopped A-lua undo restores step  step 0
+PASS stopped A-lua undo reached the engine  restore count 1.0
+PASS stopped A-lua redo reapplies step  step 1
+PASS stopped A-engine ack  sequence 3.0
+PASS stopped A-engine applied  step 1
+FAIL stopped A-engine undo point  top of undo is ''
+PASS stopped B-lua folder track found
+PASS stopped B-lua rename undo point  top of undo is 'Furrow probe stopped B-lua: unrelated rename'
+PASS stopped B-lua command still pending at the rename  ack 3.0, sequence 4.0
+PASS stopped B-lua ack
+PASS stopped B-lua toggle undo point  top of undo is 'Furrow probe stopped B-lua: toggle step 3'
+PASS stopped B-lua first undo restores step  step 0
+PASS stopped B-lua first undo keeps the rename  name 'Furrow Probe Folder stopped B-lua'
+PASS stopped B-lua second undo restores the name  name 'Furrow Probe Folder'
+PASS stopped B-lua second undo keeps the step restored  step 0
+PASS stopped B-lua redo twice reapplies both  step 1, name 'Furrow Probe Folder stopped B-lua'
+PASS stopped B-engine folder track found
+PASS stopped B-engine rename undo point  top of undo is 'Furrow probe stopped B-engine: unrelated rename'
+PASS stopped B-engine command still pending at the rename  ack 4.0, sequence 5.0
+PASS stopped B-engine ack
+FAIL stopped B-engine toggle undo point  top of undo is 'Furrow probe stopped B-engine: unrelated rename'
+PASS stopped C-lua ack
+PASS stopped C-lua undo point  top of undo is 'Furrow probe stopped C-lua: toggle step 5 and add a track'
+PASS stopped C-lua one undo restores step and track  step 0, tracks 6
+PASS stopped C-lua redo reapplies step and track  step 1, tracks 7
+PASS stopped C-engine ack
+PASS stopped C-engine undo point  top of undo is 'Furrow probe stopped C-engine: toggle step 6 and add a track'
+FAIL stopped C-engine one undo restores step and track  step 1, tracks 6
+PASS stopped C-engine redo reapplies step and track  step 1, tracks 7
+PASS engine processes while playing
+== playing transport
+PASS playing A-none ack  sequence 8.0
+PASS playing A-none applied  step 1
+FAIL playing A-none undo point  top of undo is ''
+PASS playing A-lua ack  sequence 9.0
+PASS playing A-lua applied  step 1
+PASS playing A-lua undo point  top of undo is 'Furrow probe playing A-lua: toggle step 17'
+PASS playing A-lua undo restores step  step 0
+PASS playing A-lua undo reached the engine  restore count 10.0
+PASS playing A-lua redo reapplies step  step 1
+PASS playing A-engine ack  sequence 10.0
+PASS playing A-engine applied  step 0
+FAIL playing A-engine undo point  top of undo is ''
+PASS playing B-lua folder track found
+PASS playing B-lua rename undo point  top of undo is 'Furrow probe playing B-lua: unrelated rename'
+PASS playing B-lua command still pending at the rename  ack 10.0, sequence 11.0
+PASS playing B-lua ack
+PASS playing B-lua toggle undo point  top of undo is 'Furrow probe playing B-lua: toggle step 19'
+PASS playing B-lua first undo restores step  step 0
+PASS playing B-lua first undo keeps the rename  name 'Furrow Probe Folder playing B-lua'
+PASS playing B-lua second undo restores the name  name 'Furrow Probe Folder'
+PASS playing B-lua second undo keeps the step restored  step 0
+PASS playing B-lua redo twice reapplies both  step 1, name 'Furrow Probe Folder playing B-lua'
+PASS playing B-engine folder track found
+PASS playing B-engine rename undo point  top of undo is 'Furrow probe playing B-engine: unrelated rename'
+PASS playing B-engine command still pending at the rename  ack 11.0, sequence 12.0
+PASS playing B-engine ack
+FAIL playing B-engine toggle undo point  top of undo is 'Furrow probe playing B-engine: unrelated rename'
+PASS playing C-lua ack
+PASS playing C-lua undo point  top of undo is 'Furrow probe playing C-lua: toggle step 21 and add a track'
+PASS playing C-lua one undo restores step and track  step 0, tracks 6
+PASS playing C-lua redo reapplies step and track  step 1, tracks 7
+PASS playing C-engine ack
+PASS playing C-engine undo point  top of undo is 'Furrow probe playing C-engine: toggle step 22 and add a track'
+FAIL playing C-engine one undo restores step and track  step 0, tracks 6
+PASS playing C-engine redo reapplies step and track  step 0, tracks 7
+8 failures
