@@ -39,7 +39,7 @@ local function dump_fx(track)
       local rev = reaper.TrackFX_GetParam(track, fx, wire.PARAM_REVISION)
       local slot = reaper.TrackFX_GetParam(track, fx, wire.PARAM_SLOT)
       out("    revision param %s   slot param %s", tostring(rev), tostring(slot))
-    elseif name:find("ReaSamplOmatic5000", 1, true) then
+    elseif name:find("RS5K", 1, true) or name:find("ReaSamplOmatic", 1, true) then
       local _, file = reaper.TrackFX_GetNamedConfigParm(track, fx, "FILE0")
       out("    FILE0 %s", tostring(file))
       for p = 0, reaper.TrackFX_GetNumParams(track, fx) - 1 do
