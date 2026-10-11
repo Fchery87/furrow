@@ -1260,7 +1260,7 @@ class StartupTest(unittest.TestCase):
     def test_startup_script_measures_every_case(self):
         results = self.run_startup()
         self.assertEqual([line for line in results if line.startswith("FAIL")], [])
-        self.assertEqual(results[-1], "11 results, 0 failures")
+        self.assertEqual(results[-1], "21 results, 0 failures")
         for line in (
             "RESULT bypass, startup release ran = false",
             "RESULT bypass, receivers logged = 0 of 4 lanes got the note-off then All Notes Off",
