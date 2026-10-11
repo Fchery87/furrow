@@ -2,7 +2,7 @@
 
 Oct 10, 2026 · No Chaserz
 
-**Status.** Revised on 11 October 2026 after the first milestone 1 probes on REAPER 7.82 for Linux. Routing, constant-tempo timing, tempo ramps, tempo steps on the beat grid, native undo of an acknowledged engine edit, and save and reload of the origin and seed encoding passed. Named gmem scope and size were measured. The evidence is in `probes/results/reaper-7.82-linux/`. Other REAPER-dependent behavior remains unverified, and Windows and macOS have not run. The rack, page allocator and item bridge must wait for their stated gates.
+**Status.** Revised on 11 October 2026 after the first milestone 1 probes on REAPER 7.82 for Linux. Routing, constant-tempo timing, tempo ramps, tempo steps on the beat grid, native undo of an acknowledged engine edit, and save and reload of the origin and seed encoding passed. Named gmem scope and size, and the host lifecycle around bypass, offline, project tabs and held notes, were measured. The evidence is in `probes/results/reaper-7.82-linux/`. Other REAPER-dependent behavior remains unverified, and Windows and macOS have not run. The rack, page allocator and item bridge must wait for their stated gates.
 
 ## Overview
 
@@ -296,7 +296,15 @@ SeqCore therefore converts beats to samples with a tempo that changes linearly t
 - **Mute, solo and retarget.** Release any lane that becomes inaudible or changes destination and cancel its queued hits. Newly audible lanes resume at the current pattern phase without chasing previous notes.
 - **Audition.** While stopped and processing is available, play a single lane note immediately, then release it after 100 ms. Audition does not advance the pattern or condition state.
 
-Bypass or offline FX can prevent SeqCore from sending its own cleanup messages. Milestone 1 must verify the host's note cleanup and recovery behavior for these transitions. Do not claim stuck-note protection without testing it. Provide a rack panic action for recoverable routing and instrument state.
+Bypass or offline FX can prevent SeqCore from sending its own cleanup messages. The lifecycle probe held a note at each transition on REAPER 7.82 for Linux.
+
+| Transition | What the receiver got |
+| --- | --- |
+| Bypass | Nothing. SeqCore released the note when it was re-enabled |
+| Offline | Nothing, then nothing when it came back online. The note stayed held |
+| Transport stop | A note-off |
+
+The host sends no cleanup for bypass or offline, so Furrow does not claim stuck-note protection for them. Provide a rack panic action for recoverable routing and instrument state. On its first processed block after loading, SeqCore sends a note-off for every held note it knows of and an all-notes-off on every lane route. Test that release before relying on it.
 
 ## MIDI item bridge and playback ownership
 
@@ -351,14 +359,22 @@ EEL2's `===` reported a reloaded 32-bit value equal to the original binary64 val
 
 The milestone 1 probe on REAPER 7.82 fixed the mechanism. Each gesture runs these steps in order.
 
-1. Apply the host-side changes.
-2. Send the engine commands and wait for a matching applied-revision acknowledgement.
+1. Send the engine commands and wait for a matching applied-revision acknowledgement.
+2. Apply the host-side changes.
 3. Set SeqCore's hidden State revision parameter from Lua with `TrackFX_SetParam`.
 4. Create one undo point with `Undo_OnStateChangeEx2` for every affected state category.
 
+Steps 2 to 4 run in one deferred callback. A user edit can create its own undo point while the gesture waits for the acknowledgement. REAPER's point then captures every host change already made. When the gesture applied a new track before its command, one undo of the gesture restored the step and left the track behind. When the gesture applied the track after the acknowledgement, one undo removed both and the user's edit stayed separate.
+
 REAPER keeps the engine state it last read and reads `@serialize` again only after a host-side parameter change. Without step 3, REAPER creates no FX undo point and never restores the engine. A change made inside SeqCore, even with `sliderchange` from `@block`, does not count. Every undoable change therefore goes through a Lua command. SeqCore never changes authoritative state on its own. REAPER closes an undo block at the end of each deferred script callback, so a block cannot stay open from the first mutation until the acknowledgement. The State revision parameter carries no musical meaning. SeqCore ignores its value.
 
-With that mechanism, one native undo restored an acknowledged step, redo reapplied it, a pending toggle stayed separate from an unrelated rename, and one undo removed a step change and a new track together, stopped and playing. A user edit made after a gesture's host changes but before its undo point has not been tested. Neither have bypass, a project switch, a closed window or a lost session while a gesture is pending. Define and test cancellation that rolls back partial host changes, resolves whether the engine transaction applied, and then restores the prior coherent state. While processing is unavailable, refuse new dependent edits instead of accepting unacknowledged changes.
+With that mechanism, one native undo restored an acknowledged step, redo reapplied it, a pending toggle stayed separate from an unrelated rename, and one undo removed a step change and a new track together, stopped and playing. The lifecycle probe measured the rest of the host behavior.
+
+- A bypassed SeqCore and a SeqCore in a background project tab do not process or acknowledge. A pending command applies once when they return.
+- REAPER records FX bypass and FX offline changes as its own undo points. A user's undo can therefore bypass SeqCore or take it offline. The coordinator detects that through the heartbeat and refuses edits until processing returns.
+- Taking SeqCore offline and back online keeps its current state.
+
+A closed window or a lost coordinator while a gesture is pending has not been tested, because the rack window does not exist yet. Define and test cancellation that rolls back partial host changes, resolves whether the engine transaction applied, and then restores the prior coherent state. While processing is unavailable, refuse new dependent edits instead of accepting unacknowledged changes.
 
 Ctrl+Z must use REAPER's own undo. A separate Lua history does not meet that requirement. If native atomic undo cannot be demonstrated, stop feature implementation and revise the state ownership or transaction design. Document any proposed reduction in behavior before proceeding.
 
@@ -410,7 +426,8 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 
 | Risk | Why it matters | Plan |
 | --- | --- | --- |
-| Native undo and asynchronous edits | Engine and host objects must restore as one operation | Passed on REAPER 7.82 for Linux with a Lua-side revision parameter change before one undo point. Interleaved user edits, bypass and project switches remain open |
+| Native undo and asynchronous edits | Engine and host objects must restore as one operation | Passed on REAPER 7.82 for Linux. Host changes follow the acknowledgement in the same callback as the revision change and the undo point. A lost coordinator remains open |
+| Held notes at bypass or offline | The host sends no cleanup, and an offline SeqCore forgets its held notes | Rack panic action, and a release on SeqCore's first block after loading. Test that release |
 | gmem sessions and publication | Stale commands or reused slots could edit another state or rack. Named gmem spans every open project tab | Arbitrate slots across the REAPER process. Validate ownership, generations, acknowledgements and snapshots in milestone 1 |
 | Engine memory and bounded work | Pattern storage alone reserves 5,259,264 of the 8,388,608 measured local values | Budget the remaining 3,129,344 for queues, snapshots and staging. Preflight operations and bound audio-block work |
 | Routing and plugin latency | Feedback routing invalidates the intended delay-compensation behavior | Use a separate engine child and test routing and delay compensation in milestone 1 |
@@ -445,3 +462,5 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 - Slot arbitration covers every rack in the REAPER process, because named gmem spans all project tabs.
 - A rack in a background tab refuses edits until its heartbeat advances.
 - The four-word origin encoding is adopted. Seeds stay within 0 to 16,777,215.
+- A gesture applies host changes after the engine acknowledges, in the same callback as its revision change and undo point.
+- Furrow does not claim stuck-note protection for bypass or offline. SeqCore releases every lane route on its first block after loading.
