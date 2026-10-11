@@ -67,7 +67,7 @@ local event_lines = { "# sample order lane src_bus dst_bus channel note velocity
 for _, row in ipairs(events) do
   event_lines[#event_lines + 1] = string.format(
     "%d %d %d %d %d %d %d %d %s",
-    row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9] == 1 and "on" or "off"
+    row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], ({ [0] = "off", [1] = "on", [2] = "cc" })[row[9]]
   )
 end
 

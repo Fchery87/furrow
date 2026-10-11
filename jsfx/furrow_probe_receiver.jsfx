@@ -15,6 +15,7 @@ ext_noinit = 1;
 // gmem layout version 3. Each slot owns its event region. Slot 0 alone writes the tempo logs.
 // gmem[0] version, gmem[2] block tempo count, gmem[3] sample tempo count,
 // gmem[4] project sample of the first sample tempo, gmem[10 + slot] event count.
+// gmem[5] set to 1 logs events while stopped too. Kind 1 is a note-on, 0 a note-off, 2 a controller.
 VERSION = 3;
 BLOCK_LOG = 1000;
 BLOCK_MAX = 50000;
@@ -52,8 +53,9 @@ while (midirecv(offset, msg1, msg2, msg3)) (
   status = msg1 & $xF0;
   is_on = status == $x90 && msg3 > 0;
   is_off = status == $x80 || (status == $x90 && msg3 == 0);
+  is_cc = status == $xB0;
   count = gmem[10 + slot];
-  playing && (is_on || is_off) && count < EVENT_MAX ? (
+  (playing || gmem[5] == 1) && (is_on || is_off || is_cc) && count < EVENT_MAX ? (
     at = EVENT_LOG + slot * EVENT_STRIDE + count * 9;
     gmem[at] = block_sample + offset;
     gmem[at + 1] = is_on;
@@ -62,8 +64,8 @@ while (midirecv(offset, msg1, msg2, msg3)) (
     gmem[at + 4] = 0;
     gmem[at + 5] = msg1 & 15;
     gmem[at + 6] = msg2;
-    gmem[at + 7] = is_on ? msg3 : 0;
-    gmem[at + 8] = is_on;
+    gmem[at + 7] = is_on || is_cc ? msg3 : 0;
+    gmem[at + 8] = is_cc ? 2 : is_on;
     gmem[10 + slot] = count + 1;
   );
   midisend(offset, msg1, msg2, msg3);

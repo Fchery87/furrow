@@ -36,6 +36,16 @@ Start with only one project tab open. The script writes `furrow-memory-results.t
 
 Save the project, then run the script. The first run adds the probe track, round-trips its state through a track chunk, and saves. Reopen the project from File > Recent projects and run the script again. Both runs append to `furrow-state-results.txt`. A Python copy of the word split matched `struct.pack` on 199,929 finite doubles.
 
+**Lifecycle probe.** `lua/furrow_probe_lifecycle.lua` measures the host lifecycle cases the spec requires before milestone 2. Run it in a project built by the layout script, with no other project tab open, and do not save afterwards.
+
+- **L1.** A user edit with its own undo point lands while a gesture waits for the engine. The gesture's track change runs either before the command or after the acknowledgement, just before the gesture's undo point.
+- **L2.** The engine is bypassed while a command is pending.
+- **L3.** The engine goes offline and back online after an edit with and without the State revision mark.
+- **L4.** A new project tab opens while a command is pending.
+- **L5.** A note is held when the engine is bypassed or taken offline, or when the transport stops, at 30 BPM. The receiver logs controllers as kind 2, and logs while stopped when its gmem[5] is 1.
+
+The script writes `furrow-lifecycle-results.txt` next to the project. `probes/check_lua_scripts.py` runs it against a simulated REAPER to show it completes.
+
 **gmem layout, version 3.** Named gmem `FurrowProbeReceiver`. `gmem[0]` is the layout version. `gmem[2]` and `gmem[3]` count block and sample tempo entries. `gmem[4]` is the project sample of the first sample tempo. `gmem[10 + slot]` counts slot events. Block entries start at 1,000, three numbers each. Project sample, tempo and `beat_position`. Sample tempos start at 200,000. Slot events start at 2,000,000 + slot × 500,000, nine numbers each. Sample, order, lane, bus, destination bus, channel, note, velocity, kind. Kind 1 is a note-on. Kind 0 is a note-off. Sample positions come from `play_position` in each block, so they count from project time zero.
 
 **Known limits.** REAPER 7.82 reports `tempo` once per block, at its first sample. The engine assumes the previous block's tempo change continues through the current block and converts beats with that ramp. With the engine that held one tempo per block, the ramp capture missed the one-sample target by one sample on one event. See `probes/results/reaper-7.82-linux/README.md`. The extrapolating engine put all 38 ramp events on the exact sample in REAPER. The engine continues a tempo change only after a block that advanced as a ramp, so a ramp edge or a step makes it hold its tempo for one block. REAPER captures of a ramp edge and a step on a beat pass. A tempo step between grid lines still misplaces events that follow it inside the same block, by up to one block. The [ReaScript reference](https://www.reaper.fm/sdk/reascript/reascripthelp.html) documents the `I_MIDIFLAGS` source bus in bits 14 to 21 and the destination bus in bits 22 to 29, where 0 means all and 1 means the normal bus. The layout selects bus 1 for both. A capture still has to show that the host honours it. The receiver stores `midi_bus` on every event so the capture can show what arrived. The receiver declares stereo pins so that `@sample` has audio to run on.
