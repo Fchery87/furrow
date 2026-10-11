@@ -838,6 +838,207 @@ class MemoryTest(unittest.TestCase):
         self.assertIn("RESULT Furrow Memory A1 sees the Lua nonce = true", results[background:])
 
 
+class StubTake:
+    def __init__(self, name="", ext=None):
+        self.name = name
+        self.ext = dict(ext or {})
+
+
+class StubItem:
+    serial = 0
+
+    def __init__(self, position, length, take=None, ext=None):
+        StubItem.serial += 1
+        self.guid = "{%08d}" % StubItem.serial
+        self.position = position
+        self.length = length
+        self.take = take
+        self.ext = dict(ext or {})
+        self.selected = False
+
+    def copy(self, position=None):
+        take = StubTake(self.take.name, self.take.ext) if self.take else None
+        return StubItem(self.position if position is None else position, self.length, take, self.ext)
+
+
+class StubItemsReaper(StubReaper):
+    """Items with extension data, REAPER's copy actions, a snapshot undo, and save and reopen.
+
+    keep_ext_on lists the copy methods that carry extension data. A newline in a value
+    stops a state chunk copy at that newline, the way a line-based chunk would.
+    """
+
+    def __init__(self, project, keep_ext_on=("duplicate", "paste", "chunk", "split", "save")):
+        super().__init__(project=project)
+        self.keep = set(keep_ext_on)
+        self.clock = 0
+        self.deferred = None
+        self.cursor = 0.0
+        self.clipboard = []
+        self.chunks = {}
+        self.undo = []
+        self.saved = None
+
+    def table(self, lua):
+        api = super().table(lua)
+        for name in ("defer", "time_precise", "CreateNewMIDIItemInProj", "AddMediaItemToTrack", "GetActiveTake",
+                     "GetSetMediaItemInfo_String", "GetSetMediaItemTakeInfo_String", "SetMediaItemInfo_Value",
+                     "CountTrackMediaItems", "GetTrackMediaItem", "SetMediaItemSelected", "GetSelectedMediaItem",
+                     "SetOnlyTrackSelected", "SetEditCurPos", "Main_OnCommand", "SplitMediaItem", "GetItemStateChunk",
+                     "SetItemStateChunk", "DeleteTrackMediaItem", "Undo_OnStateChangeEx2", "Undo_CanUndo2",
+                     "Undo_DoUndo2", "Main_SaveProject", "Main_openProject"):
+            api[name] = getattr(self, name)
+        return api
+
+    def drive(self, limit=200000):
+        while self.deferred is not None and limit > 0:
+            callback, self.deferred = self.deferred, None
+            self.clock += 1
+            callback()
+            limit -= 1
+
+    def defer(self, callback):
+        self.deferred = callback
+
+    def time_precise(self):
+        return self.clock * 0.03
+
+    def InsertTrackAtIndex(self, index, defaults):
+        super().InsertTrackAtIndex(index, defaults)
+        self.tracks[int(index)]["items"] = []
+
+    def items(self):
+        return [item for track in self.tracks for item in track.get("items", [])]
+
+    def owner(self, item):
+        return next(track for track in self.tracks if any(other is item for other in track.get("items", [])))
+
+    def snapshot(self, keep_ext=True):
+        return [dict(track, items=[item.copy() if keep_ext else self.stripped(item) for item in track.get("items", [])])
+                for track in self.tracks]
+
+    def stripped(self, item):
+        copy = item.copy()
+        copy.ext, copy.take.ext = {}, {}
+        return copy
+
+    def add(self, track, item, how):
+        if how not in self.keep:
+            item.ext = {}
+            if item.take:
+                item.take.ext = {}
+        track["items"].append(item)
+        return item
+
+    def CreateNewMIDIItemInProj(self, track, start, end):
+        return self.add(track, StubItem(start, end - start, StubTake()), "new")
+
+    def AddMediaItemToTrack(self, track):
+        return self.add(track, StubItem(0, 1), "new")
+
+    def GetActiveTake(self, item):
+        return item.take
+
+    def GetSetMediaItemInfo_String(self, item, key, value, set_new):
+        if key == "GUID":
+            return True, item.guid
+        if set_new:
+            item.ext[key] = value
+        return key in item.ext, item.ext.get(key, "")
+
+    def GetSetMediaItemTakeInfo_String(self, take, key, value, set_new):
+        if key == "P_NAME":
+            if set_new:
+                take.name = value
+            return True, take.name
+        if set_new:
+            take.ext[key] = value
+        return key in take.ext, take.ext.get(key, "")
+
+    def SetMediaItemInfo_Value(self, item, key, value):
+        if key == "D_POSITION":
+            item.position = value
+
+    def CountTrackMediaItems(self, track):
+        return len(track["items"])
+
+    def GetTrackMediaItem(self, track, index):
+        return track["items"][int(index)]
+
+    def SetMediaItemSelected(self, item, selected):
+        item.selected = bool(selected)
+
+    def GetSelectedMediaItem(self, project, index):
+        selected = [item for item in self.items() if item.selected]
+        return selected[int(index)] if int(index) < len(selected) else None
+
+    def SetOnlyTrackSelected(self, track):
+        self.target = track
+
+    def SetEditCurPos(self, time, moveview, seekplay):
+        self.cursor = time
+
+    def Main_OnCommand(self, command, flag):
+        selected = [item for item in self.items() if item.selected]
+        if command == 40289:
+            for item in self.items():
+                item.selected = False
+        elif command == 41295:
+            for item in selected:
+                item.selected = False
+                self.add(self.owner(item), item.copy(item.position + item.length), "duplicate").selected = True
+        elif command == 40698:
+            self.clipboard = [item.copy() for item in selected]
+        elif command == 42398:
+            for item in self.items():
+                item.selected = False
+            for item in self.clipboard:
+                self.add(self.target, item.copy(self.cursor), "paste").selected = True
+
+    def SplitMediaItem(self, item, position):
+        right = item.copy(position)
+        right.length = item.position + item.length - position
+        item.length = position - item.position
+        return self.add(self.owner(item), right, "split")
+
+    def GetItemStateChunk(self, item, buffer, undo):
+        key = len(self.chunks)
+        self.chunks[key] = item.copy()
+        text = "\n".join(item.ext.values())
+        return True, "<ITEM\nPOSITION %s\nIGUID %s\nSTUB %d\n%s\n>" % (item.position, item.guid, key, text)
+
+    def SetItemStateChunk(self, item, chunk, undo):
+        source = self.chunks[int(chunk.split("STUB ")[1].split("\n")[0])]
+        item.take = StubTake(source.take.name, source.take.ext) if source.take else None
+        item.ext = {key: value.split("\n")[0] for key, value in source.ext.items()} if "chunk" in self.keep else {}
+        return True
+
+    def DeleteTrackMediaItem(self, track, item):
+        track["items"] = [other for other in track["items"] if other is not item]
+
+    def Undo_OnStateChangeEx2(self, project, description, flags, track):
+        self.undo.append((description, self.snapshot()))
+
+    def Undo_CanUndo2(self, project):
+        return self.undo[-1][0] if self.undo else None
+
+    def Undo_DoUndo2(self, project):
+        self.undo.pop()
+        self.tracks[:] = self.snapshot_of(self.undo[-1][1])
+
+    def snapshot_of(self, tracks):
+        return [dict(track, items=[item.copy() for item in track["items"]]) for track in tracks]
+
+    def Main_SaveProject(self, project, ask):
+        self.saved = self.snapshot(keep_ext="save" in self.keep)
+        size = sum(len(value) for item in self.items() for value in list(item.ext.values()) + list(item.take.ext.values()))
+        Path(self.project).write_bytes(b"x" * (size + 100))
+
+    def Main_openProject(self, name):
+        assert name == "noprompt:" + self.project
+        self.tracks[:] = self.snapshot_of(self.saved)
+
+
 class StubStateReaper(StubReaper):
     """A state probe whose file_var keeps doubles exactly, or rounds them to 32-bit floats."""
 
@@ -951,6 +1152,48 @@ class StateTest(unittest.TestCase):
     def test_a_second_run_without_reopening_fails(self):
         results = self.run_state(reopen=False)
         self.assertTrue(any(line.startswith("FAIL the project was reopened") for line in results))
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class ItemsTest(unittest.TestCase):
+    def run_items(self, **options):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubItemsReaper(str(Path(directory) / "items.rpp"), **options)
+            Path(stub.project).write_bytes(b"x" * 100)
+            run(stub, "furrow_probe_items.lua")
+            stub.drive()
+            return (Path(directory) / "furrow-items-results.txt").read_text().splitlines()
+
+    def test_items_script_measures_every_case(self):
+        results = self.run_items()
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
+        self.assertEqual(results[-1], "40 results, 0 failures")
+        for line in (
+            "RESULT 8 MiB item, written = length 8388608 of 8388608, exact true",
+            "RESULT 2 MiB copy and paste, written = length 2097152 of 2097152, exact true",
+            "RESULT 1 KiB item after undo of a replacement = length 1024 of 1024, exact true",
+            "RESULT newline, state chunk copy = length 5 of 11, exact false, first difference at byte 6",
+            "RESULT 2 MiB split right, reloaded = length 2097152 of 2097152, exact true",
+            "RESULT 64 KiB take, reloaded = length 65536 of 65536, exact true",
+            "RESULT items reloaded = 9",
+        ):
+            self.assertIn(line, results)
+
+    def test_items_script_reports_extension_data_lost_by_a_copy_and_by_the_save(self):
+        results = self.run_items(keep_ext_on=("chunk", "split"))
+        self.assertIn("RESULT 2 MiB duplicate, written = length 0 of 2097152, exact false", results)
+        self.assertIn("RESULT 8 MiB source, reloaded = length 0 of 8388608, exact false", results)
+
+    def test_items_script_refuses_a_project_with_an_earlier_probe_track(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubItemsReaper(str(Path(directory) / "items.rpp"))
+            Path(stub.project).write_bytes(b"x")
+            stub.InsertTrackAtIndex(0, True)
+            stub.tracks[0]["name"] = "Furrow Item Probe"
+            run(stub, "furrow_probe_items.lua")
+            stub.drive()
+            results = (Path(directory) / "furrow-items-results.txt").read_text().splitlines()
+        self.assertEqual(results[-1], "0 results, 1 failures")
 
 
 if __name__ == "__main__":
