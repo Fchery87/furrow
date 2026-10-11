@@ -1,0 +1,26 @@
+== bypass and enable while stopped
+RESULT bypass, engine counters before = segment version 1, heartbeat 8189, writes 2, releases 1, flag 1
+RESULT bypass, engine counters while down = segment version 1, heartbeat 8189, writes 3, releases 1, flag 1
+RESULT bypass, serialize writes while it went down = 1
+RESULT bypass, startup release ran = false
+RESULT bypass, engine counters after = segment version 1, heartbeat 8247, writes 4, releases 1, flag 1
+RESULT bypass, receivers logged = 0 of 4 lanes got the note-off then All Notes Off
+== offline and online while stopped
+RESULT offline while stopped, engine counters before = segment version 1, heartbeat 8247, writes 4, releases 1, flag 1
+RESULT offline while stopped, engine counters while down = segment version 1, heartbeat 8247, writes 5, releases 1, flag 1
+RESULT offline while stopped, serialize writes while it went down = 1
+RESULT offline while stopped, startup release ran = true
+RESULT offline while stopped, engine counters after = segment version 1, heartbeat 8263, writes 7, releases 2, flag 1
+RESULT offline while stopped, receivers logged = 4 of 4 lanes got the note-off then All Notes Off
+== offline and online with a held note
+RESULT offline with a held note, engine counters before = segment version 1, heartbeat 8265, writes 7, releases 2, flag 1
+RESULT offline with a held note, engine counters while down = segment version 1, heartbeat 8265, writes 8, releases 2, flag 1
+RESULT offline with a held note, serialize writes while it went down = 1
+RESULT offline with a held note, startup release ran = true
+RESULT offline with a held note, engine counters after = segment version 1, heartbeat 8280, writes 10, releases 3, flag 1
+RESULT offline with a held note, receivers logged = 4 of 4 lanes got the note-off then All Notes Off
+== save and reopen
+RESULT reopen, startup release ran = false
+RESULT reopen, engine counters after = segment version 1, heartbeat 152, writes 2, releases 1, flag 1
+RESULT reopen, receivers logged = 4 of 4 lanes got the note-off then All Notes Off
+21 results, 0 failures
