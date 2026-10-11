@@ -6,6 +6,7 @@ out_pin: none
 options: maxmem=8388608 gmem=FurrowProbeEngine
 
 slider1:1<0,1,1>Pattern on
+slider2:0<0,16777215,1>-State revision
 
 @init
 ext_midi_bus = 1;
@@ -54,6 +55,7 @@ prev_tempo = -1;
 slope = 0;
 // gmem mailbox version 1, one engine per REAPER instance.
 // gmem[1] heartbeat. Lua writes gmem[3] op, gmem[4] step and gmem[5] delay in blocks, then gmem[2] sequence.
+// gmem[9] set to 1 asks the engine to bump slider2 itself when it applies the command.
 // The engine writes gmem[6] acknowledged sequence, gmem[7] state revision and gmem[8] restore count.
 // gmem[100 + step] mirrors each step.
 MAILBOX_VERSION = 1;
@@ -117,6 +119,10 @@ seq != last_seq ? (
   gmem[1] >= apply_at ? (
     step = floor(gmem[4]);
     gmem[3] == OP_TOGGLE && step >= 0 && step < LANES * STEPS ? step_on[step] = !step_on[step];
+    gmem[9] == 1 ? (
+      slider2 += 1;
+      sliderchange(slider2);
+    );
     last_seq = seq;
     gmem[6] = seq;
     gmem[7] += 1;

@@ -1,0 +1,50 @@
+PASS engine mailbox present  gmem[0] = 1.0
+PASS engine processes while stopped
+== stopped transport
+PASS stopped A ack  sequence 1.0
+PASS stopped A applied  step 0
+FAIL stopped A undo point  top of undo is ''
+FAIL stopped A undo restores step  step 0
+FAIL stopped A undo reached the engine  restore count 0.0
+PASS stopped A redo reapplies step  step 0
+PASS stopped B folder track found
+PASS stopped B command still pending at the rename  ack 1.0, sequence 2.0
+PASS stopped B ack
+FAIL stopped B first undo restores step  step 1
+FAIL stopped B first undo keeps the rename  name 'Furrow Probe Folder'
+PASS stopped B second undo restores the name  name 'Furrow Probe Folder'
+FAIL stopped B second undo keeps the step restored  step 1
+PASS stopped B redo twice reapplies both  step 1, name 'Furrow Probe Folder stopped B'
+PASS stopped C1 ack
+PASS stopped C1 undo point  top of undo is 'Furrow probe stopped C1: toggle step 2 and add a track'
+FAIL stopped C1 one undo restores step and track  step 1, tracks 6
+PASS stopped C1 redo reapplies step and track  step 1, tracks 7
+PASS stopped C2 ack
+FAIL stopped C2 undo point  top of undo is 'ReaScript: Run'
+FAIL stopped C2 one undo restores step and track  step 1, tracks 6
+PASS stopped C2 redo reapplies step and track  step 1, tracks 7
+PASS engine processes while playing
+== playing transport
+PASS playing A ack  sequence 5.0
+PASS playing A applied  step 1
+FAIL playing A undo point  top of undo is ''
+FAIL playing A undo restores step  step 1
+FAIL playing A undo reached the engine  restore count 0.0
+PASS playing A redo reapplies step  step 1
+PASS playing B folder track found
+PASS playing B command still pending at the rename  ack 5.0, sequence 6.0
+PASS playing B ack
+FAIL playing B first undo restores step  step 1
+PASS playing B first undo keeps the rename  name 'Furrow Probe Folder playing B'
+PASS playing B second undo restores the name  name 'Furrow Probe Folder'
+FAIL playing B second undo keeps the step restored  step 1
+PASS playing B redo twice reapplies both  step 1, name 'Furrow Probe Folder playing B'
+PASS playing C1 ack
+PASS playing C1 undo point  top of undo is 'Furrow probe playing C1: toggle step 18 and add a track'
+FAIL playing C1 one undo restores step and track  step 0, tracks 7
+PASS playing C1 redo reapplies step and track  step 0, tracks 8
+PASS playing C2 ack
+FAIL playing C2 undo point  top of undo is 'ReaScript: Run'
+FAIL playing C2 one undo restores step and track  step 1, tracks 7
+PASS playing C2 redo reapplies step and track  step 1, tracks 8
+17 failures
