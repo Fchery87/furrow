@@ -555,6 +555,35 @@ class RackTest(unittest.TestCase):
         self.assertEqual(self.c("step_value", 0, 3, 12), 40)
         self.assertEqual(self.c("step_value", 0, 4, 12), 100)
 
+    def test_a_long_lane_pages_through_the_snapshot_window_and_plays_to_its_length(self):
+        self.c("add_sample", "/samples/kick.wav")
+        self.settle()
+        self.stub.undo.clear()
+        lua = self.rig.lua
+        self.c("set_length", 0, 40)
+        self.settle()
+        steps = lua.table_from([lua.table_from([OP_SET_STEP, 0, 0, 3, F_ON, 1]),
+                                lua.table_from([OP_SET_STEP, 0, 0, 35, F_ON, 1])])
+        self.c("run", "paint steps", steps)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.stub.undo, ["Furrow: set length", "Furrow: paint steps"])
+        self.assertEqual(self.c("lanes")[1].length, 40)
+        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [1, 0])
+        self.c("set_page", 2)
+        self.tick(8)
+        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [0, 1])
+        self.c("set_page", 99)
+        self.assertEqual(self.coordinator.page, 31)
+        self.c("set_page", 0)
+        self.tick(8)
+        self.assertEqual(self.c("step_value", 0, 3, F_ON), 1)
+        self.rig.events.clear()
+        self.rig.seek(0.0)
+        self.rig.run(200)
+        starts = [round(e[0] / 5512.5) for e in self.rig.events if e[2] == 0x90 and e[4] > 0]
+        self.assertEqual(starts, [3, 35])
+
     def rack_links(self):
         return self.rack["rack"].ext.get("P_EXT:Furrow", "")
 
@@ -565,6 +594,8 @@ class FakeImGui:
     def __init__(self):
         self.calls = []
         self.drop = []
+        self.small_labels = []
+        self.typed = None
 
     def table(self, lua):
         fake = self
@@ -572,6 +603,11 @@ class FakeImGui:
         def call(name):
             def fn(*args):
                 fake.calls.append(name)
+                if name == "SmallButton":
+                    fake.small_labels.append(args[1])
+                if name == "InputInt" and fake.typed is not None:
+                    typed, fake.typed = fake.typed, None
+                    return True, typed
                 if name == "Begin":
                     return True, True
                 if name == "BeginDragDropTarget":
@@ -619,6 +655,33 @@ class WindowTest(unittest.TestCase):
             self.assertIn("SliderInt", imgui.calls)
             self.assertIn("Checkbox", imgui.calls)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
+        finally:
+            rig.close()
+
+    def test_the_window_shows_page_buttons_for_a_lane_longer_than_16_steps(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            host = lua.eval('(require("furrow.host"))')
+            host.create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(60):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame == 25:
+                    imgui.typed = 40
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertIn("1-16##page0", imgui.small_labels)
+            self.assertIn("33-48##page2", imgui.small_labels)
+            self.assertNotIn("49-64##page3", imgui.small_labels)
         finally:
             rig.close()
 

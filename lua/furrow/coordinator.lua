@@ -36,6 +36,7 @@ function Coordinator.new(proj, rack)
   self.status = "connecting"
   self.message = nil
   self.recovered = false
+  self.page = 0
   self.completed = 0
   self.journaled = nil
   return self
@@ -112,9 +113,30 @@ function Coordinator:connect()
   self.slot = slot
   self.heartbeat = session:h(wire.H_HEARTBEAT)
   self.heartbeat_at = reaper.time_precise()
-  session:request({ pattern = 0, l0 = 0, nl = wire.LANES, s0 = 0, ns = 16 })
+  session:request(self:window())
   self.status = "waiting"
   return true
+end
+
+-- The snapshot window follows the page the grid shows, 16 steps of every lane.
+function Coordinator:window()
+  return { pattern = 0, l0 = 0, nl = wire.LANES, s0 = self.page * wire.PAGE_STEPS, ns = wire.PAGE_STEPS }
+end
+
+function Coordinator:set_page(page)
+  page = math.max(0, math.min(page, wire.MAX_STEPS // wire.PAGE_STEPS - 1))
+  if page == self.page then
+    return
+  end
+  self.page = page
+  if self.session then
+    self.session:request(self:window())
+  end
+end
+
+function Coordinator:set_length(slot, length)
+  length = math.max(1, math.min(wire.MAX_STEPS, math.floor(length)))
+  self:run("set length", { { wire.OP_SET_LENGTH, 0, slot, length } })
 end
 
 function Coordinator:processing()

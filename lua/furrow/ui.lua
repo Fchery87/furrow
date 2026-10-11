@@ -62,6 +62,7 @@ function ui.run(ImGui)
   local paint = nil
   local shaping = nil
   local swing_edit = nil
+  local length_shown = nil
   local swing_shown = nil
   local edit_slot = nil
   local edit_field = 1
@@ -171,8 +172,14 @@ function ui.run(ImGui)
       end
       ImGui.EndPopup(ctx)
     end
-    for step = 0, lane.length - 1 do
-      ImGui.SameLine(ctx, 0, step == 0 and GAP * 3 or GAP)
+    local first = c.page * wire.PAGE_STEPS
+    local last = math.min(lane.length, first + wire.PAGE_STEPS) - 1
+    if first > last then
+      ImGui.SameLine(ctx, 0, GAP * 3)
+      ImGui.TextDisabled(ctx, "this lane has " .. lane.length .. " steps")
+    end
+    for step = first, last do
+      ImGui.SameLine(ctx, 0, step == first and GAP * 3 or GAP)
       ImGui.PushID(ctx, step)
       step_cell(c, lane, step)
       ImGui.PopID(ctx)
@@ -236,10 +243,26 @@ function ui.run(ImGui)
         ImGui.PopStyleColor(ctx, 1)
       end
     end
+    ImGui.SameLine(ctx, 0, GAP * 6)
+    ImGui.Text(ctx, "Length")
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    ImGui.SetNextItemWidth(ctx, 120)
+    local now = reaper.time_precise()
+    local shown = lane.length
+    if length_shown and length_shown.slot == lane.slot and now < length_shown.until_time then
+      shown = length_shown.value
+    end
+    local changed, typed = ImGui.InputInt(ctx, "##length", shown, 1, 4, ImGui.InputTextFlags_EnterReturnsTrue)
+    if changed and c:processing() then
+      typed = math.max(1, math.min(wire.MAX_STEPS, typed))
+      length_shown = { slot = lane.slot, value = typed, until_time = now + 0.5 }
+      c:set_length(lane.slot, typed)
+    end
     local def = fields.list[edit_field]
     ImGui.Dummy(ctx, GRID_OFFSET - GAP * 3, BAR_HEIGHT)
-    for step = 0, lane.length - 1 do
-      ImGui.SameLine(ctx, 0, step == 0 and GAP * 3 or GAP)
+    local first = c.page * wire.PAGE_STEPS
+    for step = first, math.min(lane.length, first + wire.PAGE_STEPS) - 1 do
+      ImGui.SameLine(ctx, 0, step == first and GAP * 3 or GAP)
       ImGui.PushID(ctx, "bar" .. step)
       bar(c, lane, def, step)
       ImGui.PopID(ctx)
@@ -276,6 +299,36 @@ function ui.run(ImGui)
     ImGui.SameLine(ctx, 0, GAP * 2)
     ImGui.TextDisabled(ctx, "seed " .. snap.rack.seed)
     ImGui.Separator(ctx)
+  end
+
+  -- One button for each 16 steps of the longest lane. Every lane shows the chosen page.
+  local function pager(c)
+    local longest = wire.PAGE_STEPS
+    for _, lane in ipairs(c:lanes()) do
+      longest = math.max(longest, lane.length)
+    end
+    local pages = (longest + wire.PAGE_STEPS - 1) // wire.PAGE_STEPS
+    if c.page >= pages then
+      c:set_page(pages - 1)
+    end
+    if pages < 2 then
+      return
+    end
+    ImGui.Text(ctx, "Steps")
+    for page = 0, pages - 1 do
+      ImGui.SameLine(ctx, 0, GAP * 2)
+      local active = page == c.page
+      if active then
+        ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.on)
+      end
+      local from = page * wire.PAGE_STEPS + 1
+      if ImGui.SmallButton(ctx, string.format("%d-%d##page%d", from, from + wire.PAGE_STEPS - 1, page)) then
+        c:set_page(page)
+      end
+      if active then
+        ImGui.PopStyleColor(ctx, 1)
+      end
+    end
   end
 
   local function drop_zone(c)
@@ -337,6 +390,7 @@ function ui.run(ImGui)
     top_bar(c)
     if c.session and c.session.snapshot then
       feel(c)
+      pager(c)
       for _, lane in ipairs(c:lanes()) do
         lane_row(c, lane)
       end
