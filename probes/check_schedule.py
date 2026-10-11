@@ -127,6 +127,25 @@ class ScheduleTest(unittest.TestCase):
             ],
         )
 
+    def test_reaper_782_tempo_edge_captures(self):
+        results = ROOT / "results" / "reaper-7.82-linux"
+
+        def problems(name, tolerance):
+            expected = diff_log.load(ROOT / "expected" / f"{name}.txt")
+            return diff_log.compare(expected, diff_log.load(results / f"{name}-events.txt"), tolerance)
+
+        self.assertEqual(problems("ramp-edge-44100-1024", 0), [])
+        self.assertEqual(problems("step-on-beat-44100-1024", 1), [])
+        self.assertEqual(
+            problems("step-off-grid-44100-1024", 1),
+            [
+                "missing 55814 on note 38 ch 1",
+                "missing 55814 on note 42 ch 2",
+                "extra 55125 on note 38 ch 1",
+                "extra 55125 on note 42 ch 2",
+            ],
+        )
+
     def test_diff_rejects_an_extra_note(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
