@@ -273,6 +273,8 @@ function ui.run(ImGui)
     if ImGui.Button(ctx, "Reroll chances") and c:processing() then
       c:run("reroll chances", { { wire.OP_SET_RACK, wire.R_SEED, math.random(0, wire.SEED_MAX) } })
     end
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    ImGui.TextDisabled(ctx, "seed " .. snap.rack.seed)
     ImGui.Separator(ctx)
   end
 
