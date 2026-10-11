@@ -130,9 +130,36 @@ local function mark_changed()
   reaper.TrackFX_SetParam(engine, 0, REVISION_PARAM, revision + 1)
 end
 
+local function top_undo()
+  return reaper.Undo_CanUndo2(0) or ""
+end
+
 local function undo()
   reaper.Undo_DoUndo2(0)
   wait(0.2)
+end
+
+-- Undoes only the named point. REAPER may add its own points for FX changes a script makes.
+local function undo_own(label, name)
+  if top_undo() ~= name then
+    result(label .. " top of undo before its cleanup undo", "'" .. top_undo() .. "'")
+    return false
+  end
+  undo()
+  return true
+end
+
+-- A test that finds the engine stopped records it and brings the engine back.
+local function ensure_engine(label)
+  if heartbeat_moves() then
+    return
+  end
+  local engine = find_track(ENGINE)
+  result(label .. " found the engine stopped, offline " .. tostring(reaper.TrackFX_GetOffline(engine, 0))
+    .. ", enabled " .. tostring(reaper.TrackFX_GetEnabled(engine, 0)), true)
+  reaper.TrackFX_SetOffline(engine, 0, false)
+  reaper.TrackFX_SetEnabled(engine, 0, true)
+  wait(0.3)
 end
 
 local function add_track(label)
@@ -144,6 +171,7 @@ end
 -- L1. A user edit with its own undo point lands while a gesture waits for the engine.
 local function test_interleaved(order, index)
   local label = "L1 " .. order
+  ensure_engine(label)
   local folder = find_track(FOLDER)
   local guid = reaper.GetTrackGUID(folder)
   local track_label = "Furrow probe " .. label .. " track"
@@ -175,6 +203,7 @@ end
 
 -- L2. The engine is bypassed while a command is pending.
 local function test_bypass_pending(index)
+  ensure_engine("L2")
   local engine = find_track(ENGINE)
   local before = step(index)
   reaper.TrackFX_SetEnabled(engine, 0, false)
@@ -186,11 +215,13 @@ local function test_bypass_pending(index)
   result("L2 command acknowledged after re-enable", wait_until(function() return acked(seq) end))
   wait(0.2)
   result("L2 step toggled once after re-enable", step(index) == 1 - before)
+  result("L2 top of undo after bypass and re-enable", "'" .. top_undo() .. "'")
 end
 
 -- L3. The engine goes offline and back online after a marked and an unmarked edit.
 local function test_offline(index, marked)
   local label = "L3 " .. (marked and "marked" or "unmarked")
+  ensure_engine(label)
   local engine = find_track(ENGINE)
   local before = step(index)
   local seq = send_toggle(index, 0)
@@ -198,9 +229,10 @@ local function test_offline(index, marked)
     fail(label .. " ack")
     return
   end
+  local name = "Furrow probe " .. label .. ": toggle step " .. index
   if marked then
     mark_changed()
-    reaper.Undo_OnStateChangeEx2(0, "Furrow probe " .. label .. ": toggle step " .. index, STATE_FX, -1)
+    reaper.Undo_OnStateChangeEx2(0, name, STATE_FX, -1)
   end
   reaper.TrackFX_SetOffline(engine, 0, true)
   wait(0.3)
@@ -209,13 +241,15 @@ local function test_offline(index, marked)
   result(label .. " heartbeat moves after online", wait_until(function() return heartbeat_moves() end))
   wait(0.2)
   result(label .. " edit survives offline and online", step(index) == 1 - before)
+  result(label .. " top of undo after offline and online", "'" .. top_undo() .. "'")
   if marked then
-    undo()
+    undo_own(label, name)
   end
 end
 
 -- L4. A project tab switch while a command is pending.
 local function test_tab_switch(index)
+  ensure_engine("L4")
   local first_project = reaper.EnumProjects(-1, "")
   local before = step(index)
   local seq = send_toggle(index, DELAY_BLOCKS)
@@ -261,6 +295,7 @@ end
 -- L5. A held note when the engine is bypassed, taken offline, or the transport stops.
 local function test_cleanup(action)
   local label = "L5 " .. action
+  ensure_engine(label)
   local engine = find_track(ENGINE)
   local slot = 2
   reaper.Main_OnCommand(ALL_NOTES_OFF, 0)

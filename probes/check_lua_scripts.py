@@ -384,7 +384,8 @@ class StubLifecycleReaper(StubUndoReaper):
 
     def table(self, lua):
         api = super().table(lua)
-        for name in ("gmem_attach", "gmem_read", "TrackFX_SetEnabled", "TrackFX_SetOffline", "Main_OnCommand",
+        for name in ("gmem_attach", "gmem_read", "TrackFX_SetEnabled", "TrackFX_SetOffline", "TrackFX_GetEnabled",
+                     "TrackFX_GetOffline", "Main_OnCommand",
                      "EnumProjects", "SelectProjectInstance", "Master_GetTempo", "SetCurrentBPM", "SetEditCurPos"):
             api[name] = getattr(self, name)
         return api
@@ -431,6 +432,12 @@ class StubLifecycleReaper(StubUndoReaper):
         if not self.offline:
             self.steps = list(self.cached_steps)
             self.last_seq = self.pending_seq = self.gmem.get(2, 0)
+
+    def TrackFX_GetEnabled(self, track, fx):
+        return self.enabled
+
+    def TrackFX_GetOffline(self, track, fx):
+        return self.offline
 
     def Main_OnCommand(self, command, flag):
         if int(command) == 40859:
@@ -539,6 +546,12 @@ class StubMemoryReaper:
     def SelectProjectInstance(self, project):
         self.active = project
 
+    def TrackFX_GetEnabled(self, track, fx):
+        return self.enabled
+
+    def TrackFX_GetOffline(self, track, fx):
+        return self.offline
+
     def Main_OnCommand(self, command, flag):
         if int(command) == 40859:
             self.projects.append({"name": "second", "tracks": [], "gmem": {}})
@@ -604,7 +617,7 @@ class LifecycleTest(unittest.TestCase):
             stub.drive()
             results = (Path(directory) / "furrow-lifecycle-results.txt").read_text().splitlines()
         self.assertEqual([line for line in results if line.startswith("FAIL")], [])
-        self.assertEqual(results[-1], "31 results, 0 failures")
+        self.assertEqual(results[-1], "34 results, 0 failures")
         for line in (
             "RESULT L1 engine first first undo removes the gesture's track = true",
             "RESULT L2 heartbeat moves while bypassed = false",

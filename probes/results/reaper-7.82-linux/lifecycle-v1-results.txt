@@ -1,0 +1,30 @@
+== L1 user edit during a gesture
+RESULT L1 host first first undo restores the step = true
+RESULT L1 host first first undo removes the gesture's track = false
+RESULT L1 host first first undo keeps the user rename = true
+RESULT L1 host first second undo restores the name = true
+RESULT L1 host first second undo leaves no gesture track = true
+RESULT L1 engine first first undo restores the step = true
+RESULT L1 engine first first undo removes the gesture's track = true
+RESULT L1 engine first first undo keeps the user rename = true
+RESULT L1 engine first second undo restores the name = true
+RESULT L1 engine first second undo leaves no gesture track = true
+== L2 bypass with a pending command
+RESULT L2 heartbeat moves while bypassed = false
+RESULT L2 command acknowledged while bypassed = false
+RESULT L2 command acknowledged after re-enable = true
+RESULT L2 step toggled once after re-enable = true
+== L3 offline and online
+RESULT L3 marked heartbeat moves while offline = false
+RESULT L3 marked heartbeat moves after online = true
+RESULT L3 marked edit survives offline and online = true
+FAIL L3 unmarked ack
+== L4 project tab switch with a pending command
+RESULT L4 command acknowledged while the engine's tab is in the background = false
+RESULT L4 command acknowledged after returning = false
+RESULT L4 step toggled once = false
+== L5 note cleanup
+FAIL L5 bypass saw a held note
+FAIL L5 offline saw a held note
+FAIL L5 stop saw a held note
+20 results, 4 failures
