@@ -10,7 +10,9 @@ options: gmem=FurrowProbeRS5K
 @init
 // While Lua holds gmem[20] at 1, the meter sums squares of each channel and counts
 // zero crossings of the left channel. gmem[21] left sum, gmem[22] right sum,
-// gmem[23] crossings, gmem[24] samples, gmem[25] heartbeat. The meter outputs silence.
+// gmem[23] crossings, gmem[24] samples, gmem[25] heartbeat. gmem[26] is 1 while the meter
+// measures, so Lua can wait for a stop to take effect. gmem[27] is the sample rate.
+// The meter outputs silence.
 HYSTERESIS = 0.0001;
 measuring = 0;
 sign = 0;
@@ -27,6 +29,8 @@ gmem[20] == 1 && !measuring ? (
   sign = 0;
 );
 measuring = gmem[20] == 1;
+gmem[26] = measuring;
+gmem[27] = srate;
 
 @sample
 measuring ? (

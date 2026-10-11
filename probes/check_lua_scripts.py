@@ -537,6 +537,8 @@ class StubRS5KReaper(StubReaper):
             self.gmem[24] += 1024
         else:
             self.measuring = False
+        self.gmem[26] = 1 if self.measuring else 0
+        self.gmem[27] = 44100
 
     def drive(self, limit=200000):
         while self.deferred is not None and limit > 0:
@@ -761,6 +763,17 @@ class RS5KTest(unittest.TestCase):
             stub.drive()
             results = (Path(directory) / "furrow-rs5k-results.txt").read_text().splitlines()
         self.assertIn("FAIL silent before the note-on  left 0.250000, right 0.250000", results)
+
+    def test_rs5k_script_refuses_a_project_with_an_earlier_probe_track(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubRS5KReaper(str(Path(directory) / "rs5k.rpp"))
+            run(stub, "furrow_probe_rs5k.lua")
+            stub.drive()
+            run(stub, "furrow_probe_rs5k.lua")
+            stub.drive()
+            results = (Path(directory) / "furrow-rs5k-results.txt").read_text().splitlines()
+        self.assertEqual(results[0], "FAIL no earlier probe track shares this run's gmem  delete the Furrow RS5K Probe track or use a new project")
+        self.assertEqual(results[-1], "0 results, 1 failures")
 
 
 @unittest.skipIf(lua54 is None, "lupa is not installed")
