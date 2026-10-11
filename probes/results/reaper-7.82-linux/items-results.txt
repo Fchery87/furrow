@@ -1,0 +1,46 @@
+== write and read back
+RESULT 1 KiB item, written = length 1024 of 1024, exact true
+RESULT 1 KiB item, write and read seconds = 0.001 and 0.000
+RESULT 64 KiB item, written = length 65536 of 65536, exact true
+RESULT 64 KiB item, write and read seconds = 0.000 and 0.000
+RESULT 64 KiB take, written = length 65536 of 65536, exact true
+RESULT 2 MiB item, written = length 2097152 of 2097152, exact true
+RESULT 2 MiB item, write and read seconds = 0.005 and 0.002
+RESULT 8 MiB item, written = length 8388608 of 8388608, exact true
+RESULT 8 MiB item, write and read seconds = 0.029 and 0.009
+== copies of the 2 MiB item
+RESULT 2 MiB item chunk holds the payload = chunk length 2806817, contains it false
+RESULT 2 MiB duplicate, written = length 2097152 of 2097152, exact true
+RESULT 2 MiB copy and paste, written = length 2097152 of 2097152, exact true
+RESULT 2 MiB state chunk copy, written = length 2097152 of 2097152, exact true
+RESULT 2 MiB split left, written = length 2097152 of 2097152, exact true
+RESULT 2 MiB split right, written = length 2097152 of 2097152, exact true
+== undo of an extension change
+RESULT 1 KiB item after undo of a replacement = length 1024 of 1024, exact true
+== special characters through a state chunk
+RESULT quotes and brackets, written = length 13 of 13, exact true
+RESULT quotes and brackets, state chunk copy = length 13 of 13, exact true
+RESULT tab, pipe and backslash, written = length 7 of 7, exact true
+RESULT tab, pipe and backslash, state chunk copy = length 7 of 7, exact true
+RESULT UTF-8, written = length 12 of 12, exact true
+RESULT UTF-8, state chunk copy = length 12 of 12, exact true
+RESULT newline, written = length 11 of 11, exact true
+RESULT newline, state chunk copy = length 11 of 11, exact true
+RESULT chunk syntax, written = length 11 of 11, exact true
+RESULT chunk syntax, state chunk copy = length 11 of 11, exact true
+== save, clear in memory and reopen
+RESULT save seconds = 0.2125
+RESULT project file bytes, before and after the save = 2115 and 30786554
+RESULT reopen seconds = 0.3442
+RESULT 1 KiB source, reloaded = length 1024 of 1024, exact true
+RESULT 64 KiB source, reloaded = length 65536 of 65536, exact true
+RESULT 64 KiB take, reloaded = length 65536 of 65536, exact true
+RESULT 2 MiB source, reloaded = length 2097152 of 2097152, exact true
+RESULT 2 MiB duplicate, reloaded = length 2097152 of 2097152, exact true
+RESULT 8 MiB source, reloaded = length 8388608 of 8388608, exact true
+RESULT 2 MiB copy and paste, reloaded = length 2097152 of 2097152, exact true
+RESULT 2 MiB state chunk copy, reloaded = length 2097152 of 2097152, exact true
+RESULT 2 MiB split left, reloaded = length 2097152 of 2097152, exact true
+RESULT 2 MiB split right, reloaded = length 2097152 of 2097152, exact true
+RESULT items reloaded = 9
+40 results, 0 failures

@@ -189,3 +189,25 @@ Each result holds both stopped and playing. With the lua mark, one native undo r
 - A link maps CC 0 to 127 onto the whole parameter range. On Volume that is silence to +6 dB, so CC 100 gives +3.9 dB, measured in the first run, not unity. Lane volume must pick the CC from the dB it wants, or set `scale` and `offset`.
 - Removing a link leaves the parameter at its last linked value. A lane that drops a link must restore the base value itself.
 - Gate length needs Obey note-offs on. Per-step velocity needs Gain for minimum velocity below +0.0 dB. Furrow must set both on every RS5K it creates. At -inf, velocity 1 is silent.
+
+## Item metadata
+
+`lua/furrow_probe_items.lua` ran once in a new project. `items-results.txt` has 40 results and no failures. Every payload read back exact, at its full length, both at once and from disk after the reopen.
+
+| Case | Result |
+| --- | --- |
+| Item payloads of 1 KiB, 64 KiB, 2 MiB and 8 MiB, and a 64 KiB take payload | Exact. Writing 8 MiB took 0.029 s and reading it 0.009 s |
+| 2 MiB item copied by Duplicate, Copy and Paste, state chunk copy, and split | Exact on every copy, including both split halves, before and after the reopen |
+| Native undo of a replaced payload | The original 1 KiB payload came back exact |
+| Quotes, brackets, tab, pipe, backslash, UTF-8, a newline and chunk syntax | Exact when written and through a state chunk copy. These items were deleted before the save, so they were not tested through a save |
+| Save and reopen | The file grew from 2,115 to 30,786,554 bytes. Save took 0.21 s and reopen 0.34 s |
+
+**How REAPER stores the data.** It writes item extension data in an `<EXTI` block and take extension data in an `<EXT` block. The 1 KiB payload was one plain line. Every larger payload was a `<BIN Furrow` block of base64 lines 128 characters long. That is why the 2 MiB item's state chunk, 2,806,817 characters, did not contain the payload as one string. The size where REAPER switches to base64 lies between 1 KiB and 64 KiB and was not measured.
+
+**Size cost.** The payloads total 21,168,128 bytes. Base64 adds a third, about 28.2 MB, and the line breaks and the rest of the project make up the 30.8 MB. Inferred, the file costs about 1.45 bytes per payload byte, and save and reopen cost about 7 and 11 ms per MB on this machine.
+
+**What this means for the spec.**
+- Item extension data holds a 2 MiB source snapshot, and an 8 MiB one, through every common copy, split, undo and save and reopen. The storage mechanism the spec names works.
+- REAPER base64-encodes large values itself, so Furrow gains nothing by escaping or encoding beyond plain printable text. Whether a NUL byte survives was not tested. Inferred, the string API stops at NUL, so the encoding must avoid it.
+- The spec stores the full pattern snapshot on every lane's item. A 64-lane commit at the full size would add about 64 × 2 MiB × 1.45, near 195 MB, to the project and about 2 s to each reopen. Inferred. Storing the snapshot once per commit group, with each item holding a reference and its own fingerprint, would cut that by the lane count.
+- A split copies the full snapshot to both halves. The fingerprint must therefore cover item position and length, or a split half will look like an unedited commit.
