@@ -1077,6 +1077,50 @@ class StubRenderReaper(StubReaper):
         return names[int(index)] if int(index) < len(names) else None
 
 
+class StubCleanupReaper(StubRS5KReaper):
+    """The RS5K stub with named gmem segments and the two channel-mode controllers.
+
+    With frees True, a segment that no running JSFX holds is dropped when Lua attaches elsewhere.
+    All Sound Off stops the voice. All Notes Off stops it only with Obey note-offs on.
+    """
+
+    def __init__(self, project, frees=True):
+        super().__init__(project)
+        self.frees = frees
+        self.segments = {}
+        self.attached = "FurrowProbeRS5K"
+
+    def table(self, lua):
+        api = super().table(lua)
+        for name in ("gmem_attach", "gmem_read", "gmem_write"):
+            api[name] = getattr(self, name)
+        return api
+
+    def gmem_attach(self, name):
+        held = self.attached == "FurrowProbeRS5K" and any(track["fx"] for track in self.tracks)
+        if self.frees and name != self.attached and not held:
+            self.segments.pop(self.attached, None)
+        self.attached = name
+
+    def store(self):
+        if self.attached == "FurrowProbeRS5K":
+            return self.gmem
+        return self.segments.setdefault(self.attached, {})
+
+    def gmem_read(self, index):
+        return self.store().get(int(index), 0)
+
+    def gmem_write(self, index, value):
+        self.store()[int(index)] = value
+
+    def block(self):
+        if self.gmem.get(2, 0) != self.last_seq and int(self.gmem.get(3, 0)) == 0xB0:
+            controller = int(self.gmem.get(4, 0))
+            if controller == 120 or (controller == 123 and self.params[3] >= 0.5):
+                self.note = False
+        super().block()
+
+
 class StubItemsReaper(StubReaper):
     """Items with extension data, REAPER's copy actions, a snapshot undo, and save and reopen.
 
@@ -1492,6 +1536,33 @@ class RenderTest(unittest.TestCase):
         self.assertIn("RESULT block tempo entries logged, which needs a playing state = 0", results)
         self.assertIn("RESULT render block sizes = none", results)
         self.assertEqual(len(captured), 38)
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class CleanupTest(unittest.TestCase):
+    def run_cleanup(self, **options):
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubCleanupReaper(str(Path(directory) / "cleanup.rpp"), **options)
+            run(stub, "furrow_probe_cleanup.lua")
+            stub.drive()
+            return (Path(directory) / "furrow-cleanup-results.txt").read_text().splitlines()
+
+    def test_cleanup_script_measures_every_case(self):
+        results = self.run_cleanup()
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
+        self.assertEqual(results[-1], "7 results, 0 failures")
+        for line in (
+            "RESULT segment nothing else attaches, read at once, value read back = 0.0000",
+            "RESULT segment a running JSFX attaches, read after 0.5 s, value read back = 4242.5000",
+            "RESULT All Notes Off, Obey note-offs on, level change dB = -inf",
+            "RESULT All Notes Off, Obey note-offs off, level change dB = 0.0000",
+            "RESULT All Sound Off, Obey note-offs off, level change dB = -inf",
+        ):
+            self.assertIn(line, results)
+
+    def test_cleanup_script_reports_a_segment_that_survives(self):
+        results = self.run_cleanup(frees=False)
+        self.assertIn("RESULT segment nothing else attaches, read after 0.5 s, value read back = 4242.5000", results)
 
 
 if __name__ == "__main__":
