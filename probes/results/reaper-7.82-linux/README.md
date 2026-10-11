@@ -211,3 +211,23 @@ Each result holds both stopped and playing. With the lua mark, one native undo r
 - REAPER base64-encodes large values itself, so Furrow gains nothing by escaping or encoding beyond plain printable text. Whether a NUL byte survives was not tested. Inferred, the string API stops at NUL, so the encoding must avoid it.
 - The spec stores the full pattern snapshot on every lane's item. A 64-lane commit at the full size would add about 64 × 2 MiB × 1.46, near 196 MB, to the project and about 2 s to each reopen. Inferred. Storing the snapshot once per commit group, with each item holding a reference and its own fingerprint, would cut that by the lane count.
 - A split copies the full snapshot to both halves. The fingerprint must therefore cover item position and length, or a split half will look like an unedited commit.
+
+## Startup release
+
+`jsfx/furrow_probe_engine.jsfx` sends each lane's note-off and then All Notes Off, CC 123, at offset 0 of its first block. `lua/furrow_probe_startup.lua` ran twice in `startup.RPP`. Both runs have no failures. `startup-v2-results.txt` adds the engine segment's raw counters.
+
+| Case | Receivers | Engine |
+| --- | --- | --- |
+| Bypass, then enable, stopped | No release on any lane | No restart. One state write going down and one coming back |
+| Offline, then online, stopped | All 4 lanes got the note-off, then All Notes Off | Restarted and released. One state write going down and two coming back |
+| Offline, then online, note held at 30 BPM | All 4 lanes got the pair | The same |
+| Save, then reopen | All 4 lanes got the pair | Restarted and released |
+
+Both runs agree on the receivers. Playback never sends All Notes Off, so the pair can only come from the release.
+
+**Why the first run's counters went down.** In the first run the script's last `gmem_attach` before each offline step and before the reopen named the receiver segment. The engine counters then read lower afterwards, by 4 and 2, and the release count never rose. In the second run the script read the engine segment just before going offline, and every counter rose as expected. Before the reopen it again read the receiver segment last, and the engine heartbeat fell from 8,280 to 152 with every counter restarted. Inferred, REAPER frees a named gmem segment when nothing has it attached, and a later attach finds it zeroed. Not tested directly.
+
+**What this means for the spec.**
+- The startup release covers offline and online and project load. Bypass needs no startup release, because SeqCore keeps its memory and releases through its own stop and seek handling, as the lifecycle run showed.
+- REAPER writes SeqCore's state as it goes offline. SeqCore could therefore save its held notes and release exactly those pitches on load, instead of relying on All Notes Off. Whether RS5K and other receivers honour All Notes Off was not tested.
+- Inferred, named gmem does not survive a moment with no attached instance or script. Taking SeqCore offline with the rack window closed, or reopening a project, can clear the mailbox, the mirror and any counters. SeqCore must rebuild everything it publishes from its own state on its first block. The coordinator must treat a zeroed segment as a fresh session.
