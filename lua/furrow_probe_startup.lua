@@ -77,6 +77,13 @@ local function find_track(name)
   return nil
 end
 
+-- The receivers keep event counts at gmem[10] to gmem[13] of their own segment, the same
+-- indices as these engine counters, so each read names the segment it came from.
+local function engine_counters()
+  return string.format("segment version %d, heartbeat %d, writes %d, releases %d, flag %d", engine_read(0),
+    engine_read(1), engine_read(SERIALIZE_WRITES), engine_read(STARTUP_RELEASES), engine_read(HAS_STARTUP_RELEASE))
+end
+
 local function heartbeat_moves()
   local first = engine_read(1)
   wait(0.3)
@@ -121,8 +128,10 @@ local function cycle(engine, label, toggle)
   local releases = engine_read(STARTUP_RELEASES)
   local writes = engine_read(SERIALIZE_WRITES)
   local mark = marks()
+  result(label .. ", engine counters before", engine_counters())
   toggle(true)
   wait(0.5)
+  result(label .. ", engine counters while down", engine_counters())
   result(label .. ", serialize writes while it went down", engine_read(SERIALIZE_WRITES) - writes)
   toggle(false)
   if not wait_until(function() return engine_read(STARTUP_RELEASES) > releases end, 1) then
@@ -131,6 +140,7 @@ local function cycle(engine, label, toggle)
     result(label .. ", startup release ran", true)
   end
   wait(0.3)
+  result(label .. ", engine counters after", engine_counters())
   result(label .. ", receivers logged", releases_since(mark))
 end
 
@@ -192,6 +202,7 @@ local function main()
   local loaded = wait_until(function() return engine_read(STARTUP_RELEASES) > releases end, 3)
   result("reopen, startup release ran", loaded)
   wait(0.5)
+  result("reopen, engine counters after", engine_counters())
   result("reopen, receivers logged", releases_since(mark))
   receiver_write(5, 0)
 end

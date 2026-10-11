@@ -1,0 +1,16 @@
+== bypass and enable while stopped
+RESULT bypass, serialize writes while it went down = 1
+RESULT bypass, startup release ran = false
+RESULT bypass, receivers logged = 0 of 4 lanes got the note-off then All Notes Off
+== offline and online while stopped
+RESULT offline while stopped, serialize writes while it went down = -4
+RESULT offline while stopped, startup release ran = false
+RESULT offline while stopped, receivers logged = 4 of 4 lanes got the note-off then All Notes Off
+== offline and online with a held note
+RESULT offline with a held note, serialize writes while it went down = -2
+RESULT offline with a held note, startup release ran = false
+RESULT offline with a held note, receivers logged = 4 of 4 lanes got the note-off then All Notes Off
+== save and reopen
+RESULT reopen, startup release ran = false
+RESULT reopen, receivers logged = 4 of 4 lanes got the note-off then All Notes Off
+11 results, 0 failures
