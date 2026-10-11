@@ -10,6 +10,8 @@ local CELL = 22
 local GAP = 3
 local NAME_WIDTH = 150
 local DRAIN_SECONDS = 3
+local UNDO_COMMAND = 40029
+local REDO_COMMAND = 40030
 
 local COLOR = {
   off = 0x3A3F47FF,
@@ -229,9 +231,14 @@ function ui.run(ImGui)
       c:finish(paint.gesture)
       paint = nil
     end
-    if ImGui.IsWindowFocused(ctx, ImGui.FocusedFlags_RootAndChildWindows)
-        and ImGui.IsKeyPressed(ctx, ImGui.Key_Space, false) then
-      reaper.Main_OnCommand(40044, 0)
+    if ImGui.IsWindowFocused(ctx, ImGui.FocusedFlags_RootAndChildWindows) then
+      if ImGui.IsKeyPressed(ctx, ImGui.Key_Space, false) then
+        reaper.Main_OnCommand(40044, 0)
+      elseif ImGui.IsKeyPressed(ctx, ImGui.Key_Z, true) and (ImGui.GetKeyMods(ctx) & ImGui.Mod_Ctrl) ~= 0 then
+        -- ReaImGui keeps keystrokes for itself, so forward undo and redo to REAPER.
+        local redo = (ImGui.GetKeyMods(ctx) & ImGui.Mod_Shift) ~= 0
+        reaper.Main_OnCommand(redo and REDO_COMMAND or UNDO_COMMAND, 0)
+      end
     end
   end
 
