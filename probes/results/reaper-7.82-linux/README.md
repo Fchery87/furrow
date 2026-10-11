@@ -204,10 +204,10 @@ Each result holds both stopped and playing. With the lua mark, one native undo r
 
 **How REAPER stores the data.** It writes item extension data in an `<EXTI` block and take extension data in an `<EXT` block. The 1 KiB payload was one plain line. Every larger payload was a `<BIN Furrow` block of base64 lines 128 characters long. That is why the 2 MiB item's state chunk, 2,806,817 characters, did not contain the payload as one string. The size where REAPER switches to base64 lies between 1 KiB and 64 KiB and was not measured.
 
-**Size cost.** The payloads total 21,168,128 bytes. Base64 adds a third, about 28.2 MB, and the line breaks and the rest of the project make up the 30.8 MB. Inferred, the file costs about 1.45 bytes per payload byte, and save and reopen cost about 7 and 11 ms per MB on this machine.
+**Size cost.** The payloads total 21,103,616 bytes. Base64 adds a third, about 28.1 MB, and the line breaks and the rest of the project make up the 30.8 MB. Inferred, the file costs about 1.46 bytes per payload byte, and save and reopen cost about 7 and 11 ms per MB on this machine.
 
 **What this means for the spec.**
 - Item extension data holds a 2 MiB source snapshot, and an 8 MiB one, through every common copy, split, undo and save and reopen. The storage mechanism the spec names works.
 - REAPER base64-encodes large values itself, so Furrow gains nothing by escaping or encoding beyond plain printable text. Whether a NUL byte survives was not tested. Inferred, the string API stops at NUL, so the encoding must avoid it.
-- The spec stores the full pattern snapshot on every lane's item. A 64-lane commit at the full size would add about 64 × 2 MiB × 1.45, near 195 MB, to the project and about 2 s to each reopen. Inferred. Storing the snapshot once per commit group, with each item holding a reference and its own fingerprint, would cut that by the lane count.
+- The spec stores the full pattern snapshot on every lane's item. A 64-lane commit at the full size would add about 64 × 2 MiB × 1.46, near 196 MB, to the project and about 2 s to each reopen. Inferred. Storing the snapshot once per commit group, with each item holding a reference and its own fingerprint, would cut that by the lane count.
 - A split copies the full snapshot to both halves. The fingerprint must therefore cover item position and length, or a split half will look like an unedited commit.
