@@ -58,6 +58,8 @@ function ui.run(ImGui)
   local paint = nil
   local open = true
   local closing_at = nil
+  -- Undo and redo wait here until pending gestures have their undo points.
+  local history = nil
 
   local function connect()
     local rack = pick_rack(proj)
@@ -208,6 +210,13 @@ function ui.run(ImGui)
   end
 
   local function draw()
+    if reaper.EnumProjects(-1) ~= proj then
+      if coordinator then
+        top_bar(coordinator)
+      end
+      ImGui.TextColored(ctx, COLOR.warn, "This rack's project is not the active tab.")
+      return
+    end
     if not coordinator then
       ImGui.Text(ctx, "This project has no Furrow rack.")
       if ImGui.Button(ctx, "New rack") then
@@ -217,10 +226,6 @@ function ui.run(ImGui)
     end
     local c = coordinator
     top_bar(c)
-    if reaper.EnumProjects(-1) ~= proj then
-      ImGui.TextColored(ctx, COLOR.warn, "This rack's project is not the active tab.")
-      return
-    end
     if c.session and c.session.snapshot then
       for _, lane in ipairs(c:lanes()) do
         lane_row(c, lane)
@@ -237,7 +242,7 @@ function ui.run(ImGui)
       elseif ImGui.IsKeyPressed(ctx, ImGui.Key_Z, true) and (ImGui.GetKeyMods(ctx) & ImGui.Mod_Ctrl) ~= 0 then
         -- ReaImGui keeps keystrokes for itself, so forward undo and redo to REAPER.
         local redo = (ImGui.GetKeyMods(ctx) & ImGui.Mod_Shift) ~= 0
-        reaper.Main_OnCommand(redo and REDO_COMMAND or UNDO_COMMAND, 0)
+        history = redo and REDO_COMMAND or UNDO_COMMAND
       end
     end
   end
@@ -249,6 +254,10 @@ function ui.run(ImGui)
     end
     if coordinator then
       coordinator:tick()
+    end
+    if history and not (coordinator and coordinator:busy()) then
+      reaper.Main_OnCommand(history, 0)
+      history = nil
     end
     if open then
       ImGui.SetNextWindowSize(ctx, 760, 360, ImGui.Cond_FirstUseEver)
