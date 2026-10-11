@@ -2,7 +2,7 @@
 
 Oct 10, 2026 · No Chaserz
 
-**Status.** Revised on 11 October 2026 after the first milestone 1 probes on REAPER 7.82 for Linux. Routing, constant-tempo timing, tempo ramps, tempo steps on the beat grid, native undo of an acknowledged engine edit, and save and reload of the origin and seed encoding passed. Named gmem scope and size, the host lifecycle around bypass, offline, project tabs and held notes, and RS5K's response to notes, velocity and controllers were measured. Item extension data kept snapshots up to 8 MiB through copies, undo and save and reload. The evidence is in `probes/results/reaper-7.82-linux/`. Other REAPER-dependent behavior remains unverified, and Windows and macOS have not run. The rack, page allocator and item bridge must wait for their stated gates.
+**Status.** Revised on 11 October 2026 after the first milestone 1 probes on REAPER 7.82 for Linux. Routing, constant-tempo timing, tempo ramps, tempo steps on the beat grid, native undo of an acknowledged engine edit, and save and reload of the origin and seed encoding passed. Named gmem scope and size, the host lifecycle around bypass, offline, project tabs and held notes, and RS5K's response to notes, velocity and controllers were measured. Item extension data kept snapshots up to 8 MiB through copies, undo and save and reload. SeqCore's release on its first block reached every lane receiver after offline and online and after a project reopen. The evidence is in `probes/results/reaper-7.82-linux/`. Other REAPER-dependent behavior remains unverified, and Windows and macOS have not run. The rack, page allocator and item bridge must wait for their stated gates.
 
 ## Overview
 
@@ -254,7 +254,9 @@ The wire format has its own version. Milestone 1 must produce a non-overlapping 
 
 **Snapshots.** Publish a new revision after edits, undo, reload, pattern changes and scrolling. Lua reads only a complete published bank and acknowledges its revision before the engine reuses it. If both banks are occupied, retain the last valid display and defer publication. Opening the window requests a versioned snapshot. Commit and export request one coherent full-pattern snapshot across pages. Do not stitch that snapshot together from unrelated visible windows. A generation change cancels an in-flight snapshot.
 
-**Recovery.** Undo, state replacement and session reattachment invalidate older command generations. Clear pending transactions and reject late acknowledgements from those generations. Never persist ring positions, session tokens or pointers in the project. A stalled heartbeat means processing is unavailable. It does not prove that the owner has exited. Do not take its slot based on timeout alone. Disable edits and auditions that require processing, retain the last acknowledged display, and reconcile against a fresh snapshot on recovery. Publication ordering and concurrent access need a host test. One reader and one writer do not by themselves prove a correct protocol.
+**Recovery.** Undo, state replacement and session reattachment invalidate older command generations. Clear pending transactions and reject late acknowledgements from those generations. Never persist ring positions, session tokens or pointers in the project. A stalled heartbeat means processing is unavailable. It does not prove that the owner has exited.
+
+A named gmem segment can come back zeroed. In the startup probe, an engine taken offline while the script's last attach named another segment, and an engine across a project reopen, both came back with every counter restarted. The heartbeat fell from 8,280 to 152. Inferred, REAPER frees a segment once nothing attaches to it. Nothing in gmem is durable. SeqCore rebuilds its session header, mirror and snapshots from its own state on its first block. A coordinator that finds a zeroed or restarted header treats it as a new session and reconciles against a fresh snapshot. Do not take its slot based on timeout alone. Disable edits and auditions that require processing, retain the last acknowledged display, and reconcile against a fresh snapshot on recovery. Publication ordering and concurrent access need a host test. One reader and one writer do not by themselves prove a correct protocol.
 
 ### Parameter locks (V2)
 
@@ -310,7 +312,9 @@ Bypass or offline FX can prevent SeqCore from sending its own cleanup messages. 
 | Offline | Nothing, then nothing when it came back online. The note stayed held |
 | Transport stop | A note-off |
 
-The host sends no cleanup for bypass or offline, so Furrow does not claim stuck-note protection for them. Provide a rack panic action for recoverable routing and instrument state. On its first processed block after loading, SeqCore sends a note-off for every held note it knows of and an all-notes-off on every lane route. Test that release before relying on it.
+The host sends no cleanup for bypass or offline, so Furrow does not claim stuck-note protection for them. Provide a rack panic action for recoverable routing and instrument state. On its first processed block after loading, SeqCore sends a note-off for every held note it knows of and an all-notes-off on every lane route.
+
+On REAPER 7.82 for Linux, a probe engine sent each lane's note-off and then CC 123 at offset 0 of its first block. All four lane receivers logged that pair after offline and online, stopped and with a note held, and after a save and reopen. Bypass and enable does not restart the engine, so no release runs. None is needed, because SeqCore keeps its memory and its stop and seek handling releases notes. REAPER wrote the engine's state once as it went offline. SeqCore therefore saves the pitch it holds on each lane in `@serialize` and releases exactly that pitch on its first block, as well as sending all-notes-off. Whether RS5K and other receivers honour all-notes-off has not been tested.
 
 ## MIDI item bridge and playback ownership
 
@@ -439,7 +443,8 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 | Risk | Why it matters | Plan |
 | --- | --- | --- |
 | Native undo and asynchronous edits | Engine and host objects must restore as one operation | Passed on REAPER 7.82 for Linux. Host changes follow the acknowledgement in the same callback as the revision change and the undo point. A lost coordinator remains open |
-| Held notes at bypass or offline | The host sends no cleanup, and an offline SeqCore forgets its held notes | Rack panic action, and a release on SeqCore's first block after loading. Test that release |
+| Held notes at bypass or offline | The host sends no cleanup, and an offline SeqCore forgets its held notes | Rack panic action. The release on SeqCore's first block reached every receiver on REAPER 7.82 for Linux. Test all-notes-off on RS5K |
+| gmem segment lifetime | A segment with nothing attached can come back zeroed | SeqCore republishes everything on its first block. The coordinator treats a restarted header as a new session. Confirm with a direct attach and detach test |
 | gmem sessions and publication | Stale commands or reused slots could edit another state or rack. Named gmem spans every open project tab | Arbitrate slots across the REAPER process. Validate ownership, generations, acknowledgements and snapshots in milestone 1 |
 | Engine memory and bounded work | Pattern storage alone reserves 5,259,264 of the 8,388,608 measured local values | Budget the remaining 3,129,344 for queues, snapshots and staging. Preflight operations and bound audio-block work |
 | Routing and plugin latency | Feedback routing invalidates the intended delay-compensation behavior | Use a separate engine child and test routing and delay compensation in milestone 1 |
@@ -477,6 +482,8 @@ Build the riskiest host integrations first. Each milestone ends with recorded ev
 - The four-word origin encoding is adopted. Seeds stay within 0 to 16,777,215.
 - A gesture applies host changes after the engine acknowledges, in the same callback as its revision change and undo point.
 - Furrow does not claim stuck-note protection for bypass or offline. SeqCore releases every lane route on its first block after loading.
+- SeqCore saves each lane's held pitch in `@serialize` and releases it, plus all-notes-off, on its first block. Bypass needs no startup release.
+- Nothing in named gmem is durable. SeqCore rebuilds what it publishes on its first block.
 - Every RS5K that Furrow creates has Obey note-offs on and a finite Gain for minimum velocity below +0.0 dB.
 - Built-in lanes reach RS5K Volume and Pan through parameter links, not raw CCs and not MIDI learn. Removing a link restores the base value.
 - Source snapshots live in item extension data as printable text with no NUL byte.
