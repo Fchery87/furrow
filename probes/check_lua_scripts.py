@@ -362,6 +362,108 @@ class UndoTest(unittest.TestCase):
         self.assertIn("FAIL engine processes while playing", results)
 
 
+class StubLifecycleReaper(StubUndoReaper):
+    """The undo stub plus bypass, offline, project tabs, a receiver and a playing engine.
+
+    A bypassed or offline engine, or one in a background tab, does not run. Taking the
+    engine offline reloads it from its cached state, as the REAPER 7.82 undo run suggests.
+    """
+
+    def __init__(self, project, steps):
+        super().__init__(project, steps, fx_tracking="params")
+        self.receiver = {}
+        self.attached = "FurrowProbeEngine"
+        self.enabled = True
+        self.offline = False
+        self.tabs = ["first"]
+        self.active_tab = "first"
+        self.playing = False
+        self.tempo = 120.0
+        self.play_ticks = 0
+        self.held = False
+
+    def table(self, lua):
+        api = super().table(lua)
+        for name in ("gmem_attach", "gmem_read", "TrackFX_SetEnabled", "TrackFX_SetOffline", "Main_OnCommand",
+                     "EnumProjects", "SelectProjectInstance", "Master_GetTempo", "SetCurrentBPM", "SetEditCurPos"):
+            api[name] = getattr(self, name)
+        return api
+
+    def runs(self):
+        return self.enabled and not self.offline and self.active_tab == "first"
+
+    def engine_block(self):
+        self.engine_runs = self.runs()
+        super().engine_block()
+        if self.playing and self.engine_runs:
+            self.play_ticks += 1
+            if self.play_ticks % 20 == 1:
+                self.receive(2, 1)
+                self.held = True
+            elif self.play_ticks % 20 == 6 and self.held:
+                self.receive(2, 0)
+                self.held = False
+
+    def receive(self, slot, kind):
+        count = int(self.receiver.get(10 + slot, 0))
+        at = 2000000 + slot * 500000 + count * 9
+        self.receiver[at + 6], self.receiver[at + 8] = 42, kind
+        self.receiver[10 + slot] = count + 1
+
+    def gmem_attach(self, name):
+        self.attached = name
+
+    def gmem_read(self, index):
+        store = self.gmem if self.attached == "FurrowProbeEngine" else self.receiver
+        return store.get(int(index), 0)
+
+    def gmem_write(self, index, value):
+        store = self.gmem if self.attached == "FurrowProbeEngine" else self.receiver
+        store[int(index)] = value
+
+    def TrackFX_SetEnabled(self, track, fx, enabled):
+        self.enabled = bool(enabled)
+        if not self.enabled and self.held:
+            self.held = False
+
+    def TrackFX_SetOffline(self, track, fx, offline):
+        self.offline = bool(offline)
+        if not self.offline:
+            self.steps = list(self.cached_steps)
+            self.last_seq = self.pending_seq = self.gmem.get(2, 0)
+
+    def Main_OnCommand(self, command, flag):
+        if int(command) == 40859:
+            self.tabs.append("second")
+            self.active_tab = "second"
+        elif int(command) == 40860:
+            self.tabs.remove(self.active_tab)
+            self.active_tab = self.tabs[0]
+
+    def EnumProjects(self, index, buffer):
+        return self.active_tab, self.project
+
+    def SelectProjectInstance(self, project):
+        self.active_tab = project
+
+    def Master_GetTempo(self):
+        return self.tempo
+
+    def SetCurrentBPM(self, project, bpm, undo):
+        self.tempo = bpm
+
+    def SetEditCurPos(self, position, move_view, seek_play):
+        pass
+
+    def OnPlayButton(self):
+        self.playing = True
+        self.play_ticks = 0
+        self.receiver[12] = 0
+
+    def OnStopButton(self):
+        self.playing = False
+
+
 class StubMemoryReaper:
     """Project tabs whose memory JSFX instances run once per tick.
 
@@ -490,6 +592,30 @@ class StubMemoryReaper:
 
     def GetResourcePath(self):
         return self.directory
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
+class LifecycleTest(unittest.TestCase):
+    def test_lifecycle_script_runs_every_measurement(self):
+        steps = [int(value) for value in "1000100010001000" "0010001000100010" + "0" * 32]
+        with tempfile.TemporaryDirectory() as directory:
+            stub = StubLifecycleReaper(str(Path(directory) / "lifecycle.rpp"), steps)
+            run(stub, "furrow_probe_lifecycle.lua")
+            stub.drive()
+            results = (Path(directory) / "furrow-lifecycle-results.txt").read_text().splitlines()
+        self.assertEqual([line for line in results if line.startswith("FAIL")], [])
+        self.assertEqual(results[-1], "31 results, 0 failures")
+        for line in (
+            "RESULT L1 engine first first undo removes the gesture's track = true",
+            "RESULT L2 heartbeat moves while bypassed = false",
+            "RESULT L2 step toggled once after re-enable = true",
+            "RESULT L3 marked edit survives offline and online = true",
+            "RESULT L3 unmarked edit survives offline and online = false",
+            "RESULT L4 command acknowledged while the engine's tab is in the background = false",
+            "RESULT L4 step toggled once = true",
+        ):
+            self.assertIn(line, results)
+        self.assertEqual(stub.tempo, 120.0)
 
 
 @unittest.skipIf(lua54 is None, "lupa is not installed")
