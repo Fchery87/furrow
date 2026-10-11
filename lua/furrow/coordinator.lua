@@ -139,6 +139,13 @@ function Coordinator:set_page(page)
   end
 end
 
+-- True once the snapshot holds the page the grid shows. Until then a step reads as zero
+-- whatever it holds, so step edits wait.
+function Coordinator:page_ready()
+  local snap = self.session and self.session.snapshot
+  return snap ~= nil and snap.s0 == self.page * wire.PAGE_STEPS
+end
+
 function Coordinator:set_length(slot, length)
   length = math.max(1, math.min(wire.MAX_STEPS, math.floor(length)))
   self:run("set length", { { wire.OP_SET_LENGTH, 0, slot, length } })
