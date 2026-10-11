@@ -257,6 +257,6 @@ Both runs agree on the receivers. Playback never sends All Notes Off, so the pai
 
 With `--tolerance 0`, each render also matches its live capture, `constant-120-events.txt` and `ramp-44100-1024-extrapolate-events.txt`, on every sample.
 
-**Host behavior.** Each 3-second render took about 0.13 s. The receivers logged 130 block tempo entries, so the render counted as playback, and every block was 1,024 samples, the same as the audio device. The engine sent no startup release during the render, so the render did not reload it. Inferred, a render with a different block size was not tested.
+**Host behavior.** Each 3-second render took about 0.13 s. The receivers logged 130 block tempo entries, so the render counted as playback, and every block was 1,024 samples, the same as the audio device. The engine sent no startup release during the render, so the render did not reload it. A render with a different block size was not tested.
 
 **What this means for the spec.** Offline render produces the same MIDI on the same samples as live playback, at the same block size. The timing gate's offline condition passed for these two cases.
