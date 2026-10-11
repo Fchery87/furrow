@@ -1,4 +1,4 @@
-First routing and timing proof on REAPER 7.82, Linux x86_64, captured on 11 October 2026. The first two captures come from the engine at commit 6944845, which held one tempo per block. The two `-extrapolate` captures come from the engine at commit a9572b8, which extrapolates the tempo change inside each block.
+First routing and timing proof on REAPER 7.82, Linux x86_64, captured on 11 October 2026. The first two captures come from the engine at commit 6944845, which held one tempo per block. The two `-extrapolate` captures come from the engine at commit df58b67, which extrapolates the tempo change inside each block.
 
 **Host.** REAPER v7.82 (4 October 2026) on Linux 7.0.0-38-generic. `reaper.ini` saved 44,100 Hz and a 1,024-sample block with `linux_audio_mode=2`. The block tempo logs confirm the block size. In both runs, every logged block was 1,024 samples. The probe ran without ReaImGui or SWS.
 

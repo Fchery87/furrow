@@ -3,7 +3,7 @@
 -- The events file is the second argument to probes/diff_log.py.
 
 local GMEM = "FurrowProbeReceiver"
-local VERSION = 2
+local VERSION = 3
 local SLOTS = 4
 local BLOCK_LOG = 1000
 local SAMPLE_LOG = 200000
@@ -71,10 +71,10 @@ for _, row in ipairs(events) do
   )
 end
 
-local block_lines = { "# project_sample tempo_in_block" }
+local block_lines = { "# project_sample tempo_in_block beat_position" }
 for index = 0, int(read(2)) - 1 do
-  local at = BLOCK_LOG + index * 2
-  block_lines[#block_lines + 1] = string.format("%d %.10f", int(read(at)), read(at + 1))
+  local at = BLOCK_LOG + index * 3
+  block_lines[#block_lines + 1] = string.format("%d %.10f %.12f", int(read(at)), read(at + 1), read(at + 2))
 end
 
 local sample_lines = { "# project_sample tempo_in_sample" }

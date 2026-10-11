@@ -1,0 +1,10 @@
+# A tempo step between grid lines, with a note-off after it in the same block.
+# No engine that reads one tempo per block can place that note-off exactly.
+name step-off-grid-44100-1024
+sample_rate_hz 44100
+block_size 1024
+origin_beat 0
+points
+0 120
+2.46875 120
+2.46875 60

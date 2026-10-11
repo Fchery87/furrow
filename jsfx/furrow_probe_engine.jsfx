@@ -14,8 +14,8 @@ LANES = 4;
 STEPS = 16;
 step_beats = 0.25;
 gate_beats = step_beats * 0.5;
-// A gap above this is a seek or loop wrap. Block-tempo drift during a ramp stays far below it.
-JUMP_BEATS = 0.01;
+// About 0.02 samples at 120 BPM and 44.1 kHz. The probe log records beat_position to check this holds.
+RAMP_FIT_BEATS = 0.000001;
 // Sixty-four steps, sixteen per lane. A zero entry does not sound.
 // The bits match probes/pattern-4x16.txt. Lane notes are 36, 38, 42, 46.
 step_on = 0;
@@ -101,15 +101,23 @@ playing = slider1 >= 0.5 && (play_state == 1 || play_state == 5);
   was_playing = 0;
   prev_tempo = -1;
 ) : (
-  jumped = !was_playing || abs(beat_position - block_end_beat) > JUMP_BEATS;
+  // A tempo change inside the last block moves this block's start by less than that block's beats.
+  // A seek or loop wrap that moves less than one block is treated as continuous playback.
+  jumped = !was_playing || abs(beat_position - block_end_beat) > block_beats;
   jumped ? (
     release_all();
     next_step = ceil(beat_position / step_beats - 0.000001);
   );
-  // REAPER 7.82 reports tempo once per block, at its first sample.
-  // Assume the last block's tempo change continues through this block, so a ramp stays sample accurate.
-  slope = jumped || prev_tempo < 0 ? 0 : (tempo - prev_tempo) / prev_block;
+  // REAPER 7.82 reports tempo once per block, at its first sample, and ramps linearly in time.
+  // Continue the last block's tempo change only if that block advanced exactly as a ramp would.
+  // A tempo step or a ramp edge inside it fails that test, and this block holds its tempo.
+  slope = 0;
+  !jumped && prev_tempo >= 0 ? (
+    ramp_beats = (prev_tempo + tempo) * prev_block / (120 * srate);
+    abs(beat_position - prev_beat - ramp_beats) < RAMP_FIT_BEATS ? slope = (tempo - prev_tempo) / prev_block;
+  );
   prev_tempo = tempo;
+  prev_beat = beat_position;
   prev_block = samplesblock;
   was_playing = 1;
   block_beats = (tempo * samplesblock + slope * samplesblock * samplesblock / 2) / (60 * srate);

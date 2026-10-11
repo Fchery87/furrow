@@ -53,7 +53,8 @@ def read_case(path):
             case["points"].append((float(fields[0]), float(fields[1])))
         else:
             case[fields[0]] = fields[1]
-    case["points"].sort()
+    # Two points at one beat are a tempo step. The file order says which tempo comes first.
+    case["points"].sort(key=lambda point: point[0])
     if len(case["points"]) < 1:
         raise ValueError("a tempo map needs at least one point")
     return case

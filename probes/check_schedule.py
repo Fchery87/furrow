@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 import diff_log
+import make_tempo_project
 import schedule
 
 
@@ -41,6 +42,15 @@ class ScheduleTest(unittest.TestCase):
         got = schedule.seconds_at(2.0, [(0.0, 100.0), (4.0, 140.0)])
         self.assertAlmostEqual(got, (-10.0 + math.sqrt(148.0)) / 2.0, places=12)
 
+    def test_case_file_keeps_the_order_of_a_tempo_step(self):
+        with tempfile.TemporaryDirectory() as directory:
+            case = Path(directory) / "step.txt"
+            case.write_text("sample_rate_hz 44100\norigin_beat 0\npoints\n0 120\n0.75 120\n0.75 60\n")
+            points = schedule.read_case(case)["points"]
+        self.assertEqual(points, [(0.0, 120.0), (0.75, 120.0), (0.75, 60.0)])
+        # 0.75 beats at 120 BPM is 0.375 s, then 0.25 beats at 60 BPM adds 0.25 s.
+        self.assertAlmostEqual(schedule.seconds_at(1.0, points), 0.625, places=12)
+
     def test_two_tempo_points_at_one_beat(self):
         # The zero-length span takes no time. 60 BPM then holds, so beat 1 is 1 second.
         points = [(0.0, 120.0), (0.0, 60.0)]
@@ -59,7 +69,7 @@ class ScheduleTest(unittest.TestCase):
         self.assertEqual(lines[2], "2756 0 0 0 0 0 36 0 off")
 
     def test_generated_files_match_a_fresh_run(self):
-        for name in ("constant-120", "ramp-44100-1024"):
+        for name in ("constant-120", "ramp-44100-1024", "ramp-edge-44100-1024", "step-on-beat-44100-1024", "step-off-grid-44100-1024"):
             fresh = schedule.schedule(
                 ROOT / "pattern-4x16.txt",
                 ROOT / "cases" / f"{name}.txt",
@@ -90,6 +100,31 @@ class ScheduleTest(unittest.TestCase):
         )
         self.assertEqual(
             diff_log.compare(ramp, diff_log.load(results / "ramp-44100-1024-extrapolate-events.txt"), 0), []
+        )
+
+    def test_tempo_project_writes_a_ramp_and_a_step(self):
+        source = "\r\n".join([
+            "  TEMPO 120 4 4 0",
+            "  <TEMPOENVEX",
+            "    ACT 0 -1",
+            "    PT 9.000000000000 90.0000000000 1",
+            "  >",
+            "",
+        ])
+        points = [(0.0, 100.0), (1.0, 100.0), (3.0, 200.0), (4.0, 200.0), (4.0, 60.0)]
+        self.assertEqual(
+            make_tempo_project.rewrite(source, points).split("\r\n"),
+            [
+                "  TEMPO 100 4 4 0",
+                "  <TEMPOENVEX",
+                "    ACT 1 -1",
+                "    PT 0.000000000000 100.0000000000 1",
+                "    PT 0.600000000000 100.0000000000 0",
+                "    PT 1.400000000000 200.0000000000 1",
+                "    PT 1.700000000000 60.0000000000 1",
+                "  >",
+                "",
+            ],
         )
 
     def test_diff_rejects_an_extra_note(self):

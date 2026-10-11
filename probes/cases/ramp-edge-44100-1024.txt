@@ -1,0 +1,10 @@
+# A ramp whose start and end fall inside blocks. 100 BPM until beat 1,
+# 100 to 200 BPM from beat 1 to beat 3, then 200 BPM.
+name ramp-edge-44100-1024
+sample_rate_hz 44100
+block_size 1024
+origin_beat 0
+points
+0 100
+1 100
+3 200
