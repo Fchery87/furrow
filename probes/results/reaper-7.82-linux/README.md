@@ -245,3 +245,18 @@ Both runs agree on the receivers. Playback never sends All Notes Off, so the pai
 - Delay compensation keeps a lane with plugin latency on time when SeqCore drives it through a send. The gate passed with no change to the routing.
 - REAPER compensated 1,024 samples for a reported 1,000. Inferred, it rounds a chain's compensation up to the block size and pads the rest. The audio still landed on the exact sample.
 - A lane's receiver logged its note-ons at the exact project sample even though its chain carries latency. SeqCore and a lane's receivers see the same project time.
+
+## Offline render
+
+`lua/furrow_probe_render.lua` rendered the first 3 seconds of `constant.RPP` and `ramp.RPP` with the current engine. Both runs have no failures. The captures are `render-constant-events.txt` and `render-ramp-events.txt`.
+
+| Case | Command | Result |
+| --- | --- | --- |
+| Constant 120 BPM | `python3 probes/diff_log.py probes/expected/constant-120.txt probes/results/reaper-7.82-linux/render-constant-events.txt` | Pass. 38 of 38 within 1 sample |
+| Ramp 100 to 140 BPM | `python3 probes/diff_log.py probes/expected/ramp-44100-1024.txt probes/results/reaper-7.82-linux/render-ramp-events.txt` | Pass. 38 of 38 exact |
+
+With `--tolerance 0`, each render also matches its live capture, `constant-120-events.txt` and `ramp-44100-1024-extrapolate-events.txt`, on every sample.
+
+**Host behavior.** Each 3-second render took about 0.13 s. The receivers logged 130 block tempo entries, so the render counted as playback, and every block was 1,024 samples, the same as the audio device. The engine sent no startup release during the render, so the render did not reload it. Inferred, a render with a different block size was not tested.
+
+**What this means for the spec.** Offline render produces the same MIDI on the same samples as live playback, at the same block size. The timing gate's offline condition passed for these two cases.

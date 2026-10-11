@@ -1,0 +1,7 @@
+RESULT render seconds = 0.115
+RESULT rendered file furrow-render-ramp-438599219.wav bytes = 794490
+RESULT block tempo entries logged, which needs a playing state = 130
+RESULT render block sizes = 1024
+RESULT receiver events per lane = 8, 8, 16, 6
+RESULT events written = 38
+6 results, 0 failures
