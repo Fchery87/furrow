@@ -138,7 +138,7 @@ class DumpTest(unittest.TestCase):
     def test_dump_of_the_expected_events_diffs_clean(self):
         expected_path = ROOT / "expected" / "constant-120.txt"
         expected = diff_log.load(expected_path)
-        gmem = {0: 2, 2: 1, 1000: 0, 1001: 120.0, 3: 2, 4: 0, 200000: 120.0, 200001: 120.0}
+        gmem = {0: 3, 2: 2, 1000: 0, 1001: 120.0, 1002: 0.0, 1003: 1024, 1004: 120.0, 1005: 0.0464399093, 3: 2, 4: 0, 200000: 120.0, 200001: 120.0}
         counts = [0, 0, 0, 0]
         for row in reversed(expected):
             slot = int(row["channel"])
@@ -162,13 +162,17 @@ class DumpTest(unittest.TestCase):
                 (Path(directory) / "furrow-capture-tempo-sample.txt").read_text().splitlines()[1:],
                 ["0 120.0000000000", "1 120.0000000000"],
             )
+            self.assertEqual(
+                (Path(directory) / "furrow-capture-tempo-block.txt").read_text().splitlines()[1:],
+                ["0 120.0000000000 0.000000000000", "1024 120.0000000000 0.046439909300"],
+            )
 
     def test_wrong_layout_version_writes_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
-            stub = StubReaper(gmem={0: 1}, project=str(Path(directory) / "probe.rpp"))
+            stub = StubReaper(gmem={0: 2}, project=str(Path(directory) / "probe.rpp"))
             run(stub, "furrow_probe_dump.lua")
             self.assertEqual(list(Path(directory).iterdir()), [])
-            self.assertIn("layout version 1", stub.messages[-1])
+            self.assertIn("layout version 2", stub.messages[-1])
 
 
 if __name__ == "__main__":

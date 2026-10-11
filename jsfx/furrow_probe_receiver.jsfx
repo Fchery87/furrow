@@ -12,10 +12,10 @@ slider1:0<0,3,1>Receiver slot
 @init
 ext_midi_bus = 1;
 ext_noinit = 1;
-// gmem layout version 2. Each slot owns its event region. Slot 0 alone writes the tempo logs.
+// gmem layout version 3. Each slot owns its event region. Slot 0 alone writes the tempo logs.
 // gmem[0] version, gmem[2] block tempo count, gmem[3] sample tempo count,
 // gmem[4] project sample of the first sample tempo, gmem[10 + slot] event count.
-VERSION = 2;
+VERSION = 3;
 BLOCK_LOG = 1000;
 BLOCK_MAX = 50000;
 SAMPLE_LOG = 200000;
@@ -42,9 +42,10 @@ playing && !was_playing ? (
 was_playing = playing;
 logging_tempo = playing && slot == 0;
 logging_tempo && gmem[2] < BLOCK_MAX ? (
-  at = BLOCK_LOG + gmem[2] * 2;
+  at = BLOCK_LOG + gmem[2] * 3;
   gmem[at] = block_sample;
   gmem[at + 1] = tempo;
+  gmem[at + 2] = beat_position;
   gmem[2] += 1;
 );
 while (midirecv(offset, msg1, msg2, msg3)) (
