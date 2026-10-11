@@ -243,6 +243,10 @@ function ui.run(ImGui)
   end
 
   local function loop()
+    -- A closed project takes its tracks with it, so nothing is left to drain or edit.
+    if not reaper.ValidatePtr2(0, proj, "ReaProject*") then
+      return
+    end
     if coordinator then
       coordinator:tick()
     end

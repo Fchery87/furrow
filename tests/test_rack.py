@@ -35,6 +35,7 @@ class StubReaper:
         self.undo = []
         self.log = []
         self.deferred = []
+        self.project_open = True
         self.clock = 1000.0
         self.selected = None
 
@@ -56,6 +57,9 @@ class StubReaper:
 
     def defer(self, fn):
         self.deferred.append(fn)
+
+    def ValidatePtr2(self, proj, pointer, kind):
+        return self.project_open
 
     def EnumProjects(self, index, *rest):
         return "project" if index in (-1, 0) else None
@@ -358,6 +362,30 @@ class WindowTest(unittest.TestCase):
             self.assertEqual([t.name for t in stub.tracks], ["Furrow Rack", "Furrow Engine", "perc"])
             self.assertIn("InvisibleButton", imgui.calls)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
+        finally:
+            rig.close()
+
+    def test_the_window_stops_when_its_project_closes(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(FakeImGui().table(lua))
+            for frame in range(10):
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(len(stub.deferred), 1)
+            stub.project_open = False
+            pending, stub.deferred = stub.deferred, []
+            for fn in pending:
+                fn()
+            self.assertEqual(stub.deferred, [])
         finally:
             rig.close()
 
