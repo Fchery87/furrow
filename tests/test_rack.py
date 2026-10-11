@@ -595,7 +595,7 @@ class FakeImGui:
         self.calls = []
         self.drop = []
         self.small_labels = []
-        self.typed = None
+        self.press = None
 
     def table(self, lua):
         fake = self
@@ -605,9 +605,9 @@ class FakeImGui:
                 fake.calls.append(name)
                 if name == "SmallButton":
                     fake.small_labels.append(args[1])
-                if name == "InputInt" and fake.typed is not None:
-                    typed, fake.typed = fake.typed, None
-                    return True, typed
+                    if args[1] == fake.press:
+                        fake.press = None
+                        return True
                 if name == "Begin":
                     return True, True
                 if name == "BeginDragDropTarget":
@@ -672,14 +672,15 @@ class WindowTest(unittest.TestCase):
             for frame in range(60):
                 if frame == 6:
                     imgui.drop.append("/samples/perc.wav")
-                if frame == 25:
-                    imgui.typed = 40
+                if frame in (25, 35):
+                    imgui.press = "+16##length16"
                 pending, stub.deferred = stub.deferred, []
                 for fn in pending:
                     fn()
                 rig.block(playing=False)
                 stub.clock += 0.03
             self.assertIn("1-16##page0", imgui.small_labels)
+            self.assertIn("17-32##page1", imgui.small_labels)
             self.assertIn("33-48##page2", imgui.small_labels)
             self.assertNotIn("49-64##page3", imgui.small_labels)
         finally:
