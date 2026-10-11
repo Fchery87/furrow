@@ -2,6 +2,11 @@
 -- acknowledgement, then applies host changes, sets SeqCore's State revision parameter and
 -- creates one undo point, all in one deferred callback. That is the order the milestone 1
 -- undo probe proved on REAPER 7.82.
+--
+-- A gesture can outlive its coordinator, because the window closes or the script stops.
+-- Each open gesture is journaled in the project's extension data, which undo does not
+-- touch. A new coordinator reads the journal when its first snapshot arrives, asks the
+-- snapshot whether the engine applied a lane change, and finishes or removes it.
 local wire = require("furrow.wire")
 local Session = require("furrow.session")
 local host = require("furrow.host")
@@ -13,6 +18,7 @@ local UNDO_ALL = -1
 local UNDO_FX = 2
 local STALL_SECONDS = 0.5
 local OTHER_COORDINATOR_SECONDS = 1.0
+local JOURNAL_SECTION = "Furrow"
 
 local mem = {
   read = function(i) return reaper.gmem_read(i) end,
@@ -29,7 +35,41 @@ function Coordinator.new(proj, rack)
   self.reserved = {}
   self.status = "connecting"
   self.message = nil
+  self.recovered = false
+  self.completed = 0
+  self.journaled = nil
   return self
+end
+
+function Coordinator:journal_key()
+  return "journal " .. self.engine_guid
+end
+
+-- Writes the lines of every open gesture, or nothing when none is open.
+function Coordinator:journal_sync()
+  local seen, lines = {}, {}
+  for _, gesture in ipairs(self.gestures) do
+    for _, line in ipairs(gesture.journal or {}) do
+      if not seen[line] then
+        seen[line] = true
+        lines[#lines + 1] = line
+      end
+    end
+  end
+  local text = table.concat(lines, "\n")
+  if text ~= (self.journaled or "") then
+    reaper.SetProjExtState(self.proj, JOURNAL_SECTION, self:journal_key(), text)
+    self.journaled = text
+  end
+end
+
+function Coordinator:journal_read()
+  local lines = {}
+  local _, text = reaper.GetProjExtState(self.proj, JOURNAL_SECTION, self:journal_key())
+  for line in (text or ""):gmatch("[^\n]+") do
+    lines[#lines + 1] = line
+  end
+  return lines
 end
 
 function Coordinator:engine()
@@ -97,12 +137,15 @@ function Coordinator:begin(name, opts)
     applied = 0,
     failed = nil,
     open = true,
+    journal = opts.journal or { "edit" },
+    silent = opts.silent,
   }
   if self.session.snapshot and self.session.snapshot.rack.id == 0 and not self.rack_id_sent then
     gesture.queue[#gesture.queue + 1] = { commands = { { wire.OP_SET_RACK, wire.R_ID, math.random(1, 16777215) } } }
     self.rack_id_sent = true
   end
   self.gestures[#self.gestures + 1] = gesture
+  self:journal_sync()
   return gesture
 end
 
@@ -180,6 +223,7 @@ function Coordinator:settle()
     end
   end
   self.gestures = kept
+  self:journal_sync()
 end
 
 function Coordinator:close(gesture)
@@ -191,7 +235,12 @@ function Coordinator:close(gesture)
   end
   local ok, err = true, nil
   if gesture.after then
-    ok, err = gesture.after(self)
+    local ran, first, second = pcall(gesture.after, self)
+    if ran then
+      ok, err = first, second
+    else
+      ok, err = false, first
+    end
   end
   if not ok then
     self.message = gesture.name .. " failed: " .. tostring(err)
@@ -201,6 +250,9 @@ function Coordinator:close(gesture)
     return
   end
   self:mark_revision()
+  if gesture.silent then
+    return
+  end
   reaper.Undo_OnStateChangeEx2(self.proj, "Furrow: " .. gesture.name, gesture.undo_states, -1)
   if gesture.failed then
     self.message = gesture.name .. " partly failed: " .. gesture.failed
@@ -219,6 +271,7 @@ function Coordinator:handle(results)
   for _, r in ipairs(results) do
     local gesture = r.tag
     if type(gesture) == "table" and gesture.txns then
+      self.completed = self.completed + 1
       gesture.waiting = gesture.waiting - 1
       if r.code == wire.ACK_OK then
         gesture.applied = gesture.applied + 1
@@ -281,8 +334,67 @@ function Coordinator:tick()
   elseif session.snapshot then
     self.status = session.snapshot.rack.load_error ~= 0 and "load_error" or "ready"
   end
+  if self.status == "ready" and not self.recovered then
+    self:recover()
+  end
   self:flush()
   self:settle()
+end
+
+-- Finishes what a lost coordinator left half done. A lane the journal names is removed
+-- from the engine if the engine applied it, and its track and link go too. That is a
+-- rollback for an add and a roll forward for a delete. An "edit" line means engine edits
+-- may have no undo point yet, so recovery adds one.
+function Coordinator:recover()
+  self.recovered = true
+  local lines = self:journal_read()
+  if #lines == 0 then
+    return
+  end
+  local ids, edit = {}, false
+  for _, line in ipairs(lines) do
+    local id = line:match("^lane (%d+)$")
+    if id then
+      ids[#ids + 1] = tonumber(id)
+    elseif line == "edit" then
+      edit = true
+    end
+  end
+  local commands = {}
+  for _, id in ipairs(ids) do
+    for _, lane in pairs(self.session.snapshot.lanes) do
+      if lane.id == id then
+        commands[#commands + 1] = { wire.OP_REMOVE_LANE, lane.slot }
+      end
+    end
+  end
+  local function drop_hosts(c)
+    local rack = c:rack_track()
+    if rack then
+      local links = host.read_links(rack)
+      for _, id in ipairs(ids) do
+        local track = links[id] and host.track_by_guid(c.proj, links[id])
+        if track then
+          host.delete_child(track)
+        end
+        links[id] = nil
+      end
+      host.write_links(rack, links)
+    end
+    return true
+  end
+  local gesture = self:begin(edit and "recover edits" or "recover", {
+    journal = lines,
+    silent = not edit,
+    undo_states = UNDO_ALL,
+    after = drop_hosts,
+  })
+  if #commands > 0 then
+    self:add(gesture, commands)
+  else
+    gesture.applied = 1
+  end
+  self:finish(gesture)
 end
 
 function Coordinator:busy()
@@ -348,6 +460,7 @@ function Coordinator:add_sample(file)
     row = row + (g.adds or 0)
   end
   local gesture = self:begin("add lane", {
+    journal = { "lane " .. id },
     undo_states = UNDO_ALL,
     rollback = { { wire.OP_REMOVE_LANE, slot } },
     after = function(c)
@@ -374,6 +487,7 @@ end
 -- Removes the engine lane, then its track if Furrow linked one, in one undo point.
 function Coordinator:remove_lane(lane)
   self:run("delete lane", { { wire.OP_REMOVE_LANE, lane.slot } }, {
+    journal = { "lane " .. lane.id },
     undo_states = UNDO_ALL,
     after = function(c)
       local rack = c:rack_track()
