@@ -2,7 +2,7 @@
 -- Sends 500 step edits to the first lane of the first rack as one gesture, then checks the
 -- final steps, the result count and SeqCore's block timing. It overwrites that lane's first
 -- 16 steps and makes one undo point, so run it in a scratch project. Start playback first
--- to measure timing under playback. The report goes to diag/stress.txt.
+-- to measure timing under playback. Close the Furrow rack window first. The report goes to diag/stress.txt.
 local dir = debug.getinfo(1, "S").source:match("^@?(.*[/\\])")
 package.path = dir .. "?.lua;" .. package.path
 local wire = require("furrow.wire")
@@ -83,6 +83,7 @@ local function loop()
   if c.status ~= "ready" and not gesture then
     if reaper.time_precise() - started > READY_SECONDS then
       out("RESULT FAIL   the rack never became ready, status %s, message %s", c.status, tostring(c.message))
+      out("Close the Furrow rack window first, because only one window can edit a rack.")
       finish()
       return
     end
