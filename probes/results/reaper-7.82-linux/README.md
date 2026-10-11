@@ -116,3 +116,20 @@ Each result holds both stopped and playing. With the lua mark, one native undo r
 - Named gmem fits the protocol with room to spare. Local memory is exactly 8,388,608 values. Pattern storage takes 5,259,264 of them, which leaves 3,129,344 for queues, snapshots and transaction staging.
 
 **Not tested.** REAPER may have a setting that keeps background projects running. Separate REAPER processes were not tested. Neither were removing an instance, project switching while a command is pending, or offline render.
+
+## Save and reload
+
+`lua/furrow_probe_state.lua` stored eight start positions through `@serialize` as four 16-bit words each. It also stored three seeds and one raw double. The first run round-tripped the state through a track chunk and saved the project. The second run checked the values after the project was reopened. `state-results.txt` has no failures in either run.
+
+| Stored | Chunk round trip | Reload from disk |
+| --- | --- | --- |
+| 0, -0, -16.25, 1/3, 288,000 + 1/3, -(2^30) - 1/7, 2^52 + 2, 2^-30 as four words | All bit-exact. Words equal `string.pack("<d")`, -0 stored as 0 | All bit-exact |
+| Seeds 0 and 16,777,215 | Unchanged | Unchanged |
+| Seed 16,777,217, above the bound | Became 16,777,216 | Became 16,777,216 |
+| Raw double 1/3 through `file_var` | Became 0.3333333432674408, the 32-bit value | Same |
+
+**What this means for the spec.** The four-word origin encoding passes the spec's save and load test, so it can be adopted. A raw `file_var` keeps only 32 bits, as the JSFX reference says, so absolute beat positions need the words. Seeds up to 16,777,215 survive as single values. 16,777,217 does not, which is why the spec bounds the seed.
+
+**Unexplained.** The JSFX compared the reloaded raw value with the original 1/3 using `===`, and reported a match. The JSFX reference says `===` means exactly equal. The two values differ after the eighth significant digit. The verdict above does not depend on `===`, because the Lua script compared every decoded value exactly and checked its words against the IEEE layout. Until `===` is tested on its own, Furrow should not rely on it for exactness.
+
+**Other reference notes.** The JSFX reference gives the default named gmem as about 1,048,576 slots. The memory probe used indices up to 33,554,431 without error. The spec's figure of about 8 million needs correcting.
