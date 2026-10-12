@@ -773,6 +773,8 @@ function apply_staged() local(i, e, op, a, b, c, d, v, l, f) (
     );
     op == OP_SET_LANE ? (
       b == L_NOTE && lane_get(a, L_NOTE) != c ? send_off(a, 0);
+      // Changing what a moved controller means returns it to rest under the old setting first.
+      (b == L_BEND || b == L_MOD_A || b == L_MOD_B) && lane_get(a, b) != c ? reset_ctl(a, 0);
       LANE[a * LANE_STRIDE + b] = c;
     );
     op == OP_SET_RACK ? (
