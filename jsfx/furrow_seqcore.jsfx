@@ -139,7 +139,12 @@ LANE_FIELDS = 15;
 
 F_ON = 0;
 F_VEL = 1;
+F_REL = 2;
 F_PITCH = 3;
+F_FINE = 4;
+F_PAN = 5;
+F_MOD_A = 6;
+F_MOD_B = 7;
 F_SHIFT = 8;
 F_GATE = 9;
 F_RATCHET = 10;
@@ -193,9 +198,13 @@ LMAX = SMALL + 464;
 LDEF = SMALL + 480;
 PH_T = SMALL + 512;
 PH_NOTE = SMALL + 576;
-PH_VEL = SMALL + 640;
+PH_POS = SMALL + 640;
 PH_D = SMALL + 704;
 PH_N = SMALL + 768;
+LAST_BEND = SMALL + 832;
+LAST_MOD = SMALL + 896;
+REL_V = SMALL + 960;
+MOD_REST = 64 * 128 + 64;
 RAW = 5880320;
 RAW_MAX = 2508288;
 
@@ -357,12 +366,31 @@ function offset_of(beat) local(beats, root, x) (
 function send_off(s, offset) local(ch) (
   HELD[s] >= 0 ? (
     ch = midi_route(s);
-    midisend(offset, $x80 + ch, HELD[s], 0);
+    midisend(offset, $x80 + ch, HELD[s], REL_V[s]);
     HELD[s] = -1;
   );
+  REL_V[s] = 64;
   REL[s] = -1;
   AUD[s] = -1;
   PH_T[s] = -1;
+);
+
+// Puts the lane's pitch bend and Mod A and B back to rest. Only controllers a step moved are sent.
+function reset_ctl(s, offset) local(l) (
+  LAST_BEND[s] != 0 || LAST_MOD[s] != MOD_REST ? (
+    l = lane_at(s);
+    LAST_BEND[s] != 0 ? (
+      midisend(offset, $xE0 + midi_route(s), 0, 64);
+    );
+    floor(LAST_MOD[s] / 128) != 64 ? (
+      midisend(offset, $xB0 + midi_route(s), l[L_MOD_A], 64);
+    );
+    LAST_MOD[s] % 128 != 64 ? (
+      midisend(offset, $xB0 + midi_route(s), l[L_MOD_B], 64);
+    );
+    LAST_BEND[s] = 0;
+    LAST_MOD[s] = MOD_REST;
+  );
 );
 
 // Sends due note-offs in beat order. Inclusive puts a release at the limit before a hit there.
@@ -393,6 +421,7 @@ function release_all() local(s) (
   s = 0;
   loop(LANES,
     send_off(s, 0);
+    reset_ctl(s, 0);
     s += 1;
   );
 );
@@ -403,6 +432,7 @@ function release_all_at(beat) local(s, offset) (
   s = 0;
   loop(LANES,
     send_off(s, offset);
+    reset_ctl(s, offset);
     s += 1;
   );
 );
@@ -426,7 +456,7 @@ function release_inaudible() local(s, solo_on) (
   solo_on = any_solo();
   s = 0;
   loop(LANES,
-    !audible(s, solo_on) ? send_off(s, 0);
+    !audible(s, solo_on) ? (send_off(s, 0); reset_ctl(s, 0));
     s += 1;
   );
 );
@@ -434,14 +464,41 @@ function release_inaudible() local(s, solo_on) (
 function volume_cc(v) ( floor(v * 127 / 10000 + 0.5) );
 function pan_cc(v) ( v < 0 ? floor(64 + v * 64 / 10000 + 0.5) : floor(64 + v * 63 / 10000 + 0.5) );
 
-// Releases the lane's held note first, then writes its controllers, then the note-on.
-function send_hit(s, offset, note, vel) local(ch, l) (
+// Releases the lane's held note first, then writes its controllers, then the note-on. A step
+// position of -1 is an audition, which uses the lane's own settings and default step values.
+function send_hit(s, offset, note, vel, pos) local(ch, l, pan, cents, range, bend, mod) (
   l = lane_at(s);
   send_off(s, offset);
   ch = midi_route(s);
   midisend(offset, $xB0 + ch, 7, volume_cc(l[L_VOLUME]));
+  pan = pan_cc(l[L_PAN]);
+  pos >= 0 ? pan += get_value(pattern, s, pos, F_PAN);
   midi_bus = floor(s / 16);
-  midisend(offset, $xB0 + ch, 10, pan_cc(l[L_PAN]));
+  midisend(offset, $xB0 + ch, 10, max(0, min(127, pan)));
+  pos >= 0 ? (
+    // Fine pitch is pitch bend over the lane's bend range, sent only when it changes.
+    cents = get_value(pattern, s, pos, F_FINE);
+    range = l[L_BEND];
+    cents != LAST_BEND[s] && range > 0 ? (
+      bend = max(0, min(16383, floor(8192 + cents * 8192 / (range * 100) + 0.5)));
+      midi_bus = floor(s / 16);
+      midisend(offset, $xE0 + ch, bend % 128, floor(bend / 128));
+      LAST_BEND[s] = cents;
+    );
+    mod = get_value(pattern, s, pos, F_MOD_A);
+    mod != floor(LAST_MOD[s] / 128) ? (
+      midi_bus = floor(s / 16);
+      midisend(offset, $xB0 + ch, l[L_MOD_A], mod);
+      LAST_MOD[s] += (mod - floor(LAST_MOD[s] / 128)) * 128;
+    );
+    mod = get_value(pattern, s, pos, F_MOD_B);
+    mod != LAST_MOD[s] % 128 ? (
+      midi_bus = floor(s / 16);
+      midisend(offset, $xB0 + ch, l[L_MOD_B], mod);
+      LAST_MOD[s] += mod - LAST_MOD[s] % 128;
+    );
+    REL_V[s] = get_value(pattern, s, pos, F_REL);
+  );
   midi_bus = floor(s / 16);
   midisend(offset, $x90 + ch, note, vel);
   HELD[s] = note;
@@ -501,7 +558,7 @@ function flush_pending(limit) local(s, best, best_beat) (
     );
     best >= 0 ? (
       flush_releases(best_beat, 1);
-      send_hit(best, offset_of(best_beat), PH_NOTE[best], PH_VEL[best]);
+      send_hit(best, offset_of(best_beat), PH_NOTE[best], get_value(pattern, best, PH_POS[best], F_VEL), PH_POS[best]);
       REL[best] = best_beat + PH_D[best];
       // The hit's own send cleared the lane's pending state, so the next ratchet is set again.
       PH_N[best] > 1 ? (
@@ -517,6 +574,9 @@ pend_beat = 0;
 reset_state();
 memset(HELD, -1, LANES);
 memset(PH_T, -1, LANES);
+memset(LAST_BEND, 0, LANES);
+memset(LAST_MOD, MOD_REST, LANES);
+memset(REL_V, 64, LANES);
 memset(REL, -1, LANES);
 memset(AUD, -1, LANES);
 memset(SAVED_HELD, -1, LANES);
@@ -706,6 +766,7 @@ function apply_staged() local(i, e, op, a, b, c, d, v, l, f) (
     );
     op == OP_REMOVE_LANE ? (
       send_off(a, 0);
+      reset_ctl(a, 0);
       clear_lane_steps(a);
       memset(lane_at(a), 0, LANE_STRIDE);
       lane_count -= 1;
@@ -744,7 +805,7 @@ function apply_staged() local(i, e, op, a, b, c, d, v, l, f) (
 function immediate(op, a, b) local(i) (
   op == OP_AUDITION ? (
     !was_playing && in_range(a, 0, LANES - 1) && lane_get(a, L_ACTIVE) && in_range(b, 1, 127) ? (
-      send_hit(a, 0, lane_get(a, L_NOTE), b);
+      send_hit(a, 0, lane_get(a, L_NOTE), b, -1);
       AUD[a] = floor(0.1 * srate);
     );
   ) : (
@@ -1235,7 +1296,7 @@ playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
                 PH_D[s] = (hit_end - hit_t) / PH_N[s];
                 PH_T[s] = hit_t;
                 PH_NOTE[s] = note;
-                PH_VEL[s] = get_value(pattern, s, pos, F_VEL);
+                PH_POS[s] = pos;
               );
             );
           );
