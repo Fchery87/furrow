@@ -620,6 +620,7 @@ class RackTest(unittest.TestCase):
         self.tick(6)
         lane = self.c("lanes")[1]
         self.assertEqual((lane.swing, lane.bend, lane.mod_a, lane.mod_b), (4000, 12, 1, 2))
+        self.assertEqual((lane.volume, lane.pan), (5000, 0))
 
     def test_a_long_lane_pages_through_the_snapshot_window_and_plays_to_its_length(self):
         self.c("add_sample", "/samples/kick.wav")
@@ -960,6 +961,7 @@ class FakeImGui:
         self.press = None
         self.menu_open = False
         self.typed = None
+        self.slide = None
 
     def table(self, lua):
         fake = self
@@ -970,6 +972,10 @@ class FakeImGui:
                 if name == "InputInt" and fake.typed is not None:
                     typed, fake.typed = fake.typed, None
                     return True, typed
+                if name == "SliderInt" and fake.slide and args[1] == fake.slide[0]:
+                    _, value = fake.slide
+                    fake.slide = None
+                    return True, value
                 if name == "BeginPopupContextItem":
                     return fake.menu_open
                 if name == "MenuItem" and args[1] == fake.press:
@@ -1113,6 +1119,32 @@ class WindowTest(unittest.TestCase):
                 rig.block(playing=False)
                 stub.clock += 0.03
             self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: clone pattern"])
+        finally:
+            rig.close()
+
+    def test_the_lane_volume_and_pan_sliders_each_make_one_undo_point(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(80):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame == 30:
+                    imgui.slide = ("Volume", 80)
+                if frame == 45:
+                    imgui.slide = ("Pan##lane", -30)
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: set lane volume", "Furrow: set lane pan"])
         finally:
             rig.close()
 

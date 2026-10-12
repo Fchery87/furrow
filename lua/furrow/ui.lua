@@ -69,7 +69,7 @@ function ui.run(ImGui)
   local length_typed = nil
   local rename_typed = nil
   local swing_shown = nil
-  local lane_swing_shown = nil
+  local lane_shown = {}
   local edit_slot = nil
   local edit_field = 1
   local open = true
@@ -248,22 +248,42 @@ function ui.run(ImGui)
     { key = "mod_b", label = "Mod B CC", field = wire.L_MOD_B, low = 0, high = 127, unit = "" },
   }
 
-  local function lane_settings(c, lane)
+  -- A slider for one lane field. The shown value holds briefly after a change so the slider
+  -- does not jump back before the snapshot catches up.
+  local function lane_slider(c, lane, spec)
     local now = reaper.time_precise()
-    local percent = lane.swing // 100
-    if lane_swing_shown and lane_swing_shown.slot == lane.slot and now < lane_swing_shown.until_time then
-      percent = lane_swing_shown.value
+    local value = lane[spec.key] // spec.scale
+    local held = lane_shown[spec.key]
+    if held and held.slot == lane.slot and now < held.until_time then
+      value = held.value
     end
     ImGui.SetNextItemWidth(ctx, 140)
-    local changed, value = ImGui.SliderInt(ctx, "Lane swing", percent, 0, 100, "%d%%")
+    local changed, new = ImGui.SliderInt(ctx, spec.label, value, spec.low, spec.high, spec.format)
     if changed and c:processing() then
-      swing_edit = swing_edit or { gesture = c:begin("set lane swing") }
-      lane_swing_shown = { slot = lane.slot, value = value, until_time = now + 0.5 }
-      c:add(swing_edit.gesture, { { wire.OP_SET_LANE, lane.slot, wire.L_SWING, value * 100 } })
+      swing_edit = swing_edit or { gesture = c:begin("set " .. spec.name) }
+      lane_shown[spec.key] = { slot = lane.slot, value = new, until_time = now + 0.5 }
+      c:add(swing_edit.gesture, { { wire.OP_SET_LANE, lane.slot, spec.field, new * spec.scale } })
     end
-    for _, stepper in ipairs(LANE_STEPPERS) do
+  end
+
+  local LANE_SLIDERS = {
+    { key = "swing", name = "lane swing", label = "Lane swing", field = wire.L_SWING, scale = 100, low = 0, high = 100, format = "%d%%" },
+    { key = "volume", name = "lane volume", label = "Volume", field = wire.L_VOLUME, scale = 100, low = 0, high = 100, format = "%d%%" },
+    { key = "pan", name = "lane pan", label = "Pan##lane", field = wire.L_PAN, scale = 100, low = -100, high = 100, format = "%d" },
+  }
+
+  local function lane_settings(c, lane)
+    for index, spec in ipairs(LANE_SLIDERS) do
+      if index > 1 then
+        ImGui.SameLine(ctx, 0, GAP * 4)
+      end
+      lane_slider(c, lane, spec)
+    end
+    for index, stepper in ipairs(LANE_STEPPERS) do
       local current = lane[stepper.key]
-      ImGui.SameLine(ctx, 0, GAP * 4)
+      if index > 1 then
+        ImGui.SameLine(ctx, 0, GAP * 4)
+      end
       ImGui.Text(ctx, stepper.label .. " " .. current .. stepper.unit)
       for _, change in ipairs({ -1, 1 }) do
         ImGui.SameLine(ctx, 0, GAP)
