@@ -792,6 +792,71 @@ class RackTest(unittest.TestCase):
         self.tick(10)
         self.assertEqual((self.coordinator.pattern, self.rig.engine.var("pattern")), (0, 0))
 
+    def set_fields(self, *edits):
+        gesture = self.c("begin", "edit steps")
+        for slot, step, field, value in edits:
+            self.c("set_field", gesture, slot, step, field, value)
+        self.c("finish", gesture)
+        self.settle()
+        self.tick(8)
+
+    def test_cloning_copies_every_value_and_length_into_a_new_pattern_in_one_undo_point(self):
+        self.painted_lane([3, 35], length=40)
+        self.set_fields((0, 3, 1, 64), (0, 35, 12, 40))
+        self.stub.undo.clear()
+        self.c("clone_pattern")
+        self.settle(80)
+        self.tick(12)
+        self.assertEqual(self.pattern_names(), [(0, "Pattern 1"), (1, "Pattern 1 copy")])
+        self.assertEqual((self.coordinator.pattern, self.rig.engine.var("pattern")), (1, 1))
+        self.assertEqual(self.stub.undo, ["Furrow: clone pattern"])
+        self.assertEqual(self.c("lanes")[1].length, 40)
+        for pattern in (1, 0, 1):
+            self.c("select_pattern", pattern)
+            self.settle()
+            self.tick(10)
+            self.assertEqual([self.c("step_value", 0, 3, f) for f in (0, 1)], [1, 64])
+            self.assertEqual(self.c("step_value", 0, 4, 0), 0)
+            self.c("set_page", 2)
+            self.tick(10)
+            self.assertEqual([self.c("step_value", 0, 35, f) for f in (0, 12)], [1, 40])
+            self.c("set_page", 0)
+            self.tick(10)
+
+    def test_cloning_leaves_the_source_alone_when_the_copy_is_edited(self):
+        self.painted_lane([2])
+        self.c("clone_pattern")
+        self.settle(80)
+        self.tick(10)
+        self.set_fields((0, 2, 0, 0), (0, 7, 0, 1))
+        self.assertEqual(self.on_steps(), [7])
+        self.c("select_pattern", 0)
+        self.settle()
+        self.tick(10)
+        self.assertEqual(self.on_steps(), [2])
+
+    def test_a_clone_that_fails_part_way_rolls_the_copy_back_and_returns_to_the_source(self):
+        self.painted_lane([2])
+        lua = self.rig.lua
+        opts = lua.eval("""{ abort_on_failure = true, rollback = { { 2, 0, 0, 9, 0, 1 } },
+                              on_abort = function(c) ABORTED = true end,
+                              after = function(c) AFTER_RAN = true; return true end }""")
+        lua.globals().ABORTED = False
+        lua.globals().AFTER_RAN = False
+        gesture = self.c("begin", "bad", opts)
+        good = lua.table_from([lua.table_from([OP_SET_STEP, 0, 0, 5, F_ON, 1])])
+        bad = lua.table_from([lua.table_from([OP_SET_STEP, 0, 0, 6, 99, 1])])
+        self.c("add", gesture, good)
+        self.c("add", gesture, bad)
+        self.c("finish", gesture)
+        self.settle()
+        self.tick(8)
+        self.assertTrue(lua.globals().ABORTED)
+        self.assertFalse(lua.globals().AFTER_RAN)
+        self.assertIn("bad failed", self.coordinator.message)
+        self.assertEqual(self.stub.undo, [])
+        self.assertEqual(self.c("step_value", 0, 9, F_ON), 1)
+
     def rack_links(self):
         return self.rack["rack"].ext.get("P_EXT:Furrow", "")
 
@@ -935,6 +1000,30 @@ class WindowTest(unittest.TestCase):
                 rig.block(playing=False)
                 stub.clock += 0.03
             self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: fill every 4"])
+        finally:
+            rig.close()
+
+    def test_the_clone_button_starts_a_clone(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(90):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame == 30:
+                    imgui.press = "Clone##pattern"
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: clone pattern"])
         finally:
             rig.close()
 

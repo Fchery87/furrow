@@ -341,6 +341,10 @@ function ui.run(ImGui)
       c:new_pattern()
     end
     ImGui.SameLine(ctx, 0, GAP)
+    if ImGui.SmallButton(ctx, "Clone##pattern") then
+      c:clone_pattern()
+    end
+    ImGui.SameLine(ctx, 0, GAP)
     if ImGui.SmallButton(ctx, "Clear##pattern") then
       c:clear_pattern(current)
     end
