@@ -1,0 +1,106 @@
+desc: Furrow Item Gate
+tags: midi utility
+in_pin: none
+out_pin: none
+
+options: gmem=Furrow
+
+slider1:0<0,16777215,1>Rack id
+
+// Put this first on a track that holds a rack's committed MIDI items. It passes the track's
+// MIDI only while that rack is in Items mode, and drops it otherwise, so a user who
+// unmutes or moves an item cannot make the items play over Live output. The gate fails
+// closed. It stays shut when it cannot find the rack's engine, when the engine has not
+// advanced for STALE_BLOCKS blocks, or when the engine reports Live or an unreadable state.
+// SeqCore opens the gate only after it has stopped its own notes, and closes it two blocks
+// before Live output resumes, so the two sources never share a block.
+
+@init
+ext_midi_bus = 1;
+MAGIC = 4617586;
+SLOTS = 64;
+SLOT_BASE = 1024;
+SLOT_SIZE = 131072;
+DIR_OWNER = 64;
+H_RACK_ID = 1;
+H_HEARTBEAT = 3;
+H_MAGIC = 6;
+H_GATE = 38;
+STALE_BLOCKS = 64;
+KEYS = 16 * 16 * 128;
+PASSED = 0;
+memset(PASSED, 0, KEYS);
+passed_count = 0;
+last_beat = -1;
+stale = 0;
+gate_open = 0;
+
+function find_slot(rack) local(s, base, found) (
+  found = -1;
+  rack > 0 ? (
+    s = 0;
+    while (found < 0 && s < SLOTS) (
+      base = SLOT_BASE + s * SLOT_SIZE;
+      gmem[DIR_OWNER + s] != 0 && gmem[base + H_MAGIC] == MAGIC && gmem[base + H_RACK_ID] == rack ? found = base;
+      s += 1;
+    );
+  );
+  found;
+);
+
+// Releases every note this gate let through, so closing never leaves one sounding.
+function release_passed() local(key, bus, ch, note) (
+  passed_count > 0 ? (
+    key = 0;
+    loop(KEYS,
+      PASSED[key] ? (
+        bus = floor(key / 2048);
+        ch = floor(key / 128) % 16;
+        note = key % 128;
+        midi_bus = bus;
+        midisend(0, $x80 + ch, note, 0);
+        PASSED[key] = 0;
+      );
+      key += 1;
+    );
+    passed_count = 0;
+  );
+);
+
+@block
+base = find_slot(slider1);
+now_open = 0;
+base >= 0 ? (
+  gmem[base + H_HEARTBEAT] != last_beat ? (
+    last_beat = gmem[base + H_HEARTBEAT];
+    stale = 0;
+  ) : (
+    stale += 1;
+  );
+  now_open = gmem[base + H_GATE] == 1 && stale < STALE_BLOCKS;
+) : (
+  last_beat = -1;
+);
+gate_open && !now_open ? release_passed();
+gate_open = now_open;
+while (midirecv(offset, msg1, msg2, msg3)) (
+  bus = midi_bus;
+  status = msg1 & $xF0;
+  key = bus * 2048 + (msg1 & 15) * 128 + msg2;
+  note_on = status == $x90 && msg3 > 0;
+  note_off = status == $x80 || (status == $x90 && msg3 == 0);
+  gate_open ? (
+    midi_bus = bus;
+    midisend(offset, msg1, msg2, msg3);
+    note_on && !PASSED[key] ? (PASSED[key] = 1; passed_count += 1);
+    note_off && PASSED[key] ? (PASSED[key] = 0; passed_count -= 1);
+  ) : (
+    // A release for a note already let through still passes, so it does not hang.
+    note_off && PASSED[key] ? (
+      midi_bus = bus;
+      midisend(offset, msg1, msg2, msg3);
+      PASSED[key] = 0;
+      passed_count -= 1;
+    );
+  );
+);

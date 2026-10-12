@@ -17,6 +17,7 @@ ext_noinit = 1;
 MAGIC = 4617586;
 WIRE_VERSION = 1;
 STATE_FORMAT = 1;
+LIVE_HOLD_BLOCKS = 2;
 SLOTS = 64;
 SLOT_SIZE = 131072;
 SLOT_BASE = 1024;
@@ -65,6 +66,7 @@ H_BLOCK_SIZE = 34;
 H_SNAP_SEQ = 35;
 H_STAGED = 36;
 H_FORMAT = 37;
+H_GATE = 38;
 HEADER_SIZE = 256;
 PLAYHEAD = 256;
 RING = 512;
@@ -243,6 +245,7 @@ function reset_state() local(i) (
   len_count = 0;
   lane_count = 0;
   rack_id = 0;
+  live_hold = LIVE_HOLD_BLOCKS;
   seed = 0;
   pattern = 0;
   mode = 0;
@@ -786,6 +789,8 @@ function apply_staged() local(i, e, op, a, b, c, d, v, l, f) (
       );
       a == R_MODE ? (
         mode != b ? release_all();
+        // Live starts only after the item gate has had time to close.
+        b == 0 && mode != 0 ? live_hold = LIVE_HOLD_BLOCKS;
         mode = b;
       );
       a == R_SWING ? swing = b;
@@ -1068,7 +1073,7 @@ function parse_state(apply) local(at, err, n, s, f, v, k, key, cell, p, stamp, n
     || !in_range(RAW[5], 0, 1) || !in_range(RAW[6], 0, 10000) || !in_range(RAW[7], 0, 1)) ? err = ERR_RANGE;
   !err && apply ? (
     reset_state();
-    rack_id = RAW[2]; seed = RAW[3]; pattern = RAW[4]; mode = RAW[5]; swing = RAW[6]; truncate = RAW[7];
+    rack_id = RAW[2]; seed = RAW[3]; pattern = RAW[4]; mode = RAW[5]; live_hold = LIVE_HOLD_BLOCKS; swing = RAW[6]; truncate = RAW[7];
     o0 = RAW[8]; o1 = RAW[9]; o2 = RAW[10]; o3 = RAW[11];
     origin = decode(o0, o1, o2, o3);
   );
@@ -1214,7 +1219,8 @@ base >= 0 ? (
   pub_bank < 0 ? consume();
 );
 
-playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
+playing = mode == 0 && live_hold <= 0 && !load_error && (play_state == 1 || play_state == 5);
+live_hold > 0 ? live_hold -= 1;
 !playing ? (
   was_playing ? release_all();
   was_playing = 0;
@@ -1325,6 +1331,8 @@ base >= 0 ? (
   gmem[base + H_PATTERN] = pattern;
   gmem[base + H_PENDING_PATTERN] = pend_pattern;
   gmem[base + H_MODE] = mode;
+  // The gate for committed items is open only in Items mode, and closes before Live resumes.
+  gmem[base + H_GATE] = mode == 1 && !load_error && live_hold <= 0;
   gmem[base + H_POOL_FREE] = free_top;
   gmem[base + H_ND_COUNT] = nd_count;
   gmem[base + H_LOAD_ERROR] = load_error;
