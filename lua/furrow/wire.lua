@@ -45,6 +45,7 @@ return {
   H_SRATE = 33,
   H_BLOCK_SIZE = 34,
   H_SNAP_SEQ = 35,
+  H_GATE = 38,
   PLAYHEAD = 256,
   RING = 512,
   RING_SIZE = 4096,

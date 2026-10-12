@@ -506,6 +506,12 @@ class RackTest(unittest.TestCase):
         self.assertIn("results received 500", text)
         self.assertIn("mismatches 0", text)
 
+    def test_the_gate_probe_script_compiles(self):
+        import os
+        script = os.path.join(os.path.dirname(__file__), "..", "lua", "Furrow_Gate_Probe.lua")
+        loaded, err = pair(self.rig.lua.eval("function(path) local f, e = loadfile(path); return f ~= nil, e end")(script))
+        self.assertTrue(loaded, err)
+
     def test_a_bar_drag_edits_velocity_pitch_and_gate_that_the_engine_plays(self):
         self.c("add_sample", "/samples/kick.wav")
         self.settle()

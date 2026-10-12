@@ -363,6 +363,22 @@ On REAPER 7.82 for Linux, item extension data kept payloads of 1 KiB to 8 MiB ex
 - Preview unsupported events, multiple notes in one lane cell, overlaps, shift above 0.99, out-of-range pitch or gate, and material beyond 512 steps. The default is to refuse an unrepresentable conversion. Only an explicit user choice may quantize, truncate or omit data. Do not label such conversion lossless.
 - Capture does not change playback mode. Restoring source settings that differ from the destination rack requires an explicit choice to apply them or create a separate rack; pattern switching alone never changes lane settings.
 
+### Milestone 4 design decisions
+
+These decisions close the two open points in this section. They rest on ysfx tests, not on a REAPER run of the item bridge, so the REAPER proof below still gates the milestone.
+
+**Playback gate and owned-item layout.** Native item mute cannot be the enforcement, because a user can unmute an item with the window closed. SeqCore therefore owns the answer. A new JSFX, `furrow_itemgate.jsfx`, sits first in the chain of a track that holds a rack's committed items and passes that track's MIDI only while the rack is in Items mode. Committed items live on a "Furrow Items" track inside the rack folder. That track sends MIDI to the lane track, with all source channels mapped to channel 1, and its main send is off. An item that the user moves to any other track is detached by definition. It plays independently and is no longer Furrow's responsibility, which matches the existing rule for detached items. The gate carries the rack's id and finds the engine slot by that id, so it needs no window, no Lua and no polling.
+
+- **Fail closed.** The gate stays shut when it cannot find the engine, when the engine has not advanced for 64 blocks, when the engine is in Live or when the saved state is unreadable. A bypassed or offline engine therefore silences items. It never leaves them playing alone against a stalled rack.
+- **Handoff.** SeqCore publishes a gate word, `H_GATE`, that is 1 only in Items mode with a readable state. Entering Items, SeqCore stops its own notes in the block that sets the mode and the gate opens after that block. Entering Live, SeqCore closes the gate word at once and holds its own output for two blocks (`LIVE_HOLD_BLOCKS`). A load or startup does the same. Each device only ever reads values published in an earlier block, so the result does not depend on which track REAPER processes first.
+- **Held notes.** Closing the gate releases every note it let through. A release for a note already let through still passes.
+- **Measured in ysfx.** Over 400 blocks with a random mode switch every seventh block, the two sources never sounded a note-on in the same block, with the gate processed before and after the engine. Removing the two-block hold makes that test fail, so the test does bite. A gate with the wrong rack id, a stalled engine and a Live rack all stay shut.
+- **Not yet proven.** ysfx is not REAPER. `lua/Furrow_Gate_Probe.lua` builds the layout and flips the mode so the cases can be run by hand with the window closed. The milestone 4 proof still needs mute, unmute, move, delete, duplicate and detach on a real item, plus undo and reload.
+
+**Where the source snapshot lives.** One copy per commit group, not per item. Each item stores a small versioned reference (rack id, group id, lane id and fingerprint). The full snapshot lives once in the rack's project data, keyed by group id. For a 64-lane commit that is about 3 MB instead of about 196 MB. An item copied or duplicated inside the project keeps its group id and still resolves. An item pasted into another project cannot resolve its group, so capture offers conversion only, which is the existing rule for missing metadata. The fingerprint still covers item position, length and take offset, so a split half never reads as unedited.
+
+**User mute intent.** The gate removes the need to store it in the item's mute flag. Furrow never writes the mute flag on owned items, so a user's mute or unmute stays the user's own. Muting an item silences it in Items mode, which is the normal REAPER meaning, and does nothing in Live mode, where the gate is shut anyway.
+
 ### Live and Items modes
 
 The rack has one saved playback mode. In **Live**, SeqCore generates the current pattern and all Furrow-owned committed items for this rack are muted. In **Items**, those items are unmuted and SeqCore generates no sequenced notes. Independent MIDI items remain under user control.

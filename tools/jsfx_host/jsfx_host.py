@@ -71,6 +71,20 @@ class Effect:
             raise RuntimeError("more than %d MIDI events in one block" % capacity)
         return [tuple(buffer[i * 5:i * 5 + 5]) for i in range(count)]
 
+    def send_midi(self, status, data1, data2, offset=0, bus=0):
+        """Queues one MIDI message for the next process() call."""
+        data = (ctypes.c_uint8 * 3)(status, data1, data2)
+
+        class Event(ctypes.Structure):
+            _fields_ = [("bus", ctypes.c_uint32), ("offset", ctypes.c_uint32),
+                        ("size", ctypes.c_uint32), ("data", ctypes.POINTER(ctypes.c_uint8))]
+
+        send = lib().ysfx_send_midi
+        send.argtypes = [ctypes.c_void_p, ctypes.POINTER(Event)]
+        send.restype = ctypes.c_bool
+        event = Event(bus, offset, 3, ctypes.cast(data, ctypes.POINTER(ctypes.c_uint8)))
+        return send(self.handle, ctypes.byref(event))
+
     def slider(self, index):
         return lib().fh_slider(self.handle, index)
 
