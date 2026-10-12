@@ -110,6 +110,8 @@ OP_SET_RACK = 6;
 OP_SET_LENGTH = 7;
 OP_AUDITION = 8;
 OP_PANIC = 9;
+OP_QUEUE_PATTERN = 10;
+OP_CLEAR_PATTERN = 11;
 
 R_ID = 0;
 R_SEED = 1;
@@ -302,26 +304,39 @@ function set_length(p, s, n) (
   LEN[p * LANES + s] = n;
 );
 
-function clear_lane_steps(s) local(p, k, pt, page, base, i) (
+// Frees one lane's pages in one pattern and puts its length back to the default.
+function clear_pattern_lane(p, s) local(k, pt, page, base, i) (
+  k = 0;
+  loop(PAGES_PER_LANE,
+    pt = (p * LANES + s) * PAGES_PER_LANE + k;
+    page = PAGE_TABLE[pt];
+    page >= 0 ? (
+      base = POOL + page * PAGE_VALUES;
+      i = 0;
+      loop(PAGE_VALUES,
+        base[i] != DEF[i % STEP_FIELDS] ? nd_count -= 1;
+        i += 1;
+      );
+      free_page(pt);
+    );
+    k += 1;
+  );
+  set_length(p, s, DEFAULT_LENGTH);
+);
+
+function clear_lane_steps(s) local(p) (
   p = 0;
   loop(PATTERNS,
-    k = 0;
-    loop(PAGES_PER_LANE,
-      pt = (p * LANES + s) * PAGES_PER_LANE + k;
-      page = PAGE_TABLE[pt];
-      page >= 0 ? (
-        base = POOL + page * PAGE_VALUES;
-        i = 0;
-        loop(PAGE_VALUES,
-          base[i] != DEF[i % STEP_FIELDS] ? nd_count -= 1;
-          i += 1;
-        );
-        free_page(pt);
-      );
-      k += 1;
-    );
-    set_length(p, s, DEFAULT_LENGTH);
+    clear_pattern_lane(p, s);
     p += 1;
+  );
+);
+
+function clear_pattern(p) local(s) (
+  s = 0;
+  loop(LANES,
+    clear_pattern_lane(p, s);
+    s += 1;
   );
 );
 
@@ -369,6 +384,16 @@ function release_all() local(s) (
   s = 0;
   loop(LANES,
     send_off(s, 0);
+    s += 1;
+  );
+);
+
+// Releases every held note at a beat inside the block, and cancels hits that would follow.
+function release_all_at(beat) local(s, offset) (
+  offset = offset_of(beat);
+  s = 0;
+  loop(LANES,
+    send_off(s, offset);
     s += 1;
   );
 );
@@ -473,6 +498,8 @@ function flush_pending(limit) local(s, best, best_beat) (
   );
 );
 
+pend_pattern = -1;
+pend_beat = 0;
 reset_state();
 memset(HELD, -1, LANES);
 memset(PH_T, -1, LANES);
@@ -629,6 +656,11 @@ function preflight(count) local(i, e, op, a, b, c, d, v, need, adds, code, pt, s
     ) : op == OP_SET_LENGTH ? (
       !in_range(a, 0, PATTERNS - 1) || !in_range(b, 0, LANES - 1) || !SIM[b] || !in_range(c, 1, MAX_STEPS)
         ? code = ACK_INVALID;
+    ) : op == OP_QUEUE_PATTERN ? (
+      !in_range(a, 0, PATTERNS - 1) || !in_range(b, 0, 16777215) || !in_range(c, 0, 16777215)
+        ? code = ACK_INVALID;
+    ) : op == OP_CLEAR_PATTERN ? (
+      !in_range(a, 0, PATTERNS - 1) ? code = ACK_INVALID;
     ) : (
       code = ACK_INVALID;
     );
@@ -683,6 +715,13 @@ function apply_staged() local(i, e, op, a, b, c, d, v, l, f) (
       a == R_TRUNCATE ? truncate = b;
     );
     op == OP_SET_LENGTH ? set_length(a, b, c);
+    op == OP_QUEUE_PATTERN ? (
+      a == pattern ? pend_pattern = -1 : (
+        pend_pattern = a;
+        pend_beat = (b * 16777216 + c) / 1024;
+      );
+    );
+    op == OP_CLEAR_PATTERN ? clear_pattern(a);
     i += 1;
   );
   release_inaudible();
@@ -1104,6 +1143,14 @@ playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
   was_playing = 0;
   prev_tempo = -1;
   memset(POSN, -1, LANES);
+  // A stopped switch is immediate and puts the pattern's first step at the cursor.
+  pend_pattern >= 0 ? (
+    pattern = pend_pattern;
+    pend_pattern = -1;
+    origin = beat_position;
+    next_k = 0;
+    revision += 1;
+  );
   s = 0;
   loop(LANES,
     AUD[s] >= 0 ? (
@@ -1133,8 +1180,23 @@ playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
   block_beats = (tempo * samplesblock + slope * samplesblock * samplesblock / 2) / (60 * srate);
   block_end_beat = beat_position + block_beats;
   solo_on = any_solo();
-  while (origin + next_k * STEP_BEATS < block_end_beat) (
+  going = 1;
+  while (going) (
     hit = origin + next_k * STEP_BEATS;
+    // A queued switch lands on its measure boundary, ahead of any step at or after it.
+    pend_pattern >= 0 && pend_beat < block_end_beat && pend_beat <= hit + 0.000001 ? (
+      flush_pending(pend_beat);
+      flush_releases(pend_beat, 1);
+      release_all_at(pend_beat);
+      pattern = pend_pattern;
+      pend_pattern = -1;
+      origin = pend_beat;
+      next_k = max(0, ceil((beat_position - origin) / STEP_BEATS - 0.000001));
+      revision += 1;
+      memset(POSN, -1, LANES);
+      hit = origin + next_k * STEP_BEATS;
+    );
+    hit < block_end_beat ? (
     flush_pending(hit);
     flush_releases(hit, 1);
     next_k >= 0 ? (
@@ -1161,6 +1223,7 @@ playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
       );
     );
     next_k += 1;
+    ) : (going = 0);
   );
   flush_pending(block_end_beat);
   flush_releases(block_end_beat, 0);
@@ -1176,6 +1239,7 @@ base >= 0 ? (
   gmem[base + H_PLAYING] = playing;
   gmem[base + H_BEAT] = beat_position;
   gmem[base + H_PATTERN] = pattern;
+  gmem[base + H_PENDING_PATTERN] = pend_pattern;
   gmem[base + H_MODE] = mode;
   gmem[base + H_POOL_FREE] = free_top;
   gmem[base + H_ND_COUNT] = nd_count;

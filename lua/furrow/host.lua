@@ -226,6 +226,59 @@ local function link(track, fx, param, cc)
   end
 end
 
+-- Pattern names live on the rack track as "pattern <index> <name>" lines. A pattern with no
+-- line still exists once the engine holds data for it, so the list always includes the ones
+-- in use.
+host.PATTERNS_KEY = "P_EXT:FurrowPatterns"
+host.PATTERN_NAME_MAX = 40
+
+function host.default_pattern_name(index)
+  return "Pattern " .. (index + 1)
+end
+
+function host.clean_pattern_name(text)
+  local name = (text or ""):gsub("[%c]", " "):gsub("^%s+", ""):gsub("%s+$", "")
+  return name:sub(1, host.PATTERN_NAME_MAX)
+end
+
+function host.read_patterns(rack)
+  local names = {}
+  if not rack then
+    return names
+  end
+  local _, text = reaper.GetSetMediaTrackInfo_String(rack, host.PATTERNS_KEY, "", false)
+  for index, name in (text or ""):gmatch("pattern (%d+) ([^\n]*)") do
+    names[tonumber(index)] = name
+  end
+  return names
+end
+
+function host.write_patterns(rack, names)
+  local indexes = {}
+  for index in pairs(names) do
+    indexes[#indexes + 1] = index
+  end
+  table.sort(indexes)
+  local lines = { "1" }
+  for _, index in ipairs(indexes) do
+    lines[#lines + 1] = string.format("pattern %d %s", index, names[index])
+  end
+  reaper.GetSetMediaTrackInfo_String(rack, host.PATTERNS_KEY, table.concat(lines, "\n"), true)
+end
+
+-- The quarter-note position of the next measure start at least margin seconds ahead of the
+-- play cursor, from REAPER's time map. Falls back to four beats a measure.
+function host.next_measure_beat(proj, margin)
+  local qn = reaper.TimeMap2_timeToQN(proj, reaper.GetPlayPosition2Ex(proj) + margin)
+  if reaper.TimeMap_QNToMeasures then
+    local _, start_qn, end_qn = reaper.TimeMap_QNToMeasures(proj, qn)
+    if end_qn and end_qn > qn then
+      return end_qn
+    end
+  end
+  return (math.floor(qn / 4) + 1) * 4
+end
+
 -- Configures RS5K by the instrument contract in the spec.
 function host.configure_rs5k(track, fx, file)
   reaper.TrackFX_SetNamedConfigParm(track, fx, "FILE0", file)

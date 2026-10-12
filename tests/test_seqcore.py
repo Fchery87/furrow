@@ -11,6 +11,7 @@ SKIP = missing()
 
 OP_COMMIT, OP_SET_STEP, OP_ADD_LANE, OP_REMOVE_LANE, OP_SET_LANE, OP_SET_RACK, OP_SET_LENGTH = 1, 2, 3, 4, 5, 6, 7
 OP_AUDITION = 8
+OP_QUEUE_PATTERN, OP_CLEAR_PATTERN = 10, 11
 OK, STALE, INVALID, CAPACITY, ABORTED, LOAD_ERROR = 1, 2, 3, 4, 5, 6
 L_MUTE, L_SOLO, L_VOLUME, L_PAN = 5, 6, 7, 8
 F_ON, F_VEL, F_GATE, F_PROB = 0, 1, 9, 12
@@ -363,6 +364,103 @@ class SeqCoreTest(unittest.TestCase):
         self.assertNotEqual(rerolled, first)
         self.assertEqual(rerolled, [n for n in range(int(limit / SAMPLES_PER_STEP) + 1)
                                      if n * SAMPLES_PER_STEP < limit and prob_roll(999, 0, 7, n) * 100 < 50 * PROB_M])
+
+    @staticmethod
+    def queue(pattern, beat):
+        ticks = round(beat * 1024)
+        return [OP_QUEUE_PATTERN, pattern, ticks // 16777216, ticks % 16777216]
+
+    def two_patterns(self):
+        # Pattern 0 plays step 0 only. Pattern 1 plays steps 0 and 2.
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 0, pattern=1), step_on(0, 2, pattern=1)])
+
+    def queue_while_playing(self, pattern, beat, blocks=0):
+        """Sends a queue command during playback. A stopped engine applies a switch at once."""
+        self.rig.send([self.queue(pattern, beat)])
+        self.rig.run(blocks)
+
+    def test_a_queued_switch_lands_on_its_boundary_inside_a_block(self):
+        self.two_patterns()
+        self.rig.events.clear()
+        self.rig.seek(0.0)
+        self.queue_while_playing(1, 4.0, blocks=1)
+        self.assertEqual(self.rig.engine.var("pend_pattern"), 1)
+        self.rig.run(209)
+        beat = 22050
+        # The old pattern plays step 0 at beat 0. The new one starts at beat 4, which is 88,200
+        # samples and falls inside a 1,024 frame block, then adds step 2 half a beat later.
+        self.assert_samples(self.note_ons(), [0, 4 * beat, 4.5 * beat, 8 * beat, 8.5 * beat])
+        self.assertEqual((self.rig.engine.var("pattern"), self.rig.engine.var("pend_pattern")), (1, -1))
+        self.assertEqual(self.rig.engine.var("origin"), 4.0)
+
+    def test_a_switch_releases_the_outgoing_note_at_the_boundary(self):
+        self.rig.apply([add_lane(0), [OP_SET_STEP, 0, 0, 0, F_GATE, 160000], step_on(0, 0),
+                        [OP_SET_STEP, 1, 0, 0, F_ON, 1]])
+        self.rig.events.clear()
+        self.rig.seek(0.0)
+        self.queue_while_playing(1, 1.0, blocks=60)
+        # The old note has a 16 step gate and would run on. The switch ends it on the boundary, and
+        # the new pattern's own note ends half a step after it starts, at the default gate.
+        self.assert_samples(self.note_offs(), [22050, 22050 + SAMPLES_PER_STEP / 2])
+        self.assert_samples(self.note_ons()[:2], [0, 22050])
+
+    def test_a_boundary_already_passed_switches_without_replaying_old_steps(self):
+        self.rig.apply([add_lane(0)] + [step_on(0, n, pattern=1) for n in range(16)])
+        self.rig.seek(3.0)
+        self.rig.events.clear()
+        self.queue_while_playing(1, 1.0, blocks=8)
+        ons = self.note_ons()
+        self.assertEqual(len(ons), len(set(ons)))
+        self.assertTrue(all(t >= 3.0 * 22050 - 1 for t in ons), ons)
+        self.assertEqual(self.rig.engine.var("pattern"), 1)
+
+    def test_queueing_the_current_pattern_cancels_a_pending_switch(self):
+        self.two_patterns()
+        self.rig.seek(0.0)
+        self.queue_while_playing(1, 40.0, blocks=2)
+        self.assertEqual(self.rig.engine.var("pend_pattern"), 1)
+        self.queue_while_playing(0, 0.0, blocks=2)
+        self.assertEqual(self.rig.engine.var("pend_pattern"), -1)
+        self.rig.run(210)
+        self.assertEqual(self.rig.engine.var("pattern"), 0)
+
+    def test_a_stopped_switch_is_immediate_and_starts_the_pattern_at_the_cursor(self):
+        self.two_patterns()
+        self.rig.seek(6.25)
+        self.assertEqual(self.rig.apply([self.queue(1, 99.0)]), OK)
+        self.assertEqual((self.rig.engine.var("pattern"), self.rig.engine.var("pend_pattern")), (1, -1))
+        self.assertEqual(self.rig.engine.var("origin"), 6.25)
+        self.rig.events.clear()
+        self.rig.run(20)
+        start = 6.25 * 22050
+        self.assert_samples(self.note_ons()[:2], [start, start + 0.5 * 22050])
+
+    def test_stopping_with_a_queued_switch_applies_it_at_the_stop(self):
+        self.two_patterns()
+        self.rig.seek(0.0)
+        self.queue_while_playing(1, 400.0, blocks=4)
+        self.assertEqual(self.rig.engine.var("pend_pattern"), 1)
+        self.rig.run(2, playing=False)
+        self.assertEqual((self.rig.engine.var("pattern"), self.rig.engine.var("pend_pattern")), (1, -1))
+
+    def test_clearing_a_pattern_frees_its_pages_lengths_and_values_and_keeps_others(self):
+        self.rig.apply([add_lane(0), add_lane(1)])
+        free = self.rig.engine.var("free_top")
+        self.rig.apply([[OP_SET_STEP, 3, 0, 20, F_VEL, 90], step_on(1, 5, pattern=3), step_on(0, 1, pattern=0),
+                        [OP_SET_LENGTH, 3, 0, 40]])
+        self.assertEqual(self.rig.engine.var("nd_count"), 3)
+        self.assertEqual(self.rig.engine.var("len_count"), 1)
+        self.assertEqual(self.rig.apply([[OP_CLEAR_PATTERN, 3]]), OK)
+        self.assertEqual(self.rig.engine.var("nd_count"), 1)
+        self.assertEqual(self.rig.engine.var("len_count"), 0)
+        self.assertEqual(self.rig.engine.var("free_top"), free - 1)
+        self.assertEqual(self.rig.apply([[OP_CLEAR_PATTERN, 256]]), INVALID)
+
+    def test_the_pending_pattern_reaches_the_header(self):
+        self.two_patterns()
+        self.rig.seek(0.0)
+        self.queue_while_playing(1, 400.0, blocks=4)
+        self.assertEqual(self.rig.session.h(self.rig.wire.H_PENDING_PATTERN), 1)
 
 
 if __name__ == "__main__":

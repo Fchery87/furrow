@@ -20,6 +20,7 @@ return {
   H_PLAYING = 8,
   H_BEAT = 9,
   H_PATTERN = 10,
+  H_PENDING_PATTERN = 11,
   H_MODE = 12,
   H_SESSION = 13,
   H_CMD_PROD = 14,
@@ -86,6 +87,8 @@ return {
   OP_SET_LENGTH = 7,
   OP_AUDITION = 8,
   OP_PANIC = 9,
+  OP_QUEUE_PATTERN = 10,
+  OP_CLEAR_PATTERN = 11,
 
   R_ID = 0,
   R_SEED = 1,
@@ -123,6 +126,7 @@ return {
 
   SEED_MAX = 16777215,
   LANES = 64,
+  PATTERNS = 256,
   MAX_STEPS = 512,
   PAGE_STEPS = 16,
   DEFAULT_LENGTH = 16,

@@ -66,6 +66,7 @@ function ui.run(ImGui)
   local swing_edit = nil
   local length_shown = nil
   local length_typed = nil
+  local rename_typed = nil
   local swing_shown = nil
   local edit_slot = nil
   local edit_field = 1
@@ -129,7 +130,7 @@ function ui.run(ImGui)
     if paint and hovered and ImGui.IsMouseDown(ctx, paint.button) and not paint.done[key] then
       paint.done[key] = true
       if value ~= paint.value then
-        c:add(paint.gesture, { { wire.OP_SET_STEP, 0, lane.slot, step, wire.F_ON, paint.value } },
+        c:add(paint.gesture, { { wire.OP_SET_STEP, c.pattern or 0, lane.slot, step, wire.F_ON, paint.value } },
           { { lane.slot, step, wire.F_ON, paint.value } })
       end
     end
@@ -313,6 +314,61 @@ function ui.run(ImGui)
     end
   end
 
+  -- The pattern picker. A chosen pattern shows at once. While playing the engine switches on
+  -- the next measure, and while stopped it switches at the cursor.
+  local function patterns_row(c)
+    local list = c:patterns()
+    local current = c.pattern or 0
+    local name = ""
+    for _, entry in ipairs(list) do
+      if entry.index == current then
+        name = entry.name
+      end
+    end
+    ImGui.Text(ctx, "Pattern")
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    ImGui.SetNextItemWidth(ctx, 200)
+    if ImGui.BeginCombo(ctx, "##pattern", name) then
+      for _, entry in ipairs(list) do
+        if ImGui.Selectable(ctx, entry.name .. "##pattern" .. entry.index, entry.index == current) then
+          c:select_pattern(entry.index)
+        end
+      end
+      ImGui.EndCombo(ctx)
+    end
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    if ImGui.SmallButton(ctx, "New##pattern") then
+      c:new_pattern()
+    end
+    ImGui.SameLine(ctx, 0, GAP)
+    if ImGui.SmallButton(ctx, "Clear##pattern") then
+      c:clear_pattern(current)
+    end
+    if rename_typed and rename_typed.pattern ~= current then
+      rename_typed = nil
+    end
+    ImGui.SameLine(ctx, 0, GAP * 4)
+    ImGui.SetNextItemWidth(ctx, 160)
+    local edited, text = ImGui.InputText(ctx, "##patternname", rename_typed and rename_typed.text or name)
+    if edited then
+      rename_typed = { pattern = current, text = text }
+    end
+    ImGui.SameLine(ctx, 0, GAP)
+    if ImGui.SmallButton(ctx, "Rename##pattern") and rename_typed then
+      c:rename_pattern(current, rename_typed.text)
+      rename_typed = nil
+    end
+    local queued = c.session:h(wire.H_PENDING_PATTERN)
+    if queued >= 0 and queued ~= current then
+      for _, entry in ipairs(list) do
+        if entry.index == queued then
+          ImGui.SameLine(ctx, 0, GAP * 4)
+          ImGui.TextDisabled(ctx, "plays next: " .. entry.name)
+        end
+      end
+    end
+  end
+
   -- Global feel controls. A swing drag is one gesture and one undo point.
   local function feel(c)
     local snap = c.session and c.session.snapshot
@@ -436,6 +492,7 @@ function ui.run(ImGui)
     local c = coordinator
     top_bar(c)
     if c.session and c.session.snapshot then
+      patterns_row(c)
       feel(c)
       pager(c)
       for _, lane in ipairs(c:lanes()) do
