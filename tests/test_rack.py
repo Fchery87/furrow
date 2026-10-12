@@ -857,6 +857,40 @@ class RackTest(unittest.TestCase):
         self.assertEqual(self.stub.undo, [])
         self.assertEqual(self.c("step_value", 0, 9, F_ON), 1)
 
+    def aborting_gesture(self, commands, after):
+        lua = self.rig.lua
+        opts = lua.eval("""{ abort_on_failure = true, rollback = { { 2, 0, 0, 9, 0, 1 } },
+                              on_abort = function(c) ABORTED = true end,
+                              after = function(c) return %s end }""" % after)
+        lua.globals().ABORTED = False
+        gesture = self.c("begin", "bad", opts)
+        self.c("add", gesture, lua.table_from([lua.table_from(commands)]))
+        self.c("finish", gesture)
+        self.settle()
+        self.tick(8)
+        return lua.globals().ABORTED
+
+    def test_a_clone_whose_first_step_fails_still_restores_the_source_view(self):
+        self.painted_lane([2])
+        self.assertTrue(self.aborting_gesture([OP_SET_STEP, 0, 0, 6, 99, 1], "true"))
+        self.assertIn("bad failed", self.coordinator.message)
+
+    def test_a_clone_whose_host_changes_fail_restores_the_source_view(self):
+        self.painted_lane([2])
+        self.assertTrue(self.aborting_gesture([OP_SET_STEP, 0, 0, 5, F_ON, 1], "false, 'no rack'"))
+        self.assertIn("no rack", self.coordinator.message)
+        self.assertEqual(self.stub.undo, [])
+
+    def test_cloning_right_after_a_length_change_copies_the_new_length(self):
+        self.painted_lane([3])
+        self.c("set_length", 0, 40)
+        self.c("clone_pattern")
+        self.tick(60)
+        self.settle(80)
+        self.tick(12)
+        self.assertEqual(self.coordinator.pattern, 1)
+        self.assertEqual(self.c("lanes")[1].length, 40)
+
     def rack_links(self):
         return self.rack["rack"].ext.get("P_EXT:Furrow", "")
 
