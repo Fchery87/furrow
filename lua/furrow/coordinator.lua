@@ -20,6 +20,7 @@ local UNDO_FX = 2
 local STALL_SECONDS = 0.5
 local OTHER_COORDINATOR_SECONDS = 1.0
 local JOURNAL_SECTION = "Furrow"
+local SWITCH_MARGIN_SECONDS = 0.15
 local TOOL_CHUNK = 200
 local TOOL_TIMEOUT_SECONDS = 2
 local TOOL_SETTLE_SECONDS = 5
@@ -41,6 +42,8 @@ function Coordinator.new(proj, rack)
   self.message = nil
   self.recovered = false
   self.page = 0
+  self.pattern = nil
+  self.engine_pattern = nil
   self.tool = nil
   self.completed = 0
   self.journaled = nil
@@ -123,9 +126,31 @@ function Coordinator:connect()
   return true
 end
 
+-- The grid starts on the engine's pattern and follows it when it changes by itself, as it
+-- does after an undo. A pattern chosen in the window shows at once, before the engine's
+-- queued switch lands.
+function Coordinator:follow_pattern(snap)
+  local engine = snap.rack.pattern
+  if self.pattern == nil or (self.engine_pattern ~= nil and engine ~= self.engine_pattern) then
+    self:set_view(engine)
+  end
+  self.engine_pattern = engine
+end
+
+function Coordinator:set_view(pattern)
+  if pattern == self.pattern then
+    return
+  end
+  self.pattern = pattern
+  self.overlay = {}
+  if self.session then
+    self.session:request(self:window())
+  end
+end
+
 -- The snapshot window follows the page the grid shows, 16 steps of every lane.
 function Coordinator:window()
-  return { pattern = 0, l0 = 0, nl = wire.LANES, s0 = self.page * wire.PAGE_STEPS, ns = wire.PAGE_STEPS }
+  return { pattern = self.pattern or 0, l0 = 0, nl = wire.LANES, s0 = self.page * wire.PAGE_STEPS, ns = wire.PAGE_STEPS }
 end
 
 function Coordinator:set_page(page)
@@ -148,7 +173,7 @@ end
 
 function Coordinator:set_length(slot, length)
   length = math.max(1, math.min(wire.MAX_STEPS, math.floor(length)))
-  self:run("set length", { { wire.OP_SET_LENGTH, 0, slot, length } })
+  self:run("set length", { { wire.OP_SET_LENGTH, self.pattern or 0, slot, length } })
 end
 
 function Coordinator:processing()
@@ -174,6 +199,9 @@ function Coordinator:begin(name, opts)
     journal = opts.journal or { "edit" },
     silent = opts.silent,
   }
+  if opts.host_only then
+    gesture.applied = 1
+  end
   if self.session.snapshot and self.session.snapshot.rack.id == 0 and not self.rack_id_sent then
     gesture.queue[#gesture.queue + 1] = { commands = { { wire.OP_SET_RACK, wire.R_ID, math.random(1, 16777215) } } }
     self.rack_id_sent = true
@@ -186,7 +214,7 @@ end
 -- Adds one transaction to an open gesture. overlay lists { slot, step, field, value }
 -- shown until a snapshot includes the change.
 function Coordinator:add(gesture, commands, overlay)
-  gesture.queue[#gesture.queue + 1] = { commands = commands, overlay = overlay }
+  gesture.queue[#gesture.queue + 1] = { commands = commands, overlay = overlay, pattern = self.pattern or 0 }
   self:flush()
 end
 
@@ -214,7 +242,8 @@ function Coordinator:flush()
       gesture.txns[txn] = item
       gesture.waiting = gesture.waiting + 1
       for _, o in ipairs(item.overlay or {}) do
-        self.overlay[#self.overlay + 1] = { txn = txn, slot = o[1], step = o[2], field = o[3], value = o[4] }
+        self.overlay[#self.overlay + 1] =
+          { txn = txn, pattern = item.pattern, slot = o[1], step = o[2], field = o[3], value = o[4] }
       end
     end
   end
@@ -351,6 +380,7 @@ function Coordinator:tick()
   end
   local snap = session:read_snapshot()
   if snap then
+    self:follow_pattern(snap)
     self:drop_overlay(nil, snap.revision)
     for slot in pairs(self.reserved) do
       if snap.lanes[slot] then
@@ -434,7 +464,7 @@ function Coordinator:step_tool()
     tool.length = lane.length
     tool.since = now
     tool.stage = "waiting"
-    session:request({ pattern = 0, l0 = tool.slot, nl = 1, s0 = 0, ns = lane.length }, true)
+    session:request({ pattern = self.pattern or 0, l0 = tool.slot, nl = 1, s0 = 0, ns = lane.length }, true)
   elseif session.side_snapshot then
     local side = session.side_snapshot
     self:end_tool()
@@ -471,12 +501,116 @@ function Coordinator:run_tool(tool, snap)
     local commands, overlay = {}, {}
     for i = first, math.min(first + TOOL_CHUNK - 1, #edits) do
       local e = edits[i]
-      commands[#commands + 1] = { wire.OP_SET_STEP, 0, tool.slot, e[1], e[2], e[3] }
+      commands[#commands + 1] = { wire.OP_SET_STEP, self.pattern or 0, tool.slot, e[1], e[2], e[3] }
       overlay[#overlay + 1] = { tool.slot, e[1], e[2], e[3] }
     end
     self:add(gesture, commands, overlay)
   end
   self:finish(gesture)
+end
+
+-- The patterns the window lists: every named one, plus the one the engine plays and the one
+-- the grid shows, each with a default name when it has none. Returns { index, name } in order.
+function Coordinator:patterns()
+  local names = host.read_patterns(self:rack_track())
+  names[0] = names[0] or host.default_pattern_name(0)
+  for _, index in ipairs({ self.engine_pattern, self.pattern }) do
+    if index and not names[index] then
+      names[index] = host.default_pattern_name(index)
+    end
+  end
+  local list = {}
+  for index, name in pairs(names) do
+    list[#list + 1] = { index = index, name = name }
+  end
+  table.sort(list, function(a, b) return a.index < b.index end)
+  return list
+end
+
+-- Shows a pattern now and queues the engine's switch for the next measure boundary while
+-- playing, or applies it at the cursor when stopped.
+function Coordinator:queue_commands(pattern)
+  local ticks = 0
+  if self.session:h(wire.H_PLAYING) == 1 then
+    ticks = math.floor(host.next_measure_beat(self.proj, SWITCH_MARGIN_SECONDS) * 1024 + 0.5)
+  end
+  return { { wire.OP_QUEUE_PATTERN, pattern, ticks // 16777216, ticks % 16777216 } }
+end
+
+function Coordinator:select_pattern(pattern)
+  if not self:processing() or pattern == self.pattern and self.engine_pattern == pattern then
+    return
+  end
+  self:run("switch pattern", self:queue_commands(pattern))
+  self:set_view(pattern)
+end
+
+function Coordinator:new_pattern()
+  if not self:processing() then
+    return
+  end
+  local taken = {}
+  for _, entry in ipairs(self:patterns()) do
+    taken[entry.index] = true
+  end
+  local index = 0
+  while taken[index] do
+    index = index + 1
+  end
+  if index >= wire.PATTERNS then
+    self.message = "the rack already has " .. wire.PATTERNS .. " patterns"
+    return
+  end
+  local gesture = self:begin("new pattern", {
+    undo_states = UNDO_ALL,
+    after = function(c)
+      local rack = c:rack_track()
+      if not rack then
+        return false, "the rack tracks are gone"
+      end
+      local list = host.read_patterns(rack)
+      for _, entry in ipairs(c:patterns()) do
+        list[entry.index] = list[entry.index] or entry.name
+      end
+      list[index] = host.default_pattern_name(index)
+      host.write_patterns(rack, list)
+      return true
+    end,
+  })
+  self:add(gesture, self:queue_commands(index))
+  self:finish(gesture)
+  self:set_view(index)
+end
+
+function Coordinator:rename_pattern(pattern, text)
+  local name = host.clean_pattern_name(text)
+  if name == "" or not self:processing() then
+    return
+  end
+  local gesture = self:begin("rename pattern", {
+    host_only = true,
+    undo_states = UNDO_ALL,
+    after = function(c)
+      local rack = c:rack_track()
+      if not rack then
+        return false, "the rack tracks are gone"
+      end
+      local list = host.read_patterns(rack)
+      for _, entry in ipairs(c:patterns()) do
+        list[entry.index] = list[entry.index] or entry.name
+      end
+      list[pattern] = name
+      host.write_patterns(rack, list)
+      return true
+    end,
+  })
+  self:finish(gesture)
+end
+
+function Coordinator:clear_pattern(pattern)
+  if self:processing() then
+    self:run("clear pattern", { { wire.OP_CLEAR_PATTERN, pattern } })
+  end
 end
 
 -- Finishes what a lost coordinator left half done. A lane the journal names is removed
@@ -543,7 +677,7 @@ end
 function Coordinator:step_value(slot, step, field)
   for i = #self.overlay, 1, -1 do
     local o = self.overlay[i]
-    if o.slot == slot and o.step == step and o.field == field then
+    if o.pattern == (self.pattern or 0) and o.slot == slot and o.step == step and o.field == field then
       return o.value
     end
   end
@@ -628,7 +762,7 @@ function Coordinator:set_field(gesture, slot, step, field, value)
   if self:step_value(slot, step, field) == value then
     return false
   end
-  self:add(gesture, { { wire.OP_SET_STEP, 0, slot, step, field, value } }, { { slot, step, field, value } })
+  self:add(gesture, { { wire.OP_SET_STEP, self.pattern or 0, slot, step, field, value } }, { { slot, step, field, value } })
   return true
 end
 

@@ -39,6 +39,7 @@ class StubReaper:
         self.deferred = []
         self.project_open = True
         self.proj_ext = {}
+        self.play_time = 0.0
         self.fail_rs5k = False
         self.clock = 1000.0
         self.selected = None
@@ -189,6 +190,16 @@ class StubReaper:
     def Undo_EndBlock2(self, proj, name, flags):
         self.undo.append(name)
 
+    def GetPlayPosition2Ex(self, proj):
+        return self.play_time
+
+    def TimeMap2_timeToQN(self, proj, time):
+        return time * 2.0
+
+    def TimeMap_QNToMeasures(self, proj, qn):
+        start = float(int(qn // 4) * 4)
+        return int(qn // 4), start, start + 4.0
+
     def GetAppVersion(self):
         return "stub"
 
@@ -237,10 +248,10 @@ class RackTest(unittest.TestCase):
     def c(self, method, *args):
         return self.call(self.coordinator, method, *args)
 
-    def tick(self, count=1):
+    def tick(self, count=1, playing=False):
         for _ in range(count):
             self.c("tick")
-            self.rig.block(playing=False)
+            self.rig.block(playing=playing)
             self.stub.clock += 0.03
 
     def settle(self, limit=40):
@@ -671,6 +682,116 @@ class RackTest(unittest.TestCase):
         self.tick(10)
         self.assertEqual(self.on_steps(), [s for s in range(16) if s != 7])
 
+    def pattern_names(self):
+        return [(e.index, e.name) for e in self.c("patterns").values()]
+
+    def test_choosing_a_pattern_while_stopped_shows_and_plays_it_at_once(self):
+        self.painted_lane([])
+        self.c("select_pattern", 2)
+        self.settle()
+        self.tick(6)
+        self.assertEqual((self.rig.engine.var("pattern"), self.coordinator.pattern), (2, 2))
+        self.assertEqual(self.stub.undo, ["Furrow: switch pattern"])
+        lua = self.rig.lua
+        self.c("run", "paint steps", lua.table_from([lua.table_from([OP_SET_STEP, 2, 0, 3, F_ON, 1])]))
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.c("step_value", 0, 3, F_ON), 1)
+        self.c("select_pattern", 0)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.c("step_value", 0, 3, F_ON), 0)
+        self.c("select_pattern", 2)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.c("step_value", 0, 3, F_ON), 1)
+
+    def test_edits_go_to_the_shown_pattern(self):
+        self.painted_lane([])
+        self.c("select_pattern", 4)
+        self.settle()
+        self.tick(6)
+        gesture = self.c("begin", "paint steps")
+        self.assertTrue(self.c("set_field", gesture, 0, 9, F_ON, 1))
+        self.c("finish", gesture)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.c("step_value", 0, 9, F_ON), 1)
+        self.c("select_pattern", 0)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.c("step_value", 0, 9, F_ON), 0)
+
+    def test_a_new_pattern_gets_the_next_free_index_a_default_name_and_one_undo_point(self):
+        self.painted_lane([])
+        self.c("new_pattern")
+        self.settle()
+        self.tick(6)
+        self.assertEqual(self.pattern_names(), [(0, "Pattern 1"), (1, "Pattern 2")])
+        self.assertEqual((self.coordinator.pattern, self.rig.engine.var("pattern")), (1, 1))
+        self.assertEqual(self.stub.undo, ["Furrow: new pattern"])
+        self.assertIn("pattern 1 Pattern 2", self.rack["rack"].ext["P_EXT:FurrowPatterns"])
+        self.c("new_pattern")
+        self.settle()
+        self.assertEqual([i for i, _ in self.pattern_names()], [0, 1, 2])
+
+    def test_renaming_a_pattern_cleans_the_name_and_makes_one_host_only_undo_point(self):
+        self.painted_lane([])
+        self.c("new_pattern")
+        self.settle()
+        self.stub.undo.clear()
+        revision = self.rig.engine.var("revision")
+        self.c("rename_pattern", 1, "  Verse\n two  ")
+        self.settle()
+        self.assertEqual(self.pattern_names(), [(0, "Pattern 1"), (1, "Verse  two")])
+        self.assertEqual(self.stub.undo, ["Furrow: rename pattern"])
+        self.assertEqual(self.rig.engine.var("revision"), revision)
+        self.c("rename_pattern", 1, "   ")
+        self.settle()
+        self.assertEqual(self.stub.undo, ["Furrow: rename pattern"])
+
+    def test_clearing_a_pattern_empties_only_that_pattern(self):
+        self.painted_lane([1, 2])
+        self.c("new_pattern")
+        self.settle()
+        self.tick(6)
+        lua = self.rig.lua
+        self.c("run", "paint steps", lua.table_from([lua.table_from([OP_SET_STEP, 1, 0, 5, F_ON, 1])]))
+        self.settle()
+        self.assertEqual(self.rig.engine.var("nd_count"), 3)
+        self.c("clear_pattern", 1)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.rig.engine.var("nd_count"), 2)
+        self.assertEqual(self.c("step_value", 0, 5, F_ON), 0)
+        self.c("select_pattern", 0)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.on_steps(), [1, 2])
+
+    def test_choosing_a_pattern_while_playing_queues_the_next_measure_start(self):
+        self.painted_lane([])
+        self.tick(4, playing=True)
+        self.stub.play_time = 3.1
+        self.c("select_pattern", 1)
+        self.assertEqual(self.coordinator.pattern, 1)
+        self.tick(4, playing=True)
+        self.assertEqual(self.rig.engine.var("pend_pattern"), 1)
+        self.assertEqual(self.rig.engine.var("pend_beat"), 8.0)
+        self.assertEqual((self.coordinator.engine_pattern, self.rig.engine.var("pattern")), (0, 0))
+        self.assertEqual(self.coordinator.pattern, 1)
+
+    def test_the_grid_follows_the_engine_when_it_changes_pattern_by_itself(self):
+        self.painted_lane([])
+        before = self.rig.engine.save()
+        self.c("select_pattern", 3)
+        self.settle()
+        self.tick(6)
+        self.assertEqual(self.coordinator.pattern, 3)
+        self.rig.engine.load(before)
+        self.tick(10)
+        self.assertEqual((self.coordinator.pattern, self.rig.engine.var("pattern")), (0, 0))
+
     def rack_links(self):
         return self.rack["rack"].ext.get("P_EXT:Furrow", "")
 
@@ -751,6 +872,8 @@ class WindowTest(unittest.TestCase):
             self.assertIn("Dummy", imgui.calls)
             self.assertIn("SliderInt", imgui.calls)
             self.assertIn("Checkbox", imgui.calls)
+            self.assertIn("BeginCombo", imgui.calls)
+            self.assertIn("New##pattern", imgui.small_labels)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
         finally:
             rig.close()
@@ -812,6 +935,30 @@ class WindowTest(unittest.TestCase):
                 rig.block(playing=False)
                 stub.clock += 0.03
             self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: fill every 4"])
+        finally:
+            rig.close()
+
+    def test_the_pattern_buttons_start_gestures(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(70):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame == 30:
+                    imgui.press = "New##pattern"
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: new pattern"])
         finally:
             rig.close()
 
