@@ -320,9 +320,14 @@ class RackTest(unittest.TestCase):
         self.settle()
         self.tick(6)
         self.assertEqual(self.c("step_value", 0, 3, F_ON), 1)
+        after = self.rig.engine.save()
         self.rig.engine.load(before)
         self.tick(8)
         self.assertEqual(self.c("step_value", 0, 3, F_ON), 0)
+        self.assertEqual(self.coordinator.status, "ready")
+        self.rig.engine.load(after)
+        self.tick(8)
+        self.assertEqual(self.c("step_value", 0, 3, F_ON), 1)
         self.assertEqual(self.coordinator.status, "ready")
 
     def test_a_stalled_engine_pauses_edits(self):

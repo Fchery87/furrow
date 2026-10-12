@@ -431,6 +431,91 @@ class SeqCoreTest(unittest.TestCase):
         # 50 cents over 4 semitones is 8192 + 1024 = 9216, sent again for the first step.
         self.assertEqual([(e[3], e[4]) for e in self.rig.events if e[2] == 0xE0], [(0, 72)])
 
+    def musical_state(self):
+        """Every lane setting and step field of patterns 0 and 2, as the snapshot shows them."""
+        state = {}
+        for pattern in (0, 2):
+            self.rig.session.request(self.rig.lua.table_from({"pattern": pattern, "l0": 0, "nl": 3, "s0": 0, "ns": 16}))
+            snap = self.rig.snapshot()
+            lanes = {}
+            for slot in (0, 2):
+                lane = snap.lanes[slot]
+                lanes[slot] = {k: lane[k] for k in ("id", "row", "note", "mute", "solo", "volume", "pan",
+                                                    "swing", "bend", "mod_a", "mod_b", "length")}
+            steps = {(slot, step, f): snap.steps[slot][step][f]
+                     for slot in (0, 2) for step in range(16) for f in range(16)}
+            state[pattern] = (lanes, steps, snap.rack.seed, snap.rack.swing, snap.rack.truncate)
+        return state
+
+    def test_a_saved_project_restores_the_same_musical_state_and_the_same_playback(self):
+        fields = [(F_VEL, 90), (F_REL, 33), (3, 5), (F_FINE, -40), (F_PAN, 12), (F_MOD_A, 100), (F_MOD_B, 9),
+                  (F_SHIFT, 2500), (F_GATE, 7500), (F_RATCHET, 3), (F_PROB, 80)]
+        commands = [add_lane(0), add_lane(2, note=64, row=5), step_on(0, 1), step_on(2, 3), step_on(0, 5, pattern=2),
+                    [OP_SET_LANE, 0, L_SWING, 6000], [OP_SET_LANE, 0, 9, 7], [OP_SET_LANE, 0, 13, 20],
+                    [OP_SET_LANE, 2, L_PAN, -3000], [OP_SET_LANE, 2, L_SOLO, 1], [OP_SET_LENGTH, 0, 2, 11],
+                    [OP_SET_LENGTH, 2, 0, 9], [OP_SET_RACK, R_SEED, 31337], [OP_SET_RACK, R_SWING, 3000],
+                    [OP_SET_RACK, R_TRUNCATE, 1]]
+        commands += [[OP_SET_STEP, 0, slot, step, f, v] for slot, step in ((0, 1), (2, 3)) for f, v in fields]
+        commands += [[OP_SET_STEP, 2, 0, 5, f, v] for f, v in fields]
+        self.rig.apply(commands)
+        before = self.musical_state()
+        self.play(24)
+        played = list(self.rig.events)
+        saved = self.rig.engine.save()
+        self.rig.apply([[OP_CLEAR_PATTERN, 0], [OP_CLEAR_PATTERN, 2], [OP_SET_RACK, R_SEED, 1]])
+        self.assertNotEqual(self.musical_state(), before)
+        self.assertTrue(self.rig.engine.load(saved))
+        self.rig.run(2, playing=False)
+        self.rig.results()
+        self.assertEqual(self.musical_state(), before)
+        self.assertEqual(self.rig.engine.save(), saved)
+        self.play(24)
+        self.assertEqual([e[1:] for e in self.rig.events], [e[1:] for e in played])
+        self.assertEqual([e[0] for e in self.rig.events], [e[0] for e in played])
+
+    def test_lanes_of_unequal_length_loop_independently_from_the_same_start(self):
+        self.rig.apply([add_lane(0), add_lane(1, note=61), step_on(0, 0), step_on(1, 0),
+                        [OP_SET_LENGTH, 0, 0, 3], [OP_SET_LENGTH, 0, 1, 5]])
+        self.play(75)
+        starts = lambda note: [round(e[0] / SAMPLES_PER_STEP) for e in self.rig.notes() if e[3] == note]
+        self.assertEqual(starts(60), [0, 3, 6, 9, 12])
+        self.assertEqual(starts(61), [0, 5, 10])
+
+    def test_reordering_lanes_changes_their_rows_and_not_their_playback(self):
+        self.rig.apply([add_lane(0), add_lane(1, note=61), step_on(0, 0), step_on(1, 2)])
+        self.play(20)
+        before = [e for e in self.rig.events]
+        self.rig.apply([[OP_SET_LANE, 0, 3, 1], [OP_SET_LANE, 1, 3, 0]])
+        snap = self.rig.snapshot()
+        self.assertEqual((snap.lanes[0].row, snap.lanes[1].row), (1, 0))
+        self.play(20)
+        self.assertEqual(self.rig.events, before)
+
+    def test_starting_mid_pattern_plays_from_that_step_and_does_not_replay_earlier_ones(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1), [OP_SET_LENGTH, 0, 0, 3]])
+        self.rig.events.clear()
+        self.rig.seek(1.0)
+        self.rig.run(20)
+        # Beat 1.0 is step 4, which is position 1 of a 3 step lane. Position 2 is silent.
+        starts = [round((e[0] - 22050) / SAMPLES_PER_STEP) for e in self.rig.notes()]
+        self.assertEqual(starts[:3], [0, 2, 3])
+
+    def test_a_retrigger_releases_the_held_note_before_the_new_one(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1), [OP_SET_STEP, 0, 0, 0, F_GATE, 160000]])
+        self.play(8)
+        at_second = [e[2:4] for e in self.rig.events if e[0] == round(SAMPLES_PER_STEP)]
+        self.assertEqual([m for m in at_second if m[1] == 60], [(0x80, 60), (0x90, 60)])
+
+    def test_muting_or_removing_a_lane_returns_its_moved_controllers_to_rest(self):
+        self.rig.apply([add_lane(0), add_lane(1, note=61), step_on(0, 0), step_on(1, 0),
+                        [OP_SET_STEP, 0, 0, 0, F_FINE, 50], [OP_SET_STEP, 0, 1, 0, F_MOD_A, 90]])
+        self.play(2)
+        self.rig.events.clear()
+        self.rig.apply([[OP_SET_LANE, 0, L_MUTE, 1], [OP_REMOVE_LANE, 1]], blocks=2)
+        rest = [(e[2] & 0xF0, e[3], e[4]) for e in self.rig.events if e[2] & 0xF0 in (0xB0, 0xE0) and e[3] not in (123,)]
+        self.assertIn((0xE0, 0, 64), rest)
+        self.assertIn((0xB0, 74, 64), rest)
+
     def test_a_swung_hit_that_crosses_a_block_edge_plays_once_in_the_next_block(self):
         self.rig.apply([add_lane(0), step_on(0, 1), [OP_SET_RACK, R_SWING, 10000]])
         # The hit lands at 7,350 samples. Blocks of 64 frames put several edges before it.
