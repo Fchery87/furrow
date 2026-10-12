@@ -10,6 +10,7 @@ from harness import LUA, Rig, missing, pair
 SKIP = missing()
 
 OP_SET_STEP = 2
+OP_SET_LANE = 5
 OP_SET_RACK = 6
 R_SEED, R_SWING, R_TRUNCATE = 1, 4, 5
 F_ON = 0
@@ -601,6 +602,20 @@ class RackTest(unittest.TestCase):
         self.assertEqual([self.c("step_value", 0, 1, f) for f in (2, 4, 5, 6, 7)], [90, -50, 20, 100, 5])
         self.assertEqual([self.c("step_value", 0, 0, f) for f in (2, 4, 5, 6, 7)], [64, 0, 0, 64, 64])
 
+    def test_lane_swing_bend_range_and_mod_controllers_reach_the_snapshot(self):
+        self.c("add_sample", "/samples/kick.wav")
+        self.settle()
+        self.tick(6)
+        lane = self.c("lanes")[1]
+        self.assertEqual((lane.swing, lane.bend, lane.mod_a, lane.mod_b), (10000, 2, 74, 71))
+        commands = self.rig.lua.table_from([self.rig.lua.table_from(c) for c in (
+            [OP_SET_LANE, 0, 10, 4000], [OP_SET_LANE, 0, 9, 12], [OP_SET_LANE, 0, 13, 1], [OP_SET_LANE, 0, 14, 2])])
+        self.c("run", "lane settings", commands)
+        self.settle()
+        self.tick(6)
+        lane = self.c("lanes")[1]
+        self.assertEqual((lane.swing, lane.bend, lane.mod_a, lane.mod_b), (4000, 12, 1, 2))
+
     def test_a_long_lane_pages_through_the_snapshot_window_and_plays_to_its_length(self):
         self.c("add_sample", "/samples/kick.wav")
         self.settle()
@@ -1093,6 +1108,32 @@ class WindowTest(unittest.TestCase):
                 rig.block(playing=False)
                 stub.clock += 0.03
             self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: clone pattern"])
+        finally:
+            rig.close()
+
+    def test_the_lane_setting_buttons_each_make_one_undo_point(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(80):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame == 30:
+                    imgui.press = "+##bend"
+                if frame == 40:
+                    imgui.press = "-##mod_a"
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: set bend range", "Furrow: set mod a cc"])
         finally:
             rig.close()
 
