@@ -69,6 +69,7 @@ function ui.run(ImGui)
   local length_typed = nil
   local rename_typed = nil
   local swing_shown = nil
+  local lane_swing_shown = nil
   local edit_slot = nil
   local edit_field = 1
   local open = true
@@ -240,6 +241,43 @@ function ui.run(ImGui)
     ImGui.SetTooltip(ctx, def.text(shaping and target or value))
   end
 
+  -- Settings that belong to the selected lane. A lane swing drag shares the swing gesture.
+  local LANE_STEPPERS = {
+    { key = "bend", label = "Bend range", field = wire.L_BEND, low = 1, high = 48, unit = " st" },
+    { key = "mod_a", label = "Mod A CC", field = wire.L_MOD_A, low = 0, high = 127, unit = "" },
+    { key = "mod_b", label = "Mod B CC", field = wire.L_MOD_B, low = 0, high = 127, unit = "" },
+  }
+
+  local function lane_settings(c, lane)
+    local now = reaper.time_precise()
+    local percent = lane.swing // 100
+    if lane_swing_shown and lane_swing_shown.slot == lane.slot and now < lane_swing_shown.until_time then
+      percent = lane_swing_shown.value
+    end
+    ImGui.SetNextItemWidth(ctx, 140)
+    local changed, value = ImGui.SliderInt(ctx, "Lane swing", percent, 0, 100, "%d%%")
+    if changed and c:processing() then
+      swing_edit = swing_edit or { gesture = c:begin("set lane swing") }
+      lane_swing_shown = { slot = lane.slot, value = value, until_time = now + 0.5 }
+      c:add(swing_edit.gesture, { { wire.OP_SET_LANE, lane.slot, wire.L_SWING, value * 100 } })
+    end
+    for _, stepper in ipairs(LANE_STEPPERS) do
+      local current = lane[stepper.key]
+      ImGui.SameLine(ctx, 0, GAP * 4)
+      ImGui.Text(ctx, stepper.label .. " " .. current .. stepper.unit)
+      for _, change in ipairs({ -1, 1 }) do
+        ImGui.SameLine(ctx, 0, GAP)
+        local label = (change < 0 and "-" or "+") .. "##" .. stepper.key
+        if ImGui.SmallButton(ctx, label) and c:processing() then
+          local target = math.max(stepper.low, math.min(stepper.high, current + change))
+          if target ~= current then
+            c:run("set " .. stepper.label:lower(), { { wire.OP_SET_LANE, lane.slot, stepper.field, target } })
+          end
+        end
+      end
+    end
+  end
+
   local function editor(c)
     local lanes = c:lanes()
     local lane = lanes[1]
@@ -307,6 +345,7 @@ function ui.run(ImGui)
     if ImGui.SmallButton(ctx, "Set##lengthset") and length_typed and c:processing() then
       set_length(length_typed.value)
     end
+    lane_settings(c, lane)
     local def = fields.list[edit_field]
     ImGui.Dummy(ctx, GRID_OFFSET - GAP * 3, BAR_HEIGHT)
     local first = c.page * wire.PAGE_STEPS

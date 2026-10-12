@@ -226,6 +226,9 @@ local function decode_bank(mem, at)
         volume = r(lane + wire.L_VOLUME),
         pan = r(lane + wire.L_PAN),
         swing = r(lane + wire.L_SWING),
+        bend = r(lane + wire.L_BEND),
+        mod_a = r(lane + wire.L_MOD_A),
+        mod_b = r(lane + wire.L_MOD_B),
         length = r(lane + wire.LANE_LENGTH),
       }
     end
