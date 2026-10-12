@@ -16,10 +16,16 @@ local function percent(v)
   return string.format("%d%%", math.floor(v / 100 + 0.5))
 end
 
+local function times(v)
+  return string.format("%dx", v)
+end
+
 fields.list = {
   { name = "Velocity", field = wire.F_VEL, min = 1, max = 127, text = whole },
   { name = "Gate", field = wire.F_GATE, min = 500, max = 10000, text = percent },
   { name = "Pitch", field = wire.F_PITCH, min = -24, max = 24, centered = true, text = signed },
+  { name = "Shift", field = wire.F_SHIFT, min = 0, max = 9900, text = percent },
+  { name = "Ratchet", field = wire.F_RATCHET, min = 1, max = 8, text = times },
   { name = "Probability", field = wire.F_PROB, min = 0, max = 100, text = function(v) return string.format("%d%%", v) end },
 }
 
