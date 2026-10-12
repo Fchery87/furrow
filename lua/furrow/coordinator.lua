@@ -22,6 +22,7 @@ local OTHER_COORDINATOR_SECONDS = 1.0
 local JOURNAL_SECTION = "Furrow"
 local SWITCH_MARGIN_SECONDS = 0.15
 local TOOL_CHUNK = 200
+local CLONE_WINDOW_STEPS = 32
 local TOOL_TIMEOUT_SECONDS = 2
 local TOOL_SETTLE_SECONDS = 5
 
@@ -198,6 +199,8 @@ function Coordinator:begin(name, opts)
     open = true,
     journal = opts.journal or { "edit" },
     silent = opts.silent,
+    abort_on_failure = opts.abort_on_failure,
+    on_abort = opts.on_abort,
   }
   if opts.host_only then
     gesture.applied = 1
@@ -294,6 +297,17 @@ function Coordinator:close(gesture)
     if gesture.failed then
       self.message = gesture.name .. " failed: " .. gesture.failed
     end
+    return
+  end
+  if gesture.failed and gesture.abort_on_failure then
+    -- Part of the gesture failed, and a half-applied result is worse than none.
+    if gesture.rollback then
+      self.session:send(gesture.rollback, { name = "rollback" })
+    end
+    if gesture.on_abort then
+      gesture.on_abort(self)
+    end
+    self.message = gesture.name .. " failed: " .. gesture.failed
     return
   end
   local ok, err = true, nil
@@ -436,6 +450,17 @@ function Coordinator:lane_tool(slot, kind, arg)
   self.tool = { slot = slot, kind = kind, arg = arg, stage = "settling", created = reaper.time_precise() }
 end
 
+-- The side window a tool reads next. A lane tool reads its lane. A clone reads every lane,
+-- 32 steps at a time, which is the most a 2,048 cell window holds.
+function Coordinator:tool_window(tool)
+  if tool.kind == "clone" then
+    local first = tool.block * CLONE_WINDOW_STEPS
+    return { pattern = tool.source, l0 = 0, nl = wire.LANES, s0 = first,
+             ns = math.min(CLONE_WINDOW_STEPS, tool.longest - first) }
+  end
+  return { pattern = self.pattern or 0, l0 = tool.slot, nl = 1, s0 = 0, ns = tool.length }
+end
+
 function Coordinator:end_tool()
   self.tool = nil
   if self.session then
@@ -449,9 +474,9 @@ function Coordinator:step_tool()
     return
   end
   local session = self.session
-  local lane = session.snapshot and session.snapshot.lanes[tool.slot]
+  local lane = tool.slot and session.snapshot and session.snapshot.lanes[tool.slot]
   local now = reaper.time_precise()
-  if not lane then
+  if tool.slot and not lane then
     self:end_tool()
   elseif tool.stage == "settling" then
     if self:busy() or #self.overlay > 0 or self.status ~= "ready" then
@@ -461,12 +486,24 @@ function Coordinator:step_tool()
       end
       return
     end
-    tool.length = lane.length
+    tool.length = lane and lane.length
     tool.since = now
     tool.stage = "waiting"
-    session:request({ pattern = self.pattern or 0, l0 = tool.slot, nl = 1, s0 = 0, ns = lane.length }, true)
+    session:request(self:tool_window(tool), true)
   elseif session.side_snapshot then
     local side = session.side_snapshot
+    if tool.kind == "clone" then
+      if not self:collect_clone(tool, side) then
+        self:end_tool()
+      elseif tool.block * CLONE_WINDOW_STEPS < tool.longest then
+        tool.since = now
+        session:request(self:tool_window(tool), true)
+      else
+        self:end_tool()
+        self:run_clone(tool)
+      end
+      return
+    end
     self:end_tool()
     self:run_tool(tool, side)
   elseif now - tool.since > TOOL_TIMEOUT_SECONDS then
@@ -611,6 +648,106 @@ function Coordinator:clear_pattern(pattern)
   if self:processing() then
     self:run("clear pattern", { { wire.OP_CLEAR_PATTERN, pattern } })
   end
+end
+
+-- Starts a copy of the shown pattern into a free one, then switches to the copy.
+function Coordinator:clone_pattern()
+  if not self:processing() then
+    return
+  end
+  if self.tool then
+    self.message = "another lane tool is still running"
+    return
+  end
+  local lanes, longest = {}, 1
+  for _, lane in pairs(self.session.snapshot.lanes) do
+    lanes[#lanes + 1] = lane
+    longest = math.max(longest, lane.length)
+  end
+  self.tool = {
+    kind = "clone", stage = "settling", created = reaper.time_precise(), source = self.pattern or 0,
+    lanes = lanes, longest = longest, block = 0, edits = {},
+  }
+end
+
+-- Adds the non-default values of one side window to the clone. False when a row is missing.
+function Coordinator:collect_clone(tool, snap)
+  for _, lane in ipairs(tool.lanes) do
+    local rows = snap.steps[lane.slot] or {}
+    for step = snap.s0, math.min(snap.s0 + snap.ns, lane.length) - 1 do
+      local row = rows[step]
+      if not row then
+        self.message = "the clone could not read the pattern"
+        return false
+      end
+      for field = 0, wire.STEP_FIELDS - 1 do
+        if row[field] ~= wire.STEP_DEFAULTS[field] then
+          tool.edits[#tool.edits + 1] = { lane.slot, step, field, row[field] }
+        end
+      end
+    end
+  end
+  tool.block = tool.block + 1
+  return true
+end
+
+function Coordinator:run_clone(tool)
+  local taken = {}
+  for _, entry in ipairs(self:patterns()) do
+    taken[entry.index] = true
+  end
+  local target = 0
+  while taken[target] do
+    target = target + 1
+  end
+  if target >= wire.PATTERNS then
+    self.message = "the rack already has " .. wire.PATTERNS .. " patterns"
+    return
+  end
+  local source_name = host.default_pattern_name(tool.source)
+  for _, entry in ipairs(self:patterns()) do
+    if entry.index == tool.source then
+      source_name = entry.name
+    end
+  end
+  local commands = {}
+  for _, lane in ipairs(tool.lanes) do
+    if lane.length ~= wire.DEFAULT_LENGTH then
+      commands[#commands + 1] = { wire.OP_SET_LENGTH, target, lane.slot, lane.length }
+    end
+  end
+  for _, e in ipairs(tool.edits) do
+    commands[#commands + 1] = { wire.OP_SET_STEP, target, e[1], e[2], e[3], e[4] }
+  end
+  local gesture = self:begin("clone pattern", {
+    undo_states = UNDO_ALL,
+    abort_on_failure = true,
+    rollback = { { wire.OP_CLEAR_PATTERN, target }, { wire.OP_QUEUE_PATTERN, tool.source, 0, 0 } },
+    on_abort = function(c) c:set_view(tool.source) end,
+    after = function(c)
+      local rack = c:rack_track()
+      if not rack then
+        return false, "the rack tracks are gone"
+      end
+      local list = host.read_patterns(rack)
+      for _, entry in ipairs(c:patterns()) do
+        list[entry.index] = list[entry.index] or entry.name
+      end
+      list[target] = host.clean_pattern_name(source_name .. " copy")
+      host.write_patterns(rack, list)
+      return true
+    end,
+  })
+  for first = 1, #commands, TOOL_CHUNK do
+    local chunk = {}
+    for i = first, math.min(first + TOOL_CHUNK - 1, #commands) do
+      chunk[#chunk + 1] = commands[i]
+    end
+    self:add(gesture, chunk)
+  end
+  self:add(gesture, self:queue_commands(target))
+  self:finish(gesture)
+  self:set_view(target)
 end
 
 -- Finishes what a lost coordinator left half done. A lane the journal names is removed
