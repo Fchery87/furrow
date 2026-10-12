@@ -14,7 +14,8 @@ OP_AUDITION = 8
 OP_QUEUE_PATTERN, OP_CLEAR_PATTERN = 10, 11
 OK, STALE, INVALID, CAPACITY, ABORTED, LOAD_ERROR = 1, 2, 3, 4, 5, 6
 L_MUTE, L_SOLO, L_VOLUME, L_PAN = 5, 6, 7, 8
-F_ON, F_VEL, F_SHIFT, F_GATE, F_RATCHET, F_PROB = 0, 1, 8, 9, 10, 12
+F_ON, F_VEL, F_REL, F_FINE, F_PAN, F_MOD_A, F_MOD_B, F_SHIFT, F_GATE, F_RATCHET, F_PROB = 0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 12
+L_MOD_A_CC, L_MOD_B_CC = 74, 71
 R_SEED, R_SWING, R_TRUNCATE = 1, 4, 5
 L_SWING = 10
 SAMPLES_PER_STEP = 5512.5  # a sixteenth at 120 BPM and 44.1 kHz
@@ -370,6 +371,52 @@ class SeqCoreTest(unittest.TestCase):
             self.rig.block(frames=64)
         eighth = SAMPLES_PER_STEP / 8
         self.assert_samples(self.note_ons(), [SAMPLES_PER_STEP * 0.25 + k * eighth for k in range(8)])
+
+    def controller_events(self):
+        return [(e[2] & 0xF0, e[3], e[4]) for e in self.rig.events
+                if e[2] & 0xF0 in (0xB0, 0xE0) and e[3] not in (7, 10, 123)]
+
+    def test_a_plain_pattern_sends_no_bend_or_modulation(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1)])
+        self.play(14)
+        self.assertEqual(self.controller_events(), [])
+        self.assertEqual([e[4] for e in self.rig.notes(0x80)], [64, 64])
+
+    def test_release_velocity_rides_the_note_off(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1), [OP_SET_STEP, 0, 0, 0, F_REL, 100]])
+        self.play(14)
+        self.assertEqual([e[4] for e in self.rig.notes(0x80)], [100, 64])
+
+    def test_step_pan_offsets_the_lane_pan_and_clamps(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1), [OP_SET_STEP, 0, 0, 0, F_PAN, 10],
+                        [OP_SET_STEP, 0, 0, 1, F_PAN, -64]])
+        self.play(14)
+        pans = [e[4] for e in self.rig.events if e[2] == 0xB0 and e[3] == 10]
+        self.assertEqual(pans, [74, 0])
+
+    def test_fine_pitch_sends_bend_only_when_it_changes_and_resets_on_stop(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1), step_on(0, 2), step_on(0, 3),
+                        [OP_SET_STEP, 0, 0, 0, F_FINE, 50], [OP_SET_STEP, 0, 0, 1, F_FINE, 50],
+                        [OP_SET_STEP, 0, 0, 2, F_FINE, -100]])
+        self.play(20)
+        # 50 cents of a 2 semitone range is a quarter of the range: 8192 + 2048 = 10240.
+        # -100 cents is 8192 - 4096 = 4096. The step after it returns to centre, 8192.
+        bends = [(e[3], e[4]) for e in self.rig.events if e[2] == 0xE0]
+        self.assertEqual(bends, [(0, 80), (0, 32), (0, 64)])
+        self.rig.apply([[OP_SET_STEP, 0, 0, 3, F_FINE, 100]])
+        self.rig.events.clear()
+        self.rig.seek(0.0)
+        self.rig.run(20)
+        self.rig.events.clear()
+        self.rig.block(playing=False)
+        self.assertEqual([(e[3], e[4]) for e in self.rig.events if e[2] == 0xE0], [(0, 64)])
+
+    def test_mod_a_and_b_send_the_lane_controllers_when_a_step_moves_them(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1), step_on(0, 2),
+                        [OP_SET_STEP, 0, 0, 0, F_MOD_A, 100], [OP_SET_STEP, 0, 0, 1, F_MOD_B, 20]])
+        self.play(14)
+        sent = [(e[3], e[4]) for e in self.rig.events if e[2] == 0xB0 and e[3] in (74, 71)]
+        self.assertEqual(sent, [(74, 100), (74, 64), (71, 20), (71, 64)])
 
     def test_a_swung_hit_that_crosses_a_block_edge_plays_once_in_the_next_block(self):
         self.rig.apply([add_lane(0), step_on(0, 1), [OP_SET_RACK, R_SWING, 10000]])

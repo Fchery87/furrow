@@ -584,6 +584,23 @@ class RackTest(unittest.TestCase):
         self.assertEqual([self.c("step_value", 0, 2, f) for f in (8, 10)], [9900, 8])
         self.assertEqual([self.c("step_value", 0, 3, f) for f in (8, 10)], [0, 1])
 
+    def test_the_remaining_step_bars_map_their_ranges_and_reach_the_step(self):
+        self.c("add_sample", "/samples/kick.wav")
+        self.settle()
+        fields = self.rig.lua.eval('(require("furrow.fields"))')
+        wanted = {"Release": (0, 127), "Fine": (-100, 100), "Pan": (-64, 63), "Mod A": (0, 127), "Mod B": (0, 127)}
+        found = {fields.list[i].name: fields.list[i] for i in range(7, 12)}
+        self.assertEqual({k: (v.min, v.max) for k, v in found.items()}, wanted)
+        self.assertEqual(found["Fine"].text(-25), "-25 ct")
+        gesture = self.c("begin", "edit fields")
+        for name, value in (("Release", 90), ("Fine", -50), ("Pan", 20), ("Mod A", 100), ("Mod B", 5)):
+            self.assertTrue(self.c("set_field", gesture, 0, 1, found[name].field, value))
+        self.c("finish", gesture)
+        self.settle()
+        self.tick(6)
+        self.assertEqual([self.c("step_value", 0, 1, f) for f in (2, 4, 5, 6, 7)], [90, -50, 20, 100, 5])
+        self.assertEqual([self.c("step_value", 0, 0, f) for f in (2, 4, 5, 6, 7)], [64, 0, 0, 64, 64])
+
     def test_a_long_lane_pages_through_the_snapshot_window_and_plays_to_its_length(self):
         self.c("add_sample", "/samples/kick.wav")
         self.settle()

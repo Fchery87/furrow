@@ -27,6 +27,12 @@ fields.list = {
   { name = "Shift", field = wire.F_SHIFT, min = 0, max = 9900, text = percent },
   { name = "Ratchet", field = wire.F_RATCHET, min = 1, max = 8, text = times },
   { name = "Probability", field = wire.F_PROB, min = 0, max = 100, text = function(v) return string.format("%d%%", v) end },
+  { name = "Release", field = wire.F_REL, min = 0, max = 127, text = whole },
+  { name = "Fine", field = wire.F_FINE, min = -100, max = 100, centered = true,
+    text = function(v) return string.format("%+d ct", v) end },
+  { name = "Pan", field = wire.F_PAN, min = -64, max = 63, centered = true, text = signed },
+  { name = "Mod A", field = wire.F_MOD_A, min = 0, max = 127, text = whole },
+  { name = "Mod B", field = wire.F_MOD_B, min = 0, max = 127, text = whole },
 }
 
 -- Where a value sits in the bar, from 0 at the bottom to 1 at the top.

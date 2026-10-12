@@ -119,7 +119,12 @@ return {
 
   F_ON = 0,
   F_VEL = 1,
+  F_REL = 2,
   F_PITCH = 3,
+  F_FINE = 4,
+  F_PAN = 5,
+  F_MOD_A = 6,
+  F_MOD_B = 7,
   F_SHIFT = 8,
   F_GATE = 9,
   F_RATCHET = 10,

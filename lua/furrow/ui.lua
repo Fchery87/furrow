@@ -13,6 +13,7 @@ local NAME_WIDTH = 150
 local LENGTH_CHANGES = { -16, -1, 1, 16 }
 local PAGE_BUTTON_WIDTH = 84
 local BAR_HEIGHT = 84
+local FIELD_ROW_BREAK = 7
 local GRID_OFFSET = 2 * CELL + NAME_WIDTH + 5 * GAP
 local DRAIN_SECONDS = 3
 local UNDO_COMMAND = 40029
@@ -255,7 +256,10 @@ function ui.run(ImGui)
     ImGui.Separator(ctx)
     ImGui.Text(ctx, "Step editor  " .. (track and host.track_name(track) or ("Lane " .. (lane.slot + 1))))
     for index, def in ipairs(fields.list) do
-      ImGui.SameLine(ctx, 0, GAP * 3)
+      -- The second group of fields starts a new row.
+      if index ~= FIELD_ROW_BREAK then
+        ImGui.SameLine(ctx, 0, GAP * 3)
+      end
       local active = index == edit_field
       if active then
         ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.on)
