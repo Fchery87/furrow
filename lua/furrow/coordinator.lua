@@ -39,6 +39,7 @@ function Coordinator.new(proj, rack)
   self.gestures = {}
   self.overlay = {}
   self.reserved = {}
+  self.acked_revision = 0
   self.status = "connecting"
   self.message = nil
   self.recovered = false
@@ -296,6 +297,9 @@ function Coordinator:close(gesture)
   if gesture.applied == 0 then
     if gesture.failed then
       self.message = gesture.name .. " failed: " .. gesture.failed
+      if gesture.abort_on_failure and gesture.on_abort then
+        gesture.on_abort(self)
+      end
     end
     return
   end
@@ -323,6 +327,9 @@ function Coordinator:close(gesture)
     self.message = gesture.name .. " failed: " .. tostring(err)
     if gesture.rollback then
       self.session:send(gesture.rollback, { name = "rollback" })
+    end
+    if gesture.on_abort then
+      gesture.on_abort(self)
     end
     return
   end
@@ -352,6 +359,7 @@ function Coordinator:handle(results)
       gesture.waiting = gesture.waiting - 1
       if r.code == wire.ACK_OK then
         gesture.applied = gesture.applied + 1
+        self.acked_revision = math.max(self.acked_revision, r.revision or 0)
         for _, o in ipairs(self.overlay) do
           if o.txn == r.txn then
             o.revision = r.revision
@@ -479,12 +487,16 @@ function Coordinator:step_tool()
   if tool.slot and not lane then
     self:end_tool()
   elseif tool.stage == "settling" then
-    if self:busy() or #self.overlay > 0 or self.status ~= "ready" then
+    local stale = session.snapshot and session.snapshot.revision < self.acked_revision
+    if self:busy() or #self.overlay > 0 or stale or self.status ~= "ready" then
       if now - tool.created > TOOL_SETTLE_SECONDS then
         self.message = "the lane tool gave up waiting for pending edits"
         self:end_tool()
       end
       return
+    end
+    if tool.kind == "clone" then
+      tool.lanes, tool.longest = self:clone_lanes()
     end
     tool.length = lane and lane.length
     tool.since = now
@@ -659,15 +671,21 @@ function Coordinator:clone_pattern()
     self.message = "another lane tool is still running"
     return
   end
+  local lanes, longest = self:clone_lanes()
+  self.tool = {
+    kind = "clone", stage = "settling", created = reaper.time_precise(), source = self.pattern or 0,
+    lanes = lanes, longest = longest, block = 0, edits = {},
+  }
+end
+
+-- The lanes and the longest length now in the snapshot. Read again once pending edits settle.
+function Coordinator:clone_lanes()
   local lanes, longest = {}, 1
   for _, lane in pairs(self.session.snapshot.lanes) do
     lanes[#lanes + 1] = lane
     longest = math.max(longest, lane.length)
   end
-  self.tool = {
-    kind = "clone", stage = "settling", created = reaper.time_precise(), source = self.pattern or 0,
-    lanes = lanes, longest = longest, block = 0, edits = {},
-  }
+  return lanes, longest
 end
 
 -- Adds the non-default values of one side window to the clone. False when a row is missing.
