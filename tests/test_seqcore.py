@@ -14,7 +14,7 @@ OP_AUDITION = 8
 OP_QUEUE_PATTERN, OP_CLEAR_PATTERN = 10, 11
 OK, STALE, INVALID, CAPACITY, ABORTED, LOAD_ERROR = 1, 2, 3, 4, 5, 6
 L_MUTE, L_SOLO, L_VOLUME, L_PAN = 5, 6, 7, 8
-F_ON, F_VEL, F_GATE, F_PROB = 0, 1, 9, 12
+F_ON, F_VEL, F_SHIFT, F_GATE, F_RATCHET, F_PROB = 0, 1, 8, 9, 10, 12
 R_SEED, R_SWING, R_TRUNCATE = 1, 4, 5
 L_SWING = 10
 SAMPLES_PER_STEP = 5512.5  # a sixteenth at 120 BPM and 44.1 kHz
@@ -320,6 +320,56 @@ class SeqCoreTest(unittest.TestCase):
         self.rig.apply([[OP_SET_RACK, R_TRUNCATE, 1]])
         self.play(14)
         self.assert_samples(self.note_offs(), [2 * SAMPLES_PER_STEP])
+
+    def test_shift_delays_a_step_by_its_fraction_of_a_step_after_swing(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1),
+                        [OP_SET_STEP, 0, 0, 0, F_SHIFT, 5000], [OP_SET_STEP, 0, 0, 1, F_SHIFT, 3000],
+                        [OP_SET_RACK, R_SWING, 10000]])
+        self.play(14)
+        self.assert_samples(self.note_ons(), [SAMPLES_PER_STEP / 2, SAMPLES_PER_STEP * (1 + 1 / 3 + 0.3)])
+        self.assert_samples(self.note_offs()[:1], [SAMPLES_PER_STEP])
+
+    def test_a_truncated_step_pushed_to_its_boundary_by_swing_and_shift_is_dropped(self):
+        self.rig.apply([add_lane(0), step_on(0, 1), [OP_SET_STEP, 0, 0, 1, F_SHIFT, 7000],
+                        [OP_SET_RACK, R_SWING, 10000]])
+        self.play(14)
+        self.assert_samples(self.note_ons(), [SAMPLES_PER_STEP * (1 + 1 / 3 + 0.7)])
+        self.rig.apply([[OP_SET_RACK, R_TRUNCATE, 1]])
+        self.play(14)
+        self.assertEqual(self.note_ons(), [])
+
+    def test_ratchets_split_the_gate_into_equal_hits_each_released_by_its_interval(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), [OP_SET_STEP, 0, 0, 0, F_RATCHET, 4],
+                        [OP_SET_STEP, 0, 0, 0, F_GATE, 10000]])
+        self.play(14)
+        quarter = SAMPLES_PER_STEP / 4
+        self.assert_samples(self.note_ons(), [0, quarter, 2 * quarter, 3 * quarter])
+        self.assert_samples(self.note_offs(), [quarter, 2 * quarter, 3 * quarter, 4 * quarter])
+        self.rig.apply([[OP_SET_STEP, 0, 0, 0, F_GATE, 5000]])
+        self.play(14)
+        eighth = SAMPLES_PER_STEP / 8
+        self.assert_samples(self.note_ons(), [0, eighth, 2 * eighth, 3 * eighth])
+        self.assert_samples(self.note_offs(), [eighth, 2 * eighth, 3 * eighth, 4 * eighth])
+
+    def test_a_later_playing_step_cancels_the_ratchets_still_waiting(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1), [OP_SET_STEP, 0, 0, 0, F_RATCHET, 4],
+                        [OP_SET_STEP, 0, 0, 0, F_GATE, 10000], [OP_SET_STEP, 0, 0, 0, F_SHIFT, 9000]])
+        self.play(14)
+        self.assert_samples(self.note_ons(), [0.9 * SAMPLES_PER_STEP, SAMPLES_PER_STEP])
+        self.rig.apply([[OP_SET_STEP, 0, 0, 1, F_ON, 0]])
+        self.play(14)
+        self.assert_samples(self.note_ons(), [0.9 * SAMPLES_PER_STEP, 1.15 * SAMPLES_PER_STEP,
+                                              1.4 * SAMPLES_PER_STEP, 1.65 * SAMPLES_PER_STEP])
+
+    def test_ratchets_play_the_same_across_small_blocks(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), [OP_SET_STEP, 0, 0, 0, F_RATCHET, 8],
+                        [OP_SET_STEP, 0, 0, 0, F_GATE, 10000], [OP_SET_STEP, 0, 0, 0, F_SHIFT, 2500]])
+        self.rig.events.clear()
+        self.rig.seek(0.0)
+        for _ in range(130):
+            self.rig.block(frames=64)
+        eighth = SAMPLES_PER_STEP / 8
+        self.assert_samples(self.note_ons(), [SAMPLES_PER_STEP * 0.25 + k * eighth for k in range(8)])
 
     def test_a_swung_hit_that_crosses_a_block_edge_plays_once_in_the_next_block(self):
         self.rig.apply([add_lane(0), step_on(0, 1), [OP_SET_RACK, R_SWING, 10000]])

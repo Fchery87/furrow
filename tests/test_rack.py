@@ -556,7 +556,7 @@ class RackTest(unittest.TestCase):
         self.c("add_sample", "/samples/kick.wav")
         self.settle()
         fields = self.rig.lua.eval('(require("furrow.fields"))')
-        probability = fields.list[4]
+        probability = fields.list[6]
         self.assertEqual((probability.name, probability.min, probability.max), ("Probability", 0, 100))
         gesture = self.c("begin", "edit probability")
         self.assertTrue(self.c("set_field", gesture, 0, 3, probability.field, 40))
@@ -565,6 +565,24 @@ class RackTest(unittest.TestCase):
         self.tick(6)
         self.assertEqual(self.c("step_value", 0, 3, 12), 40)
         self.assertEqual(self.c("step_value", 0, 4, 12), 100)
+
+    def test_shift_and_ratchet_bars_map_their_ranges_and_reach_the_step(self):
+        self.c("add_sample", "/samples/kick.wav")
+        self.settle()
+        fields = self.rig.lua.eval('(require("furrow.fields"))')
+        shift, ratchet = fields.list[4], fields.list[5]
+        self.assertEqual((shift.name, shift.min, shift.max), ("Shift", 0, 9900))
+        self.assertEqual((ratchet.name, ratchet.min, ratchet.max), ("Ratchet", 1, 8))
+        self.assertEqual([fields.value_at(ratchet, f) for f in (0, 0.5, 1)], [1, 5, 8])
+        self.assertEqual(ratchet.text(4), "4x")
+        gesture = self.c("begin", "edit ratchet")
+        self.assertTrue(self.c("set_field", gesture, 0, 2, shift.field, 9900))
+        self.assertTrue(self.c("set_field", gesture, 0, 2, ratchet.field, 8))
+        self.c("finish", gesture)
+        self.settle()
+        self.tick(6)
+        self.assertEqual([self.c("step_value", 0, 2, f) for f in (8, 10)], [9900, 8])
+        self.assertEqual([self.c("step_value", 0, 3, f) for f in (8, 10)], [0, 1])
 
     def test_a_long_lane_pages_through_the_snapshot_window_and_plays_to_its_length(self):
         self.c("add_sample", "/samples/kick.wav")

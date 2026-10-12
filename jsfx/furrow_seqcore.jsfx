@@ -140,7 +140,9 @@ LANE_FIELDS = 15;
 F_ON = 0;
 F_VEL = 1;
 F_PITCH = 3;
+F_SHIFT = 8;
 F_GATE = 9;
+F_RATCHET = 10;
 F_PROB = 12;
 STEP_FIELDS = 16;
 
@@ -192,7 +194,8 @@ LDEF = SMALL + 480;
 PH_T = SMALL + 512;
 PH_NOTE = SMALL + 576;
 PH_VEL = SMALL + 640;
-PH_END = SMALL + 704;
+PH_D = SMALL + 704;
+PH_N = SMALL + 768;
 RAW = 5880320;
 RAW_MAX = 2508288;
 
@@ -363,7 +366,9 @@ function send_off(s, offset) local(ch) (
 );
 
 // Sends due note-offs in beat order. Inclusive puts a release at the limit before a hit there.
-function flush_releases(limit, inclusive) local(s, best, best_beat, due) (
+// A release leaves the lane's waiting hit alone, so a ratchet released by its interval still
+// plays the next one.
+function flush_releases(limit, inclusive) local(s, best, best_beat, due, waiting) (
   best = 0;
   while (best >= 0) (
     best = -1;
@@ -376,7 +381,11 @@ function flush_releases(limit, inclusive) local(s, best, best_beat, due) (
       );
       s += 1;
     );
-    best >= 0 ? send_off(best, offset_of(best_beat));
+    best >= 0 ? (
+      waiting = PH_T[best];
+      send_off(best, offset_of(best_beat));
+      PH_T[best] = waiting;
+    );
   );
 );
 
@@ -493,7 +502,12 @@ function flush_pending(limit) local(s, best, best_beat) (
     best >= 0 ? (
       flush_releases(best_beat, 1);
       send_hit(best, offset_of(best_beat), PH_NOTE[best], PH_VEL[best]);
-      REL[best] = PH_END[best];
+      REL[best] = best_beat + PH_D[best];
+      // The hit's own send cleared the lane's pending state, so the next ratchet is set again.
+      PH_N[best] > 1 ? (
+        PH_T[best] = best_beat + PH_D[best];
+        PH_N[best] -= 1;
+      );
     );
   );
 );
@@ -1209,13 +1223,20 @@ playing = mode == 0 && !load_error && (play_state == 1 || play_state == 5);
             note = lane_get(s, L_NOTE) + get_value(pattern, s, pos, F_PITCH);
             note >= 0 && note <= 127 ? (
               // Swing delays every second step by a third of a step at full global and lane swing.
+              // Shift then delays the step by its fraction of a step, after swing.
               hit_t = next_k % 2 == 1 ? hit + swing / 10000 * lane_get(s, L_SWING) / 10000 * STEP_BEATS / 3 : hit;
+              hit_t += get_value(pattern, s, pos, F_SHIFT) / 10000 * STEP_BEATS;
               hit_end = hit_t + get_value(pattern, s, pos, F_GATE) / 10000 * STEP_BEATS;
               truncate ? hit_end = min(hit_end, hit + STEP_BEATS);
-              PH_T[s] = hit_t;
-              PH_NOTE[s] = note;
-              PH_VEL[s] = get_value(pattern, s, pos, F_VEL);
-              PH_END[s] = hit_end;
+              // A truncated step that shift pushed to its boundary has no room and is dropped.
+              hit_end > hit_t ? (
+                // The gate divides into equal ratchet intervals, each released by its end.
+                PH_N[s] = get_value(pattern, s, pos, F_RATCHET);
+                PH_D[s] = (hit_end - hit_t) / PH_N[s];
+                PH_T[s] = hit_t;
+                PH_NOTE[s] = note;
+                PH_VEL[s] = get_value(pattern, s, pos, F_VEL);
+              );
             );
           );
         );

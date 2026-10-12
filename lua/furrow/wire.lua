@@ -120,7 +120,9 @@ return {
   F_ON = 0,
   F_VEL = 1,
   F_PITCH = 3,
+  F_SHIFT = 8,
   F_GATE = 9,
+  F_RATCHET = 10,
   F_PROB = 12,
   STEP_FIELDS = 16,
 
