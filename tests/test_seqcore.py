@@ -418,6 +418,19 @@ class SeqCoreTest(unittest.TestCase):
         sent = [(e[3], e[4]) for e in self.rig.events if e[2] == 0xB0 and e[3] in (74, 71)]
         self.assertEqual(sent, [(74, 100), (74, 64), (71, 20), (71, 64)])
 
+    def test_changing_the_mod_controller_or_bend_range_returns_the_old_setting_to_rest(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 1), [OP_SET_STEP, 0, 0, 0, F_MOD_A, 100],
+                        [OP_SET_STEP, 0, 0, 1, F_MOD_A, 100],
+                        [OP_SET_STEP, 0, 0, 0, F_FINE, 50], [OP_SET_STEP, 0, 0, 1, F_FINE, 50]])
+        self.play(8)
+        self.rig.events.clear()
+        self.rig.apply([[OP_SET_LANE, 0, 13, 72], [OP_SET_LANE, 0, 9, 4]])
+        self.assertEqual([(e[2] & 0xF0, e[3], e[4]) for e in self.rig.events if e[2] & 0xF0 in (0xB0, 0xE0)],
+                         [(0xE0, 0, 64), (0xB0, 74, 64)])
+        self.play(14)
+        # 50 cents over 4 semitones is 8192 + 1024 = 9216, sent again for the first step.
+        self.assertEqual([(e[3], e[4]) for e in self.rig.events if e[2] == 0xE0], [(0, 72)])
+
     def test_a_swung_hit_that_crosses_a_block_edge_plays_once_in_the_next_block(self):
         self.rig.apply([add_lane(0), step_on(0, 1), [OP_SET_RACK, R_SWING, 10000]])
         # The hit lands at 7,350 samples. Blocks of 64 frames put several edges before it.
