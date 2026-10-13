@@ -356,6 +356,7 @@ On REAPER 7.82 for Linux, item extension data kept payloads of 1 KiB to 8 MiB ex
 
 ### Capture
 
+- Reading an item. `host.read_item` returns the item's metadata text, position, length, take offset and events, with each event's beat counted from the item start in quarter notes. The fingerprint sorts events by beat and then by their bytes, so events that share a tick give the same fingerprint whatever order REAPER returns them in. Items written before this change, with a different event order, will read as edited and fall back to conversion only.
 - An unedited Furrow item with valid metadata can restore the full source snapshot into a new pattern. Compare the fingerprint first. Track destinations are reconciled by stable IDs and GUIDs; never overwrite unrelated tracks or silently apply controller settings to them.
 - If MIDI or relevant item/take properties changed, show two choices: restore the original embedded source, or convert the current MIDI. Do not silently discard the user's MIDI edits. Missing or invalid metadata permits conversion only.
 - V1 conversion uses the selected item/take's effective project timing, pitches, velocities and note lengths. Preview channel-to-lane mapping and the resulting grid. Existing compatible lanes can be selected, and new lanes can be created as part of the same undo operation.

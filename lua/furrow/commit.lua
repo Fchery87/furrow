@@ -249,10 +249,22 @@ function commit.fingerprint(text)
 end
 
 -- The text an item's fingerprint covers: its place on the timeline, its take offset, and
--- its events one a line.
+-- its events one a line. Events sort by beat and then by their bytes, so events that share
+-- a tick read the same whether they come from the renderer or back from REAPER, which may
+-- reorder them.
 function commit.item_text(position, length, offset, events)
+  local sorted = {}
+  for i, e in ipairs(events) do
+    sorted[i] = e
+  end
+  table.sort(sorted, function(a, b)
+    if a.beat ~= b.beat then return a.beat < b.beat end
+    if a.status ~= b.status then return a.status < b.status end
+    if a.data1 ~= b.data1 then return a.data1 < b.data1 end
+    return a.data2 < b.data2
+  end)
   local lines = { string.format("%.9f %.9f %.9f", position, length, offset) }
-  for _, e in ipairs(events) do
+  for _, e in ipairs(sorted) do
     lines[#lines + 1] = string.format("%d %d %d %.9f", e.status, e.data1, e.data2, e.beat)
   end
   return table.concat(lines, "\n")
