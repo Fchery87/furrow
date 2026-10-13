@@ -58,6 +58,8 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual((meta.group, meta.lane, meta.rack, meta.fp), (42, 9, 3, "0123456789abcdef"))
         self.assertIsNone(self.lua.eval('capture.parse_meta("2 group 42 lane 9 rack 3 fp 0123456789abcdef")'))
         self.assertIsNone(self.lua.eval('capture.parse_meta("1 group 42 lane 9 rack 3 fp XYZ")'))
+        self.assertIsNone(self.lua.eval('capture.parse_meta("1 group 42 lane 9 rack 3 fp a")'))
+        self.assertIsNone(self.lua.eval('capture.parse_meta("1 group 42 lane 9 rack 3 fp 0123456789abcdef0")'))
         self.assertIsNone(self.lua.eval("capture.parse_meta(nil)"))
 
     def test_an_item_with_its_written_events_is_unedited(self):
