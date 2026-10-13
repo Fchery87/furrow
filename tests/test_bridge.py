@@ -109,6 +109,9 @@ class Stub:
                          self.project["RENDER_ENDPOS"])
 
     def EnumerateFiles(self, folder, i):
+        self.rescans = getattr(self, "rescans", 0) + (1 if i < 0 else 0)
+        if i < 0:
+            return None
         try:
             names = sorted(os.listdir(folder))
         except OSError:
@@ -193,6 +196,21 @@ class BridgeTest(unittest.TestCase):
         found = analyze(result["path"])
         self.assertFalse(found["silent"])
         self.assertEqual([round(o["time"], 2) for o in found["onsets"]], [0.1, 0.5, 1.0])
+
+    def test_a_repeat_render_returns_the_new_file_and_a_longer_name_is_not_mistaken_for_it(self):
+        other = self.spool / "render" / "render_x.wav"
+        write_clicks(other, [0.2], 1.0)
+        first = self.call("render", stop=1.0, name="render")
+        self.assertEqual(Path(first["path"]).name, "render.wav")
+        self.stub.click_times = [0.3]
+        second = self.call("render", stop=1.0, name="render")
+        self.assertEqual([round(o["time"], 2) for o in analyze(second["path"])["onsets"]], [0.3])
+        self.assertTrue(other.exists())
+
+    def test_the_directory_listing_is_reread_before_each_poll(self):
+        before = getattr(self.stub, "rescans", 0)
+        self.call("ping")
+        self.assertGreater(self.stub.rescans, before)
 
     def test_a_silent_render_is_reported_as_silent(self):
         path = self.spool / "render" / "quiet.wav"
