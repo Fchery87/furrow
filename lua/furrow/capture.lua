@@ -5,12 +5,15 @@ local commit = require("furrow.commit")
 
 local capture = {}
 
+-- commit.fingerprint always writes 16 hex digits, so any other length is damage.
+local META = "^1 group (%d+) lane (%d+) rack (%d+) fp (" .. string.rep("%x", 16) .. ")$"
+
 -- The metadata a commit writes on each item, or nil when it is missing or malformed.
 function capture.parse_meta(text)
   if type(text) ~= "string" then
     return nil
   end
-  local group, lane, rack, fp = text:match("^1 group (%d+) lane (%d+) rack (%d+) fp (%x+)$")
+  local group, lane, rack, fp = text:match(META)
   if not fp then
     return nil
   end
