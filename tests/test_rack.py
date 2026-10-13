@@ -749,7 +749,7 @@ class RackTest(unittest.TestCase):
         self.assertEqual((lane.swing, lane.bend, lane.mod_a, lane.mod_b), (4000, 12, 1, 2))
         self.assertEqual((lane.volume, lane.pan), (5000, 0))
 
-    def test_a_long_lane_pages_through_the_snapshot_window_and_plays_to_its_length(self):
+    def test_a_long_lane_shows_every_step_in_one_window_and_plays_to_its_length(self):
         self.c("add_sample", "/samples/kick.wav")
         self.settle()
         self.stub.undo.clear()
@@ -763,23 +763,42 @@ class RackTest(unittest.TestCase):
         self.tick(8)
         self.assertEqual(self.stub.undo, ["Furrow: set length", "Furrow: paint steps"])
         self.assertEqual(self.c("lanes")[1].length, 40)
-        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [1, 0])
         self.assertTrue(self.c("page_ready"))
+        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [1, 1])
+        window = self.coordinator.session.window
+        self.assertEqual((window.nl, window.s0, window.ns), (1, 0, 48))
         self.c("set_page", 2)
-        self.assertFalse(self.c("page_ready"))
-        self.tick(8)
-        self.assertTrue(self.c("page_ready"))
-        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [0, 1])
-        self.c("set_page", 99)
-        self.assertEqual(self.coordinator.page, 31)
-        self.c("set_page", 0)
-        self.tick(8)
-        self.assertEqual(self.c("step_value", 0, 3, F_ON), 1)
+        self.assertEqual(self.coordinator.page, 0)
         self.rig.events.clear()
         self.rig.seek(0.0)
         self.rig.run(200)
         starts = [round(e[0] / 5512.5) for e in self.rig.events if e[2] == 0x90 and e[4] > 0]
         self.assertEqual(starts, [3, 35])
+
+    def test_lanes_too_long_for_one_window_split_into_pages_that_fit(self):
+        for name in ("a", "b", "c", "d", "e"):
+            self.c("add_sample", "/samples/%s.wav" % name)
+            self.settle()
+        lua = self.rig.lua
+        self.c("set_length", 0, 512)
+        self.settle()
+        self.c("run", "paint steps", lua.table_from([lua.table_from([OP_SET_STEP, 0, 0, 450, F_ON, 1])]))
+        self.settle()
+        self.tick(8)
+        # Five lanes leave room for 409 steps, which rounds down to 400 in groups of 16.
+        self.assertEqual(tuple(self.c("view")), (5, 400, 2))
+        window = self.coordinator.session.window
+        self.assertEqual((window.nl, window.s0, window.ns), (5, 0, 400))
+        self.c("set_page", 1)
+        self.tick(8)
+        self.assertTrue(self.c("page_ready"))
+        window = self.coordinator.session.window
+        self.assertEqual((window.s0, window.ns), (400, 112))
+        self.assertEqual(self.c("step_value", 0, 450, F_ON), 1)
+        self.c("set_length", 0, 16)
+        self.settle()
+        self.tick(8)
+        self.assertEqual((self.coordinator.page, tuple(self.c("view"))), (0, (5, 16, 1)))
 
     def lane_steps(self, slot, steps, fields=(0, 1)):
         return {s: [self.c("step_value", slot, s, f) for f in fields] for s in steps}
@@ -853,7 +872,9 @@ class RackTest(unittest.TestCase):
         self.assertEqual(self.stub.undo, [])
         self.assertEqual(self.on_steps(), [0, 4, 8, 12])
         self.assertIsNone(self.coordinator.tool)
-        self.assertEqual(self.coordinator.session.window.nl, 64)
+        window, grid = self.coordinator.session.window, self.c("window")
+        self.assertEqual((window.nl, window.s0, window.ns), (grid.nl, grid.s0, grid.ns))
+        self.assertIsNone(self.coordinator.session.side)
 
     def test_a_tool_waits_for_pending_edits_before_it_reads_the_lane(self):
         self.painted_lane([])
@@ -1172,7 +1193,7 @@ class WindowTest(unittest.TestCase):
         finally:
             rig.close()
 
-    def test_the_window_shows_page_buttons_for_a_lane_longer_than_16_steps(self):
+    def test_a_longer_lane_grows_its_row_instead_of_adding_pages(self):
         rig = Rig()
         try:
             stub = StubReaper(rig)
@@ -1197,11 +1218,14 @@ class WindowTest(unittest.TestCase):
                     fn()
                 rig.block(playing=False)
                 stub.clock += 0.03
-            self.assertIn("1-16##page0", imgui.small_labels)
-            self.assertIn("17-32##page1", imgui.small_labels)
-            self.assertIn("33-48##page2", imgui.small_labels)
-            self.assertIn("97-112##page6", imgui.small_labels)
-            self.assertNotIn("113-128##page7", imgui.small_labels)
+            # A 100-step lane fits one window, so its row grows and no page buttons appear.
+            self.assertFalse([label for label in imgui.small_labels if "##page" in label])
+            imgui.calls.clear()
+            pending, stub.deferred = stub.deferred, []
+            for fn in pending:
+                fn()
+            # One frame draws a cell and a bar for each of the 100 steps.
+            self.assertEqual(imgui.calls.count("InvisibleButton"), 200)
         finally:
             rig.close()
 

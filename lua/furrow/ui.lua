@@ -138,6 +138,15 @@ function ui.run(ImGui)
     end
   end
 
+  -- The space before a step cell or bar. A wider gap marks each group of 16, so long rows
+  -- read in bars.
+  local function step_gap(step, first)
+    if step == first or step % wire.PAGE_STEPS == 0 then
+      return GAP * 3
+    end
+    return GAP
+  end
+
   local function step_cell(c, lane, step)
     local value = c:step_value(lane.slot, step, wire.F_ON)
     ImGui.InvisibleButton(ctx, "##s" .. step, CELL, CELL, ImGui.ButtonFlags_MouseButtonLeft | ImGui.ButtonFlags_MouseButtonRight)
@@ -249,14 +258,15 @@ function ui.run(ImGui)
       end
       ImGui.EndPopup(ctx)
     end
-    local first = c.page * wire.PAGE_STEPS
-    local last = math.min(lane.length, first + wire.PAGE_STEPS) - 1
+    local _, span = c:view()
+    local first = c.page * span
+    local last = math.min(lane.length, first + span) - 1
     if first > last then
       ImGui.SameLine(ctx, 0, GAP * 3)
       ImGui.TextDisabled(ctx, "this lane has " .. lane.length .. " steps")
     end
     for step = first, last do
-      ImGui.SameLine(ctx, 0, step == first and GAP * 3 or GAP)
+      ImGui.SameLine(ctx, 0, step_gap(step, first))
       ImGui.PushID(ctx, step)
       step_cell(c, lane, step)
       ImGui.PopID(ctx)
@@ -428,9 +438,10 @@ function ui.run(ImGui)
 
     local def = fields.list[edit_field]
     ImGui.Dummy(ctx, GRID_OFFSET - GAP * 3, BAR_HEIGHT)
-    local first = c.page * wire.PAGE_STEPS
-    for step = first, math.min(lane.length, first + wire.PAGE_STEPS) - 1 do
-      ImGui.SameLine(ctx, 0, step == first and GAP * 3 or GAP)
+    local _, span = c:view()
+    local first = c.page * span
+    for step = first, math.min(lane.length, first + span) - 1 do
+      ImGui.SameLine(ctx, 0, step_gap(step, first))
       ImGui.PushID(ctx, "bar" .. step)
       bar(c, lane, def, step)
       ImGui.PopID(ctx)
@@ -622,15 +633,9 @@ function ui.run(ImGui)
   end
 
   -- One button for each 16 steps of the longest lane. Every lane shows the chosen page.
+  -- Pages appear only when the lanes in use are too long to fit one snapshot window.
   local function pager(c)
-    local longest = wire.PAGE_STEPS
-    for _, lane in ipairs(c:lanes()) do
-      longest = math.max(longest, lane.length)
-    end
-    local pages = (longest + wire.PAGE_STEPS - 1) // wire.PAGE_STEPS
-    if c.page >= pages then
-      c:set_page(pages - 1)
-    end
+    local _, span, pages = c:view()
     if pages < 2 then
       return
     end
@@ -644,8 +649,8 @@ function ui.run(ImGui)
       if active then
         ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.on)
       end
-      local from = page * wire.PAGE_STEPS + 1
-      if ImGui.SmallButton(ctx, string.format("%d-%d##page%d", from, from + wire.PAGE_STEPS - 1, page)) then
+      local from = page * span + 1
+      if ImGui.SmallButton(ctx, string.format("%d-%d##page%d", from, math.min(from + span - 1, wire.MAX_STEPS), page)) then
         c:set_page(page)
       end
       if active then
@@ -765,7 +770,7 @@ function ui.run(ImGui)
     if open then
       ImGui.SetNextWindowSize(ctx, 760, 360, ImGui.Cond_FirstUseEver)
       local visible
-      visible, open = ImGui.Begin(ctx, "Furrow", true)
+      visible, open = ImGui.Begin(ctx, "Furrow", true, ImGui.WindowFlags_HorizontalScrollbar)
       if visible then
         draw()
         ImGui.End(ctx)

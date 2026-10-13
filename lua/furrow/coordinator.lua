@@ -151,13 +151,39 @@ function Coordinator:set_view(pattern)
   end
 end
 
--- The snapshot window follows the page the grid shows, 16 steps of every lane.
+-- How the grid shows steps. A row shows every step up to the longest lane, in whole groups
+-- of 16, so lengthening a lane adds cells. The snapshot window covers the lanes in use and
+-- holds at most WINDOW_MAX cells, so many long lanes split into pages of `span` steps.
+-- Returns the lanes to cover, the steps a page shows and the page count.
+function Coordinator:view()
+  local snap = self.session and self.session.snapshot
+  local top, longest = 0, wire.PAGE_STEPS
+  if snap then
+    for slot, lane in pairs(snap.lanes) do
+      top = math.max(top, slot + 1)
+      longest = math.max(longest, lane.length)
+    end
+  end
+  for slot in pairs(self.reserved) do
+    top = math.max(top, slot + 1)
+  end
+  local nl = math.max(1, top)
+  local wanted = (longest + wire.PAGE_STEPS - 1) // wire.PAGE_STEPS * wire.PAGE_STEPS
+  local fit = math.max(wire.PAGE_STEPS, wire.WINDOW_MAX // nl // wire.PAGE_STEPS * wire.PAGE_STEPS)
+  local span = math.min(wanted, fit)
+  return nl, span, (longest + span - 1) // span
+end
+
+-- The snapshot window follows the page the grid shows.
 function Coordinator:window()
-  return { pattern = self.pattern or 0, l0 = 0, nl = wire.LANES, s0 = self.page * wire.PAGE_STEPS, ns = wire.PAGE_STEPS }
+  local nl, span = self:view()
+  local s0 = self.page * span
+  return { pattern = self.pattern or 0, l0 = 0, nl = nl, s0 = s0, ns = math.min(span, wire.MAX_STEPS - s0) }
 end
 
 function Coordinator:set_page(page)
-  page = math.max(0, math.min(page, wire.MAX_STEPS // wire.PAGE_STEPS - 1))
+  local _, _, pages = self:view()
+  page = math.max(0, math.min(page, pages - 1))
   if page == self.page then
     return
   end
@@ -167,11 +193,32 @@ function Coordinator:set_page(page)
   end
 end
 
+-- Asks again when lanes or lengths change what the grid needs, unless a tool is reading
+-- its own side window.
+function Coordinator:follow_view()
+  local session = self.session
+  if not session or self.tool or session.side then
+    return
+  end
+  local _, _, pages = self:view()
+  if self.page >= pages then
+    self.page = pages - 1
+  end
+  local want, have = self:window(), session.window
+  if want.pattern ~= have.pattern or want.nl ~= have.nl or want.s0 ~= have.s0 or want.ns ~= have.ns then
+    session:request(want)
+  end
+end
+
 -- True once the snapshot holds the page the grid shows. Until then a step reads as zero
 -- whatever it holds, so step edits wait.
 function Coordinator:page_ready()
   local snap = self.session and self.session.snapshot
-  return snap ~= nil and snap.s0 == self.page * wire.PAGE_STEPS
+  if not snap then
+    return false
+  end
+  local want = self:window()
+  return snap.s0 == want.s0 and snap.ns >= want.ns and snap.nl >= want.nl
 end
 
 function Coordinator:set_length(slot, length)
@@ -410,6 +457,7 @@ function Coordinator:tick()
         self.reserved[slot] = nil
       end
     end
+    self:follow_view()
   end
   local beat = session:h(wire.H_HEARTBEAT)
   local now = reaper.time_precise()
