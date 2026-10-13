@@ -18,6 +18,9 @@ local GRID_OFFSET = 2 * CELL + NAME_WIDTH + 5 * GAP
 local DRAIN_SECONDS = 3
 local NOTICE_SECONDS = 5
 local NOTICE_FADE = 0.4
+-- The quietest step keeps this share of the full colour, so it still reads as on.
+local VELOCITY_FLOOR = 0.4
+local PLAYHEAD_REACH = 2
 local UNDO_COMMAND = 40029
 local REDO_COMMAND = 40030
 
@@ -37,7 +40,17 @@ local COLOR = {
   bar_off = 0x555B64FF,
   warn = 0xE8C35AFF,
   drop = 0x2A3A4AFF,
+  playhead_wash = 0xFFFFFF30,
+  selected_row = 0xFFFFFF0D,
 }
+
+-- A colour with its red, green and blue scaled by f and its alpha kept.
+function ui.shade(color, f)
+  local r = math.floor(((color >> 24) & 0xFF) * f + 0.5)
+  local g = math.floor(((color >> 16) & 0xFF) * f + 0.5)
+  local b = math.floor(((color >> 8) & 0xFF) * f + 0.5)
+  return (r << 24) | (g << 16) | (b << 8) | (color & 0xFF)
+end
 
 local function pick_rack(proj)
   local racks = host.find_racks(proj)
@@ -160,11 +173,21 @@ function ui.run(ImGui)
     ImGui.InvisibleButton(ctx, "##s" .. step, CELL, CELL, ImGui.ButtonFlags_MouseButtonLeft | ImGui.ButtonFlags_MouseButtonRight)
     local x1, y1 = ImGui.GetItemRectMin(ctx)
     local alt = (step // 4) % 2 == 1
-    local color = value == 1 and (alt and COLOR.on_alt or COLOR.on) or (alt and COLOR.off_alt or COLOR.off)
+    local color
+    if value == 1 then
+      -- Louder steps are brighter, so the row shows its dynamics without the editor.
+      local velocity = c:step_value(lane.slot, step, wire.F_VEL) or 100
+      color = ui.shade(alt and COLOR.on_alt or COLOR.on, VELOCITY_FLOOR + (1 - VELOCITY_FLOOR) * velocity / 127)
+    else
+      color = alt and COLOR.off_alt or COLOR.off
+    end
     local draw = ImGui.GetWindowDrawList(ctx)
     ImGui.DrawList_AddRectFilled(draw, x1, y1, x1 + CELL, y1 + CELL, color, 3)
     local playing = c.session:h(wire.H_PLAYING) == 1
     if playing and c.session:playhead(lane.slot) == step then
+      -- The wash reaches into the row gaps, so lanes on the same step read as one column.
+      ImGui.DrawList_AddRectFilled(draw, x1, y1 - PLAYHEAD_REACH, x1 + CELL, y1 + CELL + PLAYHEAD_REACH,
+        COLOR.playhead_wash)
       ImGui.DrawList_AddRect(draw, x1, y1, x1 + CELL, y1 + CELL, COLOR.playhead, 3, 0, 2)
     end
     if not c:processing() or not c:page_ready() then
@@ -261,6 +284,17 @@ function ui.run(ImGui)
 
   local function lane_row(c, lane)
     ImGui.PushID(ctx, "lane" .. lane.slot)
+    local selected = lane.slot == edit_slot
+    -- A faint band behind the whole row ties it to the step editor below.
+    local rx, ry = ImGui.GetCursorScreenPos(ctx)
+    if selected and rx then
+      local _, span = c:view()
+      local first = c.page * span
+      local count = math.max(0, math.min(lane.length, first + span) - first)
+      local width = GRID_OFFSET + count * (CELL + GAP) + (count // wire.PAGE_STEPS) * 2 * GAP
+      ImGui.DrawList_AddRectFilled(ImGui.GetWindowDrawList(ctx), rx - GAP, ry - 1, rx + width, ry + CELL + 1,
+        COLOR.selected_row, 4)
+    end
     toggle(c, lane, wire.L_MUTE, "M", lane.mute)
     ImGui.SameLine(ctx, 0, GAP)
     toggle(c, lane, wire.L_SOLO, "S", lane.solo)
@@ -272,13 +306,20 @@ function ui.run(ImGui)
     elseif lane.mute then
       ImGui.PushStyleColor(ctx, ImGui.Col_Text, COLOR.muted)
     end
-    local selected = lane.slot == edit_slot
     if selected then
       ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.selected)
     end
-    if ImGui.Button(ctx, name .. "##name", NAME_WIDTH, CELL) and c:processing() then
+    -- A click selects the lane for editing. Hearing it is deliberate, so selecting during
+    -- playback stays quiet.
+    local clicked = ImGui.Button(ctx, name .. "##name", NAME_WIDTH, CELL)
+    local alt = ((ImGui.GetKeyMods(ctx) or 0) & ImGui.Mod_Alt) ~= 0
+    local hear = (clicked and alt)
+      or (ImGui.IsItemHovered(ctx) and ImGui.IsMouseDoubleClicked(ctx, ImGui.MouseButton_Left))
+    if (clicked or hear) and c:processing() then
       edit_slot = lane.slot
-      c:audition(lane.slot)
+      if hear then
+        c:audition(lane.slot)
+      end
     end
     if selected then
       ImGui.PopStyleColor(ctx, 1)
@@ -286,9 +327,13 @@ function ui.run(ImGui)
     if not track or lane.mute then
       ImGui.PopStyleColor(ctx, 1)
     end
-    tooltip("Click to hear it and edit its steps. Right-click for fill, rotate and more.")
+    tooltip("Click to edit its steps. Double-click or Alt-click to hear it. Right-click for more.")
     if ImGui.BeginPopupContextItem(ctx, "lane menu") then
       local ready = c:processing() and not c.tool
+      if ImGui.MenuItem(ctx, "Hear sample", nil, false, c:processing()) then
+        c:audition(lane.slot)
+      end
+      ImGui.Separator(ctx)
       for _, every in ipairs({ 2, 3, 4, 8 }) do
         if ImGui.MenuItem(ctx, "Fill every " .. every, nil, false, ready) then
           c:lane_tool(lane.slot, "fill", every)
@@ -342,6 +387,9 @@ function ui.run(ImGui)
     end
     local on = c:step_value(lane.slot, step, wire.F_ON) == 1
     ImGui.DrawList_AddRectFilled(draw, x1 + 2, top, x1 + CELL - 2, bottom, on and COLOR.on or COLOR.bar_off, 2)
+    if c.session:h(wire.H_PLAYING) == 1 and c.session:playhead(lane.slot) == step then
+      ImGui.DrawList_AddRectFilled(draw, x1, y1, x1 + CELL, y1 + BAR_HEIGHT, COLOR.playhead_wash, 3)
+    end
     if not c:processing() or not c:page_ready() then
       return
     end

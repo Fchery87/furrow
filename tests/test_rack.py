@@ -1121,6 +1121,7 @@ class FakeImGui:
         self.lane = 0
         self.bar = None
         self.rect = None
+        self.mods = 0
 
     def place(self, label, width, height):
         if label.startswith("##s"):
@@ -1153,6 +1154,10 @@ class FakeImGui:
                     return fake.down
                 if name == "IsMouseClicked":
                     return fake.clicked
+                if name == "GetKeyMods":
+                    return fake.mods
+                if name == "GetCursorScreenPos":
+                    return 0.0, 0.0
                 if name == "IsItemHovered":
                     if not (fake.mouse and fake.rect):
                         return False
@@ -1422,6 +1427,58 @@ class WindowTest(unittest.TestCase):
             self.assertEqual([t.name for t in stub.tracks], ["Furrow Rack", "Furrow Engine", "kick"])
             self.assertEqual([e for e in stub.log if e[0] == "browse"], [("browse", "Add an audio file to Furrow")] * 2)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
+        finally:
+            rig.close()
+
+    def test_clicking_a_lane_name_selects_it_quietly_and_alt_click_or_the_menu_plays_it(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            heard = {}
+            for frame in range(70):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame == 25:
+                    rig.events.clear()
+                    imgui.press = "perc##name"
+                if frame == 35:
+                    heard["click"] = [e for e in rig.events if e[2] == 0x90 and e[4] > 0]
+                    imgui.mods = 1
+                    imgui.press = "perc##name"
+                if frame == 36:
+                    imgui.mods = 0
+                if frame == 45:
+                    heard["alt"] = [e for e in rig.events if e[2] == 0x90 and e[4] > 0]
+                    rig.events.clear()
+                    imgui.menu_open = True
+                    imgui.press = "Hear sample"
+                if frame == 46:
+                    imgui.menu_open = False
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            heard["menu"] = [e for e in rig.events if e[2] == 0x90 and e[4] > 0]
+            self.assertEqual((len(heard["click"]), len(heard["alt"]), len(heard["menu"])), (0, 1, 1))
+        finally:
+            rig.close()
+
+    def test_shade_scales_the_colour_and_keeps_its_alpha(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            rig.lua.globals().reaper = stub.table(rig.lua)
+            ui = rig.lua.eval('(require("furrow.ui"))')
+            self.assertEqual(ui.shade(0xE8A33DFF, 1.0), 0xE8A33DFF)
+            self.assertEqual(ui.shade(0xE8A33D80, 0.5), 0x74521F80)
+            self.assertEqual(ui.shade(0xFFFFFFFF, 0.0), 0x000000FF)
         finally:
             rig.close()
 
