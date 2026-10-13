@@ -24,6 +24,8 @@ local COLOR = {
   off_alt = 0x2E3239FF,
   on = 0xE8A33DFF,
   on_alt = 0xD08A2AFF,
+  on_text = 0x1E1E1EFF,
+  selected = 0x4F5B6EFF,
   playhead = 0xFFFFFFFF,
   missing = 0xE0605AFF,
   muted = 0x8A8F98FF,
@@ -91,6 +93,13 @@ function ui.run(ImGui)
       coordinator = Coordinator.new(proj, rack)
     else
       reaper.ShowMessageBox(err, "Furrow", 0)
+    end
+  end
+
+  -- Explains the item just drawn when the mouse rests on it.
+  local function tooltip(text)
+    if ImGui.IsItemHovered(ctx) then
+      ImGui.SetTooltip(ctx, text)
     end
   end
 
@@ -165,13 +174,21 @@ function ui.run(ImGui)
     elseif lane.mute then
       ImGui.PushStyleColor(ctx, ImGui.Col_Text, COLOR.muted)
     end
+    local selected = lane.slot == edit_slot
+    if selected then
+      ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.selected)
+    end
     if ImGui.Button(ctx, name .. "##name", NAME_WIDTH, CELL) and c:processing() then
       edit_slot = lane.slot
       c:audition(lane.slot)
     end
+    if selected then
+      ImGui.PopStyleColor(ctx, 1)
+    end
     if not track or lane.mute then
       ImGui.PopStyleColor(ctx, 1)
     end
+    tooltip("Click to hear it and edit its steps. Right-click for fill, rotate and more.")
     if ImGui.BeginPopupContextItem(ctx, "lane menu") then
       local ready = c:processing() and not c.tool
       for _, every in ipairs({ 2, 3, 4, 8 }) do
@@ -311,31 +328,15 @@ function ui.run(ImGui)
     end
     edit_slot = lane.slot
     local track = c:lane_track(lane)
+    ImGui.Dummy(ctx, 0, GAP * 2)
     ImGui.Separator(ctx)
-    ImGui.Text(ctx, "Step editor  " .. (track and host.track_name(track) or ("Lane " .. (lane.slot + 1))))
-    for index, def in ipairs(fields.list) do
-      -- The second group of fields starts a new row.
-      if index ~= FIELD_ROW_BREAK then
-        ImGui.SameLine(ctx, 0, GAP * 3)
-      end
-      local active = index == edit_field
-      if active then
-        ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.on)
-      end
-      if ImGui.SmallButton(ctx, def.name) then
-        edit_field = index
-      end
-      if active then
-        ImGui.PopStyleColor(ctx, 1)
-      end
-    end
-    ImGui.SameLine(ctx, 0, GAP * 6)
+    ImGui.Text(ctx, track and host.track_name(track) or ("Lane " .. (lane.slot + 1)))
+
     local now = reaper.time_precise()
     local shown = lane.length
     if length_shown and length_shown.slot == lane.slot and now < length_shown.until_time then
       shown = length_shown.value
     end
-    ImGui.Text(ctx, "Length " .. shown)
     local function set_length(target)
       target = math.max(1, math.min(wire.MAX_STEPS, target))
       length_typed = nil
@@ -345,27 +346,51 @@ function ui.run(ImGui)
         shown = target
       end
     end
-    for _, change in ipairs(LENGTH_CHANGES) do
-      ImGui.SameLine(ctx, 0, GAP)
+    local function length_button(change)
       if ImGui.SmallButton(ctx, string.format("%+d##length%d", change, change)) and c:processing() then
         set_length(shown + change)
       end
     end
-    -- A typed length waits for the Set button, so a half-typed number is never sent.
-    if length_typed and length_typed.slot ~= lane.slot then
-      length_typed = nil
+    ImGui.SameLine(ctx, 0, GAP * 6)
+    ImGui.TextDisabled(ctx, "Length")
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    length_button(-1)
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    ImGui.Text(ctx, tostring(shown))
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    length_button(1)
+
+    -- The everyday fields are buttons. The rest wait in a list, so the row stays short.
+    for index, def in ipairs(fields.list) do
+      if index < FIELD_ROW_BREAK then
+        if index > 1 then
+          ImGui.SameLine(ctx, 0, GAP)
+        end
+        local active = index == edit_field
+        if active then
+          ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.on)
+          ImGui.PushStyleColor(ctx, ImGui.Col_Text, COLOR.on_text)
+        end
+        if ImGui.SmallButton(ctx, def.name) then
+          edit_field = index
+        end
+        if active then
+          ImGui.PopStyleColor(ctx, 2)
+        end
+      end
     end
-    ImGui.SameLine(ctx, 0, GAP * 4)
-    ImGui.SetNextItemWidth(ctx, 90)
-    local edited, typed = ImGui.InputInt(ctx, "##lengthtyped", length_typed and length_typed.value or shown, 0, 0)
-    if edited then
-      length_typed = { slot = lane.slot, value = typed }
+    ImGui.SameLine(ctx, 0, GAP * 3)
+    local more = edit_field >= FIELD_ROW_BREAK and fields.list[edit_field].name or "More"
+    ImGui.SetNextItemWidth(ctx, 110)
+    if ImGui.BeginCombo(ctx, "##morefields", more) then
+      for index = FIELD_ROW_BREAK, #fields.list do
+        if ImGui.Selectable(ctx, fields.list[index].name .. "##field" .. index, index == edit_field) then
+          edit_field = index
+        end
+      end
+      ImGui.EndCombo(ctx)
     end
-    ImGui.SameLine(ctx, 0, GAP)
-    if ImGui.SmallButton(ctx, "Set##lengthset") and length_typed and c:processing() then
-      set_length(length_typed.value)
-    end
-    lane_settings(c, lane)
+
     local def = fields.list[edit_field]
     ImGui.Dummy(ctx, GRID_OFFSET - GAP * 3, BAR_HEIGHT)
     local first = c.page * wire.PAGE_STEPS
@@ -374,6 +399,32 @@ function ui.run(ImGui)
       ImGui.PushID(ctx, "bar" .. step)
       bar(c, lane, def, step)
       ImGui.PopID(ctx)
+    end
+
+    -- Settings a lane rarely changes stay folded away until asked for.
+    if ImGui.CollapsingHeader(ctx, "Lane settings##lanesettings") then
+      ImGui.TextDisabled(ctx, "Length")
+      for _, change in ipairs(LENGTH_CHANGES) do
+        if change ~= -1 and change ~= 1 then
+          ImGui.SameLine(ctx, 0, GAP * 2)
+          length_button(change)
+        end
+      end
+      -- A typed length waits for the Set button, so a half-typed number is never sent.
+      if length_typed and length_typed.slot ~= lane.slot then
+        length_typed = nil
+      end
+      ImGui.SameLine(ctx, 0, GAP * 4)
+      ImGui.SetNextItemWidth(ctx, 90)
+      local edited, typed = ImGui.InputInt(ctx, "##lengthtyped", length_typed and length_typed.value or shown, 0, 0)
+      if edited then
+        length_typed = { slot = lane.slot, value = typed }
+      end
+      ImGui.SameLine(ctx, 0, GAP)
+      if ImGui.SmallButton(ctx, "Set##lengthset") and length_typed and c:processing() then
+        set_length(length_typed.value)
+      end
+      lane_settings(c, lane)
     end
   end
 
@@ -388,9 +439,7 @@ function ui.run(ImGui)
         name = entry.name
       end
     end
-    ImGui.Text(ctx, "Pattern")
-    ImGui.SameLine(ctx, 0, GAP * 2)
-    ImGui.SetNextItemWidth(ctx, 200)
+    ImGui.SetNextItemWidth(ctx, 180)
     if ImGui.BeginCombo(ctx, "##pattern", name) then
       for _, entry in ipairs(list) do
         if ImGui.Selectable(ctx, entry.name .. "##pattern" .. entry.index, entry.index == current) then
@@ -399,44 +448,52 @@ function ui.run(ImGui)
       end
       ImGui.EndCombo(ctx)
     end
-    ImGui.SameLine(ctx, 0, GAP * 2)
-    if ImGui.SmallButton(ctx, "New##pattern") then
-      c:new_pattern()
-    end
+    -- New, clone, clear and rename are occasional, so they live in the pattern menu.
     ImGui.SameLine(ctx, 0, GAP)
-    if ImGui.SmallButton(ctx, "Clone##pattern") then
-      c:clone_pattern()
+    if ImGui.Button(ctx, "...##patternmenu") then
+      ImGui.OpenPopup(ctx, "pattern menu")
     end
-    ImGui.SameLine(ctx, 0, GAP)
-    if ImGui.SmallButton(ctx, "Clear##pattern") then
-      c:clear_pattern(current)
-    end
-    if rename_typed and rename_typed.pattern ~= current then
-      rename_typed = nil
-    end
-    ImGui.SameLine(ctx, 0, GAP * 4)
-    ImGui.SetNextItemWidth(ctx, 160)
-    local edited, text = ImGui.InputText(ctx, "##patternname", rename_typed and rename_typed.text or name)
-    if edited then
-      rename_typed = { pattern = current, text = text }
-    end
-    ImGui.SameLine(ctx, 0, GAP)
-    if ImGui.SmallButton(ctx, "Rename##pattern") and rename_typed then
-      c:rename_pattern(current, rename_typed.text)
-      rename_typed = nil
+    tooltip("New, clone, clear or rename the pattern")
+    if ImGui.BeginPopup(ctx, "pattern menu") then
+      if ImGui.MenuItem(ctx, "New pattern##pattern") then
+        c:new_pattern()
+      end
+      if ImGui.MenuItem(ctx, "Clone pattern##pattern") then
+        c:clone_pattern()
+      end
+      if ImGui.MenuItem(ctx, "Clear pattern##pattern") then
+        c:clear_pattern(current)
+      end
+      ImGui.Separator(ctx)
+      if rename_typed and rename_typed.pattern ~= current then
+        rename_typed = nil
+      end
+      ImGui.SetNextItemWidth(ctx, 160)
+      local edited, text = ImGui.InputText(ctx, "##patternname", rename_typed and rename_typed.text or name)
+      if edited then
+        rename_typed = { pattern = current, text = text }
+      end
+      ImGui.SameLine(ctx, 0, GAP)
+      if ImGui.SmallButton(ctx, "Rename##pattern") and rename_typed then
+        c:rename_pattern(current, rename_typed.text)
+        rename_typed = nil
+        ImGui.CloseCurrentPopup(ctx)
+      end
+      ImGui.EndPopup(ctx)
     end
     local queued = c.session:h(wire.H_PENDING_PATTERN)
     if queued >= 0 and queued ~= current then
       for _, entry in ipairs(list) do
         if entry.index == queued then
-          ImGui.SameLine(ctx, 0, GAP * 4)
-          ImGui.TextDisabled(ctx, "plays next: " .. entry.name)
+          ImGui.SameLine(ctx, 0, GAP * 3)
+          ImGui.TextDisabled(ctx, "next: " .. entry.name)
         end
       end
     end
   end
 
-  -- Global feel controls. A swing drag is one gesture and one undo point.
+  -- Global feel controls, shown in the Groove popup. A swing drag is one gesture and one
+  -- undo point.
   local function feel(c)
     local snap = c.session and c.session.snapshot
     if not snap then
@@ -454,45 +511,82 @@ function ui.run(ImGui)
       swing_shown = { value = value, until_time = now + 0.5 }
       c:add(swing_edit.gesture, { { wire.OP_SET_RACK, wire.R_SWING, value * 100 } })
     end
-    ImGui.SameLine(ctx, 0, GAP * 4)
     local cut, cut_value = ImGui.Checkbox(ctx, "Cut swung notes", snap.rack.truncate == 1)
     if cut and c:processing() then
       c:run("set swing cut", { { wire.OP_SET_RACK, wire.R_TRUNCATE, cut_value and 1 or 0 } })
     end
-    ImGui.SameLine(ctx, 0, GAP * 4)
+    ImGui.Separator(ctx)
     if ImGui.Button(ctx, "Reroll chances") and c:processing() then
       c:run("reroll chances", { { wire.OP_SET_RACK, wire.R_SEED, math.random(0, wire.SEED_MAX) } })
     end
     ImGui.SameLine(ctx, 0, GAP * 2)
     ImGui.TextDisabled(ctx, "seed " .. snap.rack.seed)
-    ImGui.Separator(ctx)
+  end
+
+  -- A two-button switch whose lit half shows what is sounding.
+  local function segment(label, lit, hint)
+    if lit then
+      ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.on)
+      ImGui.PushStyleColor(ctx, ImGui.Col_Text, COLOR.on_text)
+    end
+    local clicked = ImGui.Button(ctx, label)
+    if lit then
+      ImGui.PopStyleColor(ctx, 2)
+    end
+    tooltip(hint)
+    return clicked and not lit
+  end
+
+  -- What plays. Live is SeqCore's pattern. Items is the committed MIDI items, which sound
+  -- only while the rack is in Items mode. Commit renders the shown pattern at the edit cursor.
+  local function playback(c)
+    local items = c.session.snapshot.rack.mode == 1
+    if segment("Live##mode", not items, "Play the pattern live from SeqCore") then
+      c:set_mode(0)
+    end
+    ImGui.SameLine(ctx, 0, 0)
+    if segment("Items##mode", items, "Play the committed MIDI items instead") then
+      c:set_mode(1)
+    end
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    if ImGui.Button(ctx, "Commit##commit") then
+      c:commit_pattern()
+    end
+    tooltip("Render the shown pattern to MIDI items at the edit cursor")
+  end
+
+  local function groove(c)
+    if ImGui.Button(ctx, "Groove##groove") then
+      ImGui.OpenPopup(ctx, "groove")
+    end
+    tooltip("Swing and chance settings for the whole rack")
+    if ImGui.BeginPopup(ctx, "groove") then
+      feel(c)
+      ImGui.EndPopup(ctx)
+    end
+  end
+
+  -- The transport readout. Engine diagnostics wait in its tooltip.
+  local function transport(c)
+    local playing = c.session:h(wire.H_PLAYING) == 1
+    ImGui.TextDisabled(ctx, string.format("%s  %.0f BPM", playing and "Playing" or "Stopped", reaper.Master_GetTempo()))
+    tooltip(string.format("slot %d   block %.0f us   free pages %d", c.slot,
+      c.session:h(wire.H_BLOCK_MAX_US), c.session:h(wire.H_POOL_FREE)))
+  end
+
+  -- One row: the pattern and its menu, what plays, the groove popup and the transport.
+  local function header(c)
+    patterns_row(c)
+    ImGui.SameLine(ctx, 0, GAP * 6)
+    playback(c)
+    ImGui.SameLine(ctx, 0, GAP * 6)
+    groove(c)
+    ImGui.SameLine(ctx, 0, GAP * 6)
+    transport(c)
+    ImGui.Dummy(ctx, 0, GAP)
   end
 
   -- One button for each 16 steps of the longest lane. Every lane shows the chosen page.
-  -- What plays. Live is SeqCore's pattern. Items is the committed MIDI items, which sound
-  -- only while the rack is in Items mode. Commit renders the shown pattern at the edit cursor.
-  local function playback_row(c)
-    local snap = c.session and c.session.snapshot
-    if not snap then
-      return
-    end
-    local items = snap.rack.mode == 1
-    ImGui.Text(ctx, "Playing " .. (items and "committed items" or "live pattern"))
-    ImGui.SameLine(ctx, 0, GAP * 3)
-    if ImGui.SmallButton(ctx, "Live##mode") and items then
-      c:set_mode(0)
-    end
-    ImGui.SameLine(ctx, 0, GAP)
-    if ImGui.SmallButton(ctx, "Items##mode") and not items then
-      c:set_mode(1)
-    end
-    ImGui.SameLine(ctx, 0, GAP * 3)
-    if ImGui.SmallButton(ctx, "Commit at cursor##commit") then
-      c:commit_pattern()
-    end
-    ImGui.Separator(ctx)
-  end
-
   local function pager(c)
     local longest = wire.PAGE_STEPS
     for _, lane in ipairs(c:lanes()) do
@@ -525,10 +619,13 @@ function ui.run(ImGui)
     end
   end
 
-  local function drop_zone(c)
+  -- Large while the rack is empty, and a slim strip once it has lanes.
+  local function drop_zone(c, empty)
     local w = ImGui.GetContentRegionAvail(ctx)
+    ImGui.Dummy(ctx, 0, GAP * 2)
     ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.drop)
-    ImGui.Button(ctx, "Drop audio files here to add lanes", w, 48)
+    ImGui.Button(ctx, empty and "Drop audio files here to add lanes" or "+ Drop audio files to add lanes", w,
+      empty and 96 or CELL)
     ImGui.PopStyleColor(ctx, 1)
     if ImGui.BeginDragDropTarget(ctx) then
       local ok, count = ImGui.AcceptDragDropPayloadFiles(ctx)
@@ -544,14 +641,8 @@ function ui.run(ImGui)
     end
   end
 
-  local function top_bar(c)
-    local playing = c.session and c.session:h(wire.H_PLAYING) == 1
-    ImGui.Text(ctx, string.format("%s   %.2f BPM   Live", playing and "Playing" or "Stopped", reaper.Master_GetTempo()))
-    if c.session then
-      ImGui.SameLine(ctx)
-      ImGui.TextDisabled(ctx, string.format("   slot %d   block %.0f us   free pages %d", c.slot,
-        c.session:h(wire.H_BLOCK_MAX_US), c.session:h(wire.H_POOL_FREE)))
-    end
+  -- Shows only what needs attention: a connection problem or a message to dismiss.
+  local function status_line(c)
     if c.status ~= "ready" then
       ImGui.TextColored(ctx, COLOR.warn, STATUS_TEXT[c.status] or c.status)
     end
@@ -562,13 +653,12 @@ function ui.run(ImGui)
         c.message = nil
       end
     end
-    ImGui.Separator(ctx)
   end
 
   local function draw()
     if reaper.EnumProjects(-1) ~= proj then
       if coordinator then
-        top_bar(coordinator)
+        status_line(coordinator)
       end
       ImGui.TextColored(ctx, COLOR.warn, "This rack's project is not the active tab.")
       return
@@ -581,17 +671,20 @@ function ui.run(ImGui)
       return
     end
     local c = coordinator
-    top_bar(c)
     if c.session and c.session.snapshot then
-      patterns_row(c)
-      feel(c)
-      playback_row(c)
+      header(c)
+      status_line(c)
+      ImGui.Separator(ctx)
+      ImGui.Dummy(ctx, 0, GAP)
       pager(c)
-      for _, lane in ipairs(c:lanes()) do
+      local lanes = c:lanes()
+      for _, lane in ipairs(lanes) do
         lane_row(c, lane)
       end
       editor(c)
-      drop_zone(c)
+      drop_zone(c, #lanes == 0)
+    else
+      status_line(c)
     end
     if ImGui.IsWindowFocused(ctx, ImGui.FocusedFlags_RootAndChildWindows) then
       if ImGui.IsKeyPressed(ctx, ImGui.Key_Space, false) then

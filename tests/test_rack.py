@@ -1082,6 +1082,8 @@ class FakeImGui:
         self.small_labels = []
         self.press = None
         self.menu_open = False
+        self.popup = None
+        self.expanded = True
         self.typed = None
         self.slide = None
 
@@ -1100,6 +1102,10 @@ class FakeImGui:
                     return True, value
                 if name == "BeginPopupContextItem":
                     return fake.menu_open
+                if name == "BeginPopup":
+                    return args[1] == fake.popup
+                if name == "CollapsingHeader":
+                    return fake.expanded
                 if name == "MenuItem" and args[1] == fake.press:
                     fake.press = None
                     return True
@@ -1139,6 +1145,7 @@ class WindowTest(unittest.TestCase):
             host = lua.eval('(require("furrow.host"))')
             host.create_rack()
             imgui = FakeImGui()
+            imgui.popup = "groove"
             ui = lua.eval('(require("furrow.ui"))')
             ui.run(imgui.table(lua))
             for frame in range(30):
@@ -1155,7 +1162,7 @@ class WindowTest(unittest.TestCase):
             self.assertIn("SliderInt", imgui.calls)
             self.assertIn("Checkbox", imgui.calls)
             self.assertIn("BeginCombo", imgui.calls)
-            self.assertIn("New##pattern", imgui.small_labels)
+            self.assertIn("CollapsingHeader", imgui.calls)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
         finally:
             rig.close()
@@ -1234,7 +1241,8 @@ class WindowTest(unittest.TestCase):
                 if frame == 6:
                     imgui.drop.append("/samples/perc.wav")
                 if frame == 30:
-                    imgui.press = "Clone##pattern"
+                    imgui.popup = "pattern menu"
+                    imgui.press = "Clone pattern##pattern"
                 pending, stub.deferred = stub.deferred, []
                 for fn in pending:
                     fn()
@@ -1310,7 +1318,8 @@ class WindowTest(unittest.TestCase):
                 if frame == 6:
                     imgui.drop.append("/samples/perc.wav")
                 if frame == 30:
-                    imgui.press = "New##pattern"
+                    imgui.popup = "pattern menu"
+                    imgui.press = "New pattern##pattern"
                 pending, stub.deferred = stub.deferred, []
                 for fn in pending:
                     fn()
