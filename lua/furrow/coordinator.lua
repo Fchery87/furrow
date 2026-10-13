@@ -940,6 +940,11 @@ function Coordinator:run_commit(tool)
         undo_all()
         return false, err
       end
+      c.notice = {
+        text = string.format("Committed %d lane%s at the edit cursor. Now playing the items.", #lanes,
+          #lanes == 1 and "" or "s"),
+        at = reaper.time_precise(),
+      }
       return true
     end,
   })

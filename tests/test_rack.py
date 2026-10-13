@@ -592,6 +592,7 @@ class RackTest(unittest.TestCase):
         self.assertEqual(self.stub.undo, ["Furrow: commit pattern"])
         self.assertEqual(len(tracks), 2)
         self.assertEqual(self.coordinator.session.snapshot.rack.mode, 1)
+        self.assertEqual(self.coordinator.notice.text, "Committed 2 lanes at the edit cursor. Now playing the items.")
         rack_id = self.coordinator.session.snapshot.rack.id
         for track in tracks:
             self.assertEqual(track.info["B_MAINSEND"], 0.0)
@@ -1112,6 +1113,21 @@ class FakeImGui:
         self.expanded = True
         self.typed = None
         self.slide = None
+        # A mouse for drag tests. Step cells sit at x = step * 25 in their lane's row, and
+        # bars sit in one row at y = 500, so a test can move the mouse over real places.
+        self.mouse = None
+        self.down = False
+        self.clicked = False
+        self.lane = 0
+        self.bar = None
+        self.rect = None
+
+    def place(self, label, width, height):
+        if label.startswith("##s"):
+            return (int(label[3:]) * 25.0, self.lane * 25.0, width, height)
+        if label == "##bar":
+            return (self.bar * 25.0, 500.0, width, height)
+        return None
 
     def table(self, lua):
         fake = self
@@ -1119,6 +1135,29 @@ class FakeImGui:
         def call(name):
             def fn(*args):
                 fake.calls.append(name)
+                if name == "PushID" and isinstance(args[1], str):
+                    if args[1].startswith("lane"):
+                        fake.lane = int(args[1][4:])
+                    elif args[1].startswith("bar"):
+                        fake.bar = int(args[1][3:])
+                if name == "InvisibleButton":
+                    fake.rect = fake.place(args[1], args[2], args[3])
+                elif name in ("Button", "SmallButton", "Text", "TextDisabled", "SliderInt", "Checkbox",
+                              "InputInt", "InputText", "BeginCombo", "Selectable", "Dummy"):
+                    fake.rect = None
+                if name == "GetItemRectMin":
+                    return (fake.rect[0], fake.rect[1]) if fake.rect else (0.0, 0.0)
+                if name == "GetMousePos":
+                    return fake.mouse if fake.mouse else (-1000.0, -1000.0)
+                if name == "IsMouseDown":
+                    return fake.down
+                if name == "IsMouseClicked":
+                    return fake.clicked
+                if name == "IsItemHovered":
+                    if not (fake.mouse and fake.rect):
+                        return False
+                    x, y, w, h = fake.rect
+                    return x <= fake.mouse[0] < x + w and y <= fake.mouse[1] < y + h
                 if name == "InputInt" and fake.typed is not None:
                     typed, fake.typed = fake.typed, None
                     return True, typed
@@ -1148,7 +1187,7 @@ class FakeImGui:
                     return (True, len(fake.drop)) if fake.drop else (False, 0)
                 if name == "GetDragDropPayloadFile":
                     return True, fake.drop.pop(0)
-                if name in ("GetItemRectMin", "GetContentRegionAvail"):
+                if name == "GetContentRegionAvail":
                     return 0.0, 0.0
                 if name.startswith(("Is", "Button", "SmallButton", "MenuItem", "BeginPopup", "InvisibleButton")):
                     return False
@@ -1383,6 +1422,81 @@ class WindowTest(unittest.TestCase):
             self.assertEqual([t.name for t in stub.tracks], ["Furrow Rack", "Furrow Engine", "kick"])
             self.assertEqual([e for e in stub.log if e[0] == "browse"], [("browse", "Add an audio file to Furrow")] * 2)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
+        finally:
+            rig.close()
+
+    def test_holding_a_length_button_repeats_and_makes_one_undo_point(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(60):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                # Five repeats while the mouse stays down, then the release.
+                if 30 <= frame < 35:
+                    imgui.down = True
+                    imgui.press = "+1##length1"
+                if frame == 35:
+                    imgui.down = False
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: set length"])
+            imgui.calls.clear()
+            pending, stub.deferred = stub.deferred, []
+            for fn in pending:
+                fn()
+            # The lane grew from 16 to 21 steps, so one frame draws 21 cells and 21 bars.
+            self.assertEqual(imgui.calls.count("InvisibleButton"), 42)
+        finally:
+            rig.close()
+
+    def test_a_fast_drag_paints_every_cell_and_bar_it_crosses(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            # Each drag jumps from step 1 to step 13 in a single frame.
+            moves = {
+                30: ((11.0, 11.0), True, True), 31: ((311.0, 11.0), True, False), 32: (None, False, False),
+                40: ((11.0, 500.0), True, True), 41: ((311.0, 584.0), True, False), 42: (None, False, False),
+            }
+            for frame in range(60):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame in moves:
+                    imgui.mouse, imgui.down, imgui.clicked = moves[frame]
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: paint steps", "Furrow: edit velocity"])
+            rig.events.clear()
+            rig.seek(0.0)
+            rig.run(88)
+            hits = [(round(e[0] / 5512.5), e[4]) for e in rig.events if e[2] == 0x90 and e[4] > 0]
+            hits = [hit for hit in hits if hit[0] < 16]
+            self.assertEqual([step for step, _ in hits], list(range(13)))
+            velocities = [v for _, v in hits]
+            # A bar takes the path's last height over it, so the first sits just under the top.
+            self.assertGreaterEqual(velocities[0], 120)
+            self.assertEqual(velocities[-1], 1)
+            self.assertEqual(velocities, sorted(velocities, reverse=True))
+            self.assertEqual(len(set(velocities)), 13)
         finally:
             rig.close()
 

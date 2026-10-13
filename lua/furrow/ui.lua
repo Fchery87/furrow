@@ -16,6 +16,8 @@ local BAR_HEIGHT = 84
 local FIELD_ROW_BREAK = 7
 local GRID_OFFSET = 2 * CELL + NAME_WIDTH + 5 * GAP
 local DRAIN_SECONDS = 3
+local NOTICE_SECONDS = 5
+local NOTICE_FADE = 0.4
 local UNDO_COMMAND = 40029
 local REDO_COMMAND = 40030
 
@@ -26,6 +28,9 @@ local COLOR = {
   on_alt = 0xD08A2AFF,
   on_text = 0x1E1E1EFF,
   selected = 0x4F5B6EFF,
+  hover = 0xFFFFFF55,
+  press = 0x00000040,
+  notice = 0x9FB7D0FF,
   playhead = 0xFFFFFFFF,
   missing = 0xE0605AFF,
   muted = 0x8A8F98FF,
@@ -101,6 +106,7 @@ function ui.run(ImGui)
   local paint = nil
   local shaping = nil
   local swing_edit = nil
+  local length_edit = nil
   local length_shown = nil
   local length_typed = nil
   local rename_typed = nil
@@ -131,9 +137,11 @@ function ui.run(ImGui)
     end
   end
 
-  -- Explains the item just drawn when the mouse rests on it.
+  -- Explains the item just drawn when the mouse rests on it. The first tooltip waits a
+  -- moment, so sweeping across the window does not flash them. ImGui shares that delay, so
+  -- the next one opens at once.
   local function tooltip(text)
-    if ImGui.IsItemHovered(ctx) then
+    if ImGui.IsItemHovered(ctx, ImGui.HoveredFlags_DelayNormal) then
       ImGui.SetTooltip(ctx, text)
     end
   end
@@ -163,6 +171,11 @@ function ui.run(ImGui)
       return
     end
     local hovered = ImGui.IsItemHovered(ctx, ImGui.HoveredFlags_AllowWhenBlockedByActiveItem)
+    if ImGui.IsItemActive(ctx) then
+      ImGui.DrawList_AddRectFilled(draw, x1, y1, x1 + CELL, y1 + CELL, COLOR.press, 3)
+    elseif hovered and not paint then
+      ImGui.DrawList_AddRect(draw, x1, y1, x1 + CELL, y1 + CELL, COLOR.hover, 3, 0, 1)
+    end
     if hovered and not paint then
       local button = nil
       if ImGui.IsMouseClicked(ctx, ImGui.MouseButton_Left) then
@@ -177,18 +190,59 @@ function ui.run(ImGui)
           button = button,
           value = target,
           done = {},
+          cells = {},
           gesture = c:begin(target == 1 and "paint steps" or "erase steps"),
         }
       end
     end
-    local key = lane.slot * wire.MAX_STEPS + step
-    if paint and hovered and ImGui.IsMouseDown(ctx, paint.button) and not paint.done[key] then
-      paint.done[key] = true
-      if value ~= paint.value then
-        c:add(paint.gesture, { { wire.OP_SET_STEP, c.pattern or 0, lane.slot, step, wire.F_ON, paint.value } },
-          { { lane.slot, step, wire.F_ON, paint.value } })
+    -- The sweep after the grid decides which cells the drag crossed.
+    if paint then
+      paint.cells[#paint.cells + 1] = { x1, y1, x1 + CELL, y1 + CELL, lane.slot, step, value }
+    end
+  end
+
+  -- The points from the last mouse position to this one, every half cell, so a fast drag
+  -- still lands at least once in every cell it crossed.
+  local function drag_path(drag)
+    local mx, my = ImGui.GetMousePos(ctx)
+    if not mx then
+      return {}
+    end
+    local lx, ly = drag.x or mx, drag.y or my
+    drag.x, drag.y = mx, my
+    local n = math.max(1, math.ceil(math.max(math.abs(mx - lx), math.abs(my - ly)) / (CELL / 2)))
+    local points = {}
+    for i = 0, n do
+      points[#points + 1] = { lx + (mx - lx) * i / n, ly + (my - ly) * i / n }
+    end
+    return points, math.min(lx, mx), math.max(lx, mx), math.min(ly, my), math.max(ly, my)
+  end
+
+  -- Paints every cell the mouse crossed since the last frame.
+  local function sweep_paint(c)
+    if not paint or not ImGui.IsMouseDown(ctx, paint.button) then
+      return
+    end
+    local points, left, right, top, bottom = drag_path(paint)
+    for _, cell in ipairs(paint.cells) do
+      if cell[3] >= left and cell[1] <= right and cell[4] >= top and cell[2] <= bottom then
+        for _, p in ipairs(points) do
+          if p[1] >= cell[1] and p[1] < cell[3] and p[2] >= cell[2] and p[2] < cell[4] then
+            local slot, step, value = cell[5], cell[6], cell[7]
+            local key = slot * wire.MAX_STEPS + step
+            if not paint.done[key] then
+              paint.done[key] = true
+              if value ~= paint.value then
+                c:add(paint.gesture, { { wire.OP_SET_STEP, c.pattern or 0, slot, step, wire.F_ON, paint.value } },
+                  { { slot, step, wire.F_ON, paint.value } })
+              end
+            end
+            break
+          end
+        end
       end
     end
+    paint.cells = {}
   end
 
   local function toggle(c, lane, field, label, on)
@@ -288,19 +342,50 @@ function ui.run(ImGui)
     end
     local on = c:step_value(lane.slot, step, wire.F_ON) == 1
     ImGui.DrawList_AddRectFilled(draw, x1 + 2, top, x1 + CELL - 2, bottom, on and COLOR.on or COLOR.bar_off, 2)
-    if not c:processing() or not c:page_ready()
-        or not ImGui.IsItemHovered(ctx, ImGui.HoveredFlags_AllowWhenBlockedByActiveItem) then
+    if not c:processing() or not c:page_ready() then
       return
+    end
+    -- The sweep after the bars sets every bar the drag crossed, from the mouse height.
+    if shaping then
+      shaping.bars[#shaping.bars + 1] = { x1, x1 + CELL, y1, lane.slot, step }
+    end
+    if not ImGui.IsItemHovered(ctx, ImGui.HoveredFlags_AllowWhenBlockedByActiveItem) then
+      return
+    end
+    if not shaping then
+      ImGui.DrawList_AddRect(draw, x1, y1, x1 + CELL, y1 + BAR_HEIGHT, COLOR.hover, 3, 0, 1)
     end
     local _, my = ImGui.GetMousePos(ctx)
     local target = fields.value_at(def, 1 - (my - y1) / BAR_HEIGHT)
     if ImGui.IsMouseClicked(ctx, ImGui.MouseButton_Left) and not shaping and not paint then
-      shaping = { gesture = c:begin("edit " .. def.name:lower()) }
-    end
-    if shaping and ImGui.IsMouseDown(ctx, ImGui.MouseButton_Left) then
-      c:set_field(shaping.gesture, lane.slot, step, def.field, target)
+      shaping = { gesture = c:begin("edit " .. def.name:lower()), field = def.field, def = def,
+        bars = { { x1, x1 + CELL, y1, lane.slot, step } } }
     end
     ImGui.SetTooltip(ctx, def.text(shaping and target or value))
+  end
+
+  -- Sets every bar the mouse crossed since the last frame. A bar takes the height the path
+  -- had over it, so dragging above or below the bars still sets the top or bottom value.
+  local function sweep_bars(c)
+    if not shaping or not ImGui.IsMouseDown(ctx, ImGui.MouseButton_Left) then
+      return
+    end
+    local points, left, right = drag_path(shaping)
+    for _, b in ipairs(shaping.bars) do
+      if b[2] >= left and b[1] <= right then
+        local over = nil
+        for _, p in ipairs(points) do
+          if p[1] >= b[1] and p[1] < b[2] then
+            over = p
+          end
+        end
+        if over then
+          local target = fields.value_at(shaping.def, 1 - (over[2] - b[3]) / BAR_HEIGHT)
+          c:set_field(shaping.gesture, b[4], b[5], shaping.field, target)
+        end
+      end
+    end
+    shaping.bars = {}
   end
 
   -- Settings that belong to the selected lane. A lane swing drag shares the swing gesture.
@@ -391,10 +476,23 @@ function ui.run(ImGui)
         shown = target
       end
     end
+    -- A held button repeats. The whole hold is one gesture, so it is one undo point.
     local function length_button(change)
-      if ImGui.SmallButton(ctx, string.format("%+d##length%d", change, change)) and c:processing() then
-        set_length(shown + change)
+      ImGui.PushButtonRepeat(ctx, true)
+      local pressed = ImGui.SmallButton(ctx, string.format("%+d##length%d", change, change))
+      ImGui.PopButtonRepeat(ctx)
+      if not pressed or not c:processing() then
+        return
       end
+      local target = math.max(1, math.min(wire.MAX_STEPS, shown + change))
+      if target == shown then
+        return
+      end
+      length_typed = nil
+      length_edit = length_edit or { gesture = c:begin("set length") }
+      length_shown = { slot = lane.slot, value = target, until_time = now + 0.5 }
+      c:add(length_edit.gesture, { { wire.OP_SET_LENGTH, c.pattern or 0, lane.slot, target } })
+      shown = target
     end
     ImGui.SameLine(ctx, 0, GAP * 6)
     ImGui.TextDisabled(ctx, "Length")
@@ -446,6 +544,7 @@ function ui.run(ImGui)
       bar(c, lane, def, step)
       ImGui.PopID(ctx)
     end
+    sweep_bars(c)
 
     -- Settings a lane rarely changes stay folded away until asked for.
     if ImGui.CollapsingHeader(ctx, "Lane settings##lanesettings") then
@@ -697,6 +796,23 @@ function ui.run(ImGui)
         c.message = nil
       end
     end
+    -- A confirmation fades on its own and holds while the mouse rests on it. A problem
+    -- above it stays until dismissed, and hides the confirmation meanwhile.
+    local notice = c.notice
+    if notice and not c.message then
+      local now = reaper.time_precise()
+      local age = now - notice.at
+      if age >= NOTICE_SECONDS then
+        c.notice = nil
+      else
+        ImGui.PushStyleVar(ctx, ImGui.StyleVar_Alpha, math.min(1, (NOTICE_SECONDS - age) / NOTICE_FADE))
+        ImGui.TextColored(ctx, COLOR.notice, notice.text)
+        ImGui.PopStyleVar(ctx)
+        if ImGui.IsItemHovered(ctx) then
+          notice.at = math.max(notice.at, now - (NOTICE_SECONDS - NOTICE_FADE))
+        end
+      end
+    end
   end
 
   local function draw()
@@ -725,6 +841,7 @@ function ui.run(ImGui)
       for _, lane in ipairs(lanes) do
         lane_row(c, lane)
       end
+      sweep_paint(c)
       editor(c)
       drop_zone(c, #lanes == 0)
     else
@@ -763,6 +880,10 @@ function ui.run(ImGui)
       coordinator:finish(swing_edit.gesture)
       swing_edit = nil
     end
+    if length_edit and not ImGui.IsMouseDown(ctx, ImGui.MouseButton_Left) then
+      coordinator:finish(length_edit.gesture)
+      length_edit = nil
+    end
     if history and not (coordinator and coordinator:busy()) then
       reaper.Main_OnCommand(history, 0)
       history = nil
@@ -787,6 +908,10 @@ function ui.run(ImGui)
         if swing_edit then
           coordinator:finish(swing_edit.gesture)
           swing_edit = nil
+        end
+        if length_edit then
+          coordinator:finish(length_edit.gesture)
+          length_edit = nil
         end
         closing_at = reaper.time_precise()
       end
