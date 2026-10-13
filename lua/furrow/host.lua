@@ -417,15 +417,23 @@ end
 function host.read_item(item)
   local take = reaper.GetActiveTake(item)
   local _, meta = reaper.GetSetMediaItemInfo_String(item, host.ITEM_KEY, "", false)
-  local _, notes, controllers, sysex = reaper.MIDI_CountEvts(take)
   local start_qn = reaper.MIDI_GetProjQNFromPPQPos(take, 0)
   local events = {}
-  for i = 0, notes + controllers + sysex - 1 do
-    local _, _, _, ppq, message = reaper.MIDI_GetEvt(take, i)
+  -- Reads every raw event until REAPER has no more. The note count leaves out note-offs.
+  local index = 0
+  while true do
+    local ok, _, _, ppq, message = reaper.MIDI_GetEvt(take, index)
+    if not ok then
+      break
+    end
+    -- A two byte message, such as program change, has no third byte. It is marked so capture
+    -- reads the item as edited rather than failing on a missing value.
     events[#events + 1] = {
       beat = reaper.MIDI_GetProjQNFromPPQPos(take, ppq) - start_qn,
-      status = message:byte(1), data1 = message:byte(2), data2 = message:byte(3),
+      status = message:byte(1) or -1, data1 = message:byte(2) or -1, data2 = message:byte(3) or -1,
+      supported = #message == 3,
     }
+    index = index + 1
   end
   return {
     meta = meta,

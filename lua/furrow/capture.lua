@@ -23,6 +23,12 @@ end
 -- "unedited" when the item still matches what the commit wrote, "edited" when its position,
 -- length, take offset or events changed. Only "unedited" may restore the source silently.
 function capture.check(meta, position, length, offset, events)
+  -- A message the commit never writes, such as program change, is an edit by definition.
+  for _, e in ipairs(events) do
+    if e.supported == false then
+      return "edited"
+    end
+  end
   local now = commit.fingerprint(commit.item_text(position, length, offset, events))
   if now == meta.fp then
     return "unedited"

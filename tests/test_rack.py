@@ -241,11 +241,9 @@ class StubReaper:
     def MIDI_Sort(self, take):
         take.events.sort(key=lambda e: e[0])
 
-    def MIDI_CountEvts(self, take):
-        notes = sum(1 for _, m in take.events if (ord(m[0]) if isinstance(m, str) else m[0]) & 0xF0 == 0x90)
-        return True, notes, len(take.events) - notes, 0
-
     def MIDI_GetEvt(self, take, index):
+        if index >= len(take.events):
+            return False, False, False, 0, ""
         ppq, message = take.events[index]
         return True, False, False, ppq, message
 
@@ -1399,6 +1397,17 @@ class ItemReadTest(unittest.TestCase):
         item = self.write([(0.0, 0x90, 60, 100), (0.0, 0xB0, 7, 90), (0.5, 0x80, 60, 0)])
         item.take.events[0], item.take.events[1] = item.take.events[1], item.take.events[0]
         self.assertEqual(self.check(item), "unedited")
+
+    def test_a_two_byte_message_reads_back_as_edited_without_failing(self):
+        item = self.write([(0.0, 0x90, 60, 100), (0.5, 0x80, 60, 0)])
+        item.take.events.append((480.0, "\xc0\x05"))
+        self.assertEqual(self.check(item), "edited")
+
+    def test_a_note_off_is_read_back_and_a_changed_velocity_reads_back_as_edited(self):
+        item = self.write([(0.0, 0x90, 60, 100), (0.5, 0x80, 60, 0)])
+        ppq, _ = item.take.events[0]
+        item.take.events[0] = (ppq, "\x90\x3c\x5a")
+        self.assertEqual(self.check(item), "edited")
 
     def test_a_changed_velocity_reads_back_as_edited(self):
         item = self.write([(0.0, 0x90, 60, 100), (0.5, 0x80, 60, 0)])
