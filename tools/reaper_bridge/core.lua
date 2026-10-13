@@ -120,6 +120,27 @@ function core.action(reaper, req)
   return { command = id }
 end
 
+-- Lists a folder's files. REAPER caches directory listings, so a forced reread comes first.
+-- The end of the list is nil or an empty string.
+local function list_files(reaper, folder)
+  reaper.EnumerateFiles(folder, -1)
+  local names = {}
+  local i = 0
+  while true do
+    local file = reaper.EnumerateFiles(folder, i)
+    if not file or file == "" then
+      break
+    end
+    names[#names + 1] = file
+    i = i + 1
+  end
+  return names
+end
+
+local function is_render_of(file, name)
+  return file:sub(1, #name + 1) == name .. "." and file:sub(#name + 2):match("^%w+$") ~= nil
+end
+
 local RENDER_KEYS = { "RENDER_SETTINGS", "RENDER_BOUNDSFLAG", "RENDER_STARTPOS", "RENDER_ENDPOS", "RENDER_SRATE", "RENDER_CHANNELS" }
 
 -- Renders a time range of the master mix into folder and returns the new file's path. The
@@ -139,6 +160,12 @@ function core.render(reaper, req, folder)
     reaper.GetSetProjectInfo_String(0, "RENDER_FILE", saved_file, true)
     reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", saved_pattern, true)
   end
+  -- Earlier renders of the same name go first, so the file found afterwards is this one.
+  for _, file in ipairs(list_files(reaper, folder)) do
+    if is_render_of(file, name) then
+      os.remove(folder .. "/" .. file)
+    end
+  end
   local ok, err = pcall(function()
     reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, true)
     reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", 1, true)
@@ -155,16 +182,10 @@ function core.render(reaper, req, folder)
     error(err, 0)
   end
   local found
-  local i = 0
-  while true do
-    local file = reaper.EnumerateFiles(folder, i)
-    if not file then
-      break
-    end
-    if file:sub(1, #name) == name then
+  for _, file in ipairs(list_files(reaper, folder)) do
+    if is_render_of(file, name) then
       found = file
     end
-    i = i + 1
   end
   if not found then
     error("the render produced no file in " .. folder, 0)
@@ -241,10 +262,9 @@ end
 function core.poll_once(reaper, spool, ctx, limit)
   ctx.render_folder = ctx.render_folder or (spool .. "/render")
   local handled = 0
-  local i = 0
-  while handled < (limit or 4) do
-    local name = reaper.EnumerateFiles(spool .. "/in", i)
-    if not name then
+  local names = list_files(reaper, spool .. "/in")
+  for _, name in ipairs(names) do
+    if handled >= (limit or 4) then
       break
     end
     local id = name:match("^([%w_-]+)%.req$")
@@ -268,8 +288,6 @@ function core.poll_once(reaper, spool, ctx, limit)
         os.rename(out .. ".tmp", out)
       end
       handled = handled + 1
-    else
-      i = i + 1
     end
   end
   return handled
