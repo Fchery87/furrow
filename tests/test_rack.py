@@ -282,6 +282,11 @@ class StubReaper:
         self.log.append(("message", text))
         return 1
 
+    def GetUserFileNameForRead(self, name, title, ext):
+        self.log.append(("browse", title))
+        picked = getattr(self, "pick", None)
+        return (True, picked) if picked else (False, "")
+
 
 @unittest.skipIf(SKIP, SKIP)
 class RackTest(unittest.TestCase):
@@ -1109,7 +1114,7 @@ class FakeImGui:
                 if name == "MenuItem" and args[1] == fake.press:
                     fake.press = None
                     return True
-                if name == "SmallButton":
+                if name in ("SmallButton", "Button"):
                     fake.small_labels.append(args[1])
                     if args[1] == fake.press:
                         fake.press = None
@@ -1326,6 +1331,53 @@ class WindowTest(unittest.TestCase):
                 rig.block(playing=False)
                 stub.clock += 0.03
             self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: new pattern"])
+        finally:
+            rig.close()
+
+    def test_clicking_the_drop_zone_browses_for_a_file_that_becomes_a_lane(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            stub.pick = "/samples/kick.wav"
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(40):
+                if frame == 6:
+                    imgui.press = "Drop audio files here, or click to browse##addlanes"
+                if frame == 20:
+                    stub.pick = None
+                    imgui.press = "+ Add audio files: click to browse, or drop them here##addlanes"
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual([t.name for t in stub.tracks], ["Furrow Rack", "Furrow Engine", "kick"])
+            self.assertEqual([e for e in stub.log if e[0] == "browse"], [("browse", "Add an audio file to Furrow")] * 2)
+            self.assertEqual(stub.undo, ["Furrow: add lane"])
+        finally:
+            rig.close()
+
+    def test_the_multi_file_dialog_answer_becomes_one_path_each(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            ui = lua.eval('(require("furrow.ui"))')
+            answers = {"several": (1, "/samples/drums\0kick.wav\0snare.wav"), "one": (1, "/samples/hat.wav"),
+                       "cancel": (0, "")}
+            for case, (code, text) in answers.items():
+                lua.globals().reaper.JS_Dialog_BrowseForOpenFiles = lambda *a, code=code, text=text: (code, text)
+                files = ui.browse_files()
+                got = [files[i] for i in range(1, len(files) + 1)]
+                expected = {"several": ["/samples/drums/kick.wav", "/samples/drums/snare.wav"],
+                            "one": ["/samples/hat.wav"], "cancel": []}[case]
+                self.assertEqual(got, expected, case)
         finally:
             rig.close()
 

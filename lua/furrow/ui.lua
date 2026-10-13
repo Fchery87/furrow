@@ -59,6 +59,40 @@ local STATUS_TEXT = {
   offline = "Not connected",
 }
 
+local AUDIO_FILTER = "Audio files\0*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg\0All files\0*.*\0\0"
+
+-- Asks for audio files and returns their paths, empty when cancelled. The js_ReaScriptAPI
+-- dialog picks several at once. REAPER's own dialog picks one.
+function ui.browse_files()
+  if reaper.JS_Dialog_BrowseForOpenFiles then
+    local ok, names = reaper.JS_Dialog_BrowseForOpenFiles("Add audio files to Furrow", "", "", AUDIO_FILTER, true)
+    if ok ~= 1 or not names or names == "" then
+      return {}
+    end
+    -- One file comes back as its full path. Several come back as the folder, then each name,
+    -- separated by zero bytes.
+    local parts = {}
+    for part in names:gmatch("[^\0]+") do
+      parts[#parts + 1] = part
+    end
+    if #parts == 1 then
+      return parts
+    end
+    local folder = parts[1]:gsub("[/\\]$", "")
+    local sep = folder:find("\\", 1, true) and "\\" or "/"
+    local files = {}
+    for i = 2, #parts do
+      files[#files + 1] = folder .. sep .. parts[i]
+    end
+    return files
+  end
+  local ok, file = reaper.GetUserFileNameForRead("", "Add an audio file to Furrow", "")
+  if ok and file and file ~= "" then
+    return { file }
+  end
+  return {}
+end
+
 function ui.run(ImGui)
   math.randomseed(math.floor(reaper.time_precise() * 1000) % 2147483647)
   local ctx = ImGui.CreateContext("Furrow")
@@ -76,6 +110,7 @@ function ui.run(ImGui)
   local edit_field = 1
   local open = true
   local closing_at = nil
+  local browse_requested = false
   -- Undo and redo wait here until pending gestures have their undo points.
   local history = nil
 
@@ -619,13 +654,17 @@ function ui.run(ImGui)
     end
   end
 
-  -- Large while the rack is empty, and a slim strip once it has lanes.
+  -- Large while the rack is empty, and a slim strip once it has lanes. A click opens the
+  -- file browser after the frame ends, because the dialog blocks until it closes.
   local function drop_zone(c, empty)
     local w = ImGui.GetContentRegionAvail(ctx)
     ImGui.Dummy(ctx, 0, GAP * 2)
     ImGui.PushStyleColor(ctx, ImGui.Col_Button, COLOR.drop)
-    ImGui.Button(ctx, empty and "Drop audio files here to add lanes" or "+ Drop audio files to add lanes", w,
-      empty and 96 or CELL)
+    local label = empty and "Drop audio files here, or click to browse##addlanes"
+      or "+ Add audio files: click to browse, or drop them here##addlanes"
+    if ImGui.Button(ctx, label, w, empty and 96 or CELL) and c:processing() then
+      browse_requested = true
+    end
     ImGui.PopStyleColor(ctx, 1)
     if ImGui.BeginDragDropTarget(ctx) then
       local ok, count = ImGui.AcceptDragDropPayloadFiles(ctx)
@@ -745,6 +784,14 @@ function ui.run(ImGui)
           swing_edit = nil
         end
         closing_at = reaper.time_precise()
+      end
+    end
+    if browse_requested then
+      browse_requested = false
+      for _, file in ipairs(ui.browse_files()) do
+        if coordinator and coordinator:processing() then
+          coordinator:add_sample(file)
+        end
       end
     end
     -- A closed window keeps the coordinator running until its gestures settle, so a
