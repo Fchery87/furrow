@@ -16,7 +16,7 @@ OK, STALE, INVALID, CAPACITY, ABORTED, LOAD_ERROR = 1, 2, 3, 4, 5, 6
 L_MUTE, L_SOLO, L_VOLUME, L_PAN = 5, 6, 7, 8
 F_ON, F_VEL, F_REL, F_FINE, F_PAN, F_MOD_A, F_MOD_B, F_SHIFT, F_GATE, F_RATCHET, F_PROB = 0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 12
 L_MOD_A_CC, L_MOD_B_CC = 74, 71
-R_SEED, R_SWING, R_TRUNCATE = 1, 4, 5
+R_SEED, R_SWING, R_TRUNCATE, R_MODE = 1, 4, 5, 3
 L_SWING = 10
 SAMPLES_PER_STEP = 5512.5  # a sixteenth at 120 BPM and 44.1 kHz
 
@@ -128,6 +128,18 @@ class SeqCoreTest(unittest.TestCase):
         offs = [(e[0], e[3]) for e in self.rig.events if e[2] & 0xF0 == 0x80 and e[0] > 0]
         # Gate 0.5 of a step is 2756.25 samples, rounded to the nearest sample.
         self.assertEqual(offs, [(2756, 60), (11025 + 2756, 38), (22050 + 2756, 60)])
+
+    def test_items_mode_plays_no_live_notes_and_live_mode_plays_them(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 4), [OP_SET_RACK, R_MODE, 1]])
+        self.rig.seek(0.0)
+        self.rig.events.clear()
+        self.rig.run(25)
+        self.assertEqual(self.rig.notes(), [])
+        self.rig.apply([[OP_SET_RACK, R_MODE, 0]])
+        self.rig.seek(0.0)
+        self.rig.events.clear()
+        self.rig.run(25)
+        self.assertEqual([e[0] for e in self.rig.notes()], [0, 22050])
 
     def test_lane_length_and_loop_repeat(self):
         self.rig.apply([add_lane(0), step_on(0, 0), step_on(0, 2), [OP_SET_LENGTH, 0, 0, 3]])
