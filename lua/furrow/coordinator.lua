@@ -11,6 +11,7 @@ local wire = require("furrow.wire")
 local Session = require("furrow.session")
 local host = require("furrow.host")
 local tools = require("furrow.tools")
+local commit = require("furrow.commit")
 
 local Coordinator = {}
 Coordinator.__index = Coordinator
@@ -461,7 +462,7 @@ end
 -- The side window a tool reads next. A lane tool reads its lane. A clone reads every lane,
 -- 32 steps at a time, which is the most a 2,048 cell window holds.
 function Coordinator:tool_window(tool)
-  if tool.kind == "clone" then
+  if tool.kind == "clone" or tool.kind == "commit" then
     local first = tool.block * CLONE_WINDOW_STEPS
     return { pattern = tool.source, l0 = 0, nl = wire.LANES, s0 = first,
              ns = math.min(CLONE_WINDOW_STEPS, tool.longest - first) }
@@ -495,7 +496,7 @@ function Coordinator:step_tool()
       end
       return
     end
-    if tool.kind == "clone" then
+    if tool.kind == "clone" or tool.kind == "commit" then
       tool.lanes, tool.longest = self:clone_lanes()
     end
     tool.length = lane and lane.length
@@ -504,15 +505,20 @@ function Coordinator:step_tool()
     session:request(self:tool_window(tool), true)
   elseif session.side_snapshot then
     local side = session.side_snapshot
-    if tool.kind == "clone" then
-      if not self:collect_clone(tool, side) then
+    if tool.kind == "clone" or tool.kind == "commit" then
+      local collect = tool.kind == "clone" and self.collect_clone or self.collect_commit
+      if not collect(self, tool, side) then
         self:end_tool()
       elseif tool.block * CLONE_WINDOW_STEPS < tool.longest then
         tool.since = now
         session:request(self:tool_window(tool), true)
       else
         self:end_tool()
-        self:run_clone(tool)
+        if tool.kind == "clone" then
+          self:run_clone(tool)
+        else
+          self:run_commit(tool)
+        end
       end
       return
     end
@@ -766,6 +772,131 @@ function Coordinator:run_clone(tool)
   self:add(gesture, self:queue_commands(target))
   self:finish(gesture)
   self:set_view(target)
+end
+
+-- Switches the rack between Live and Items. Items stops SeqCore's own notes and opens the
+-- gates on the committed items. Live shuts the gates and then resumes SeqCore.
+function Coordinator:set_mode(mode)
+  if not self:processing() then
+    return
+  end
+  self:run(mode == 1 and "play committed items" or "play live", { { wire.OP_SET_RACK, wire.R_MODE, mode } })
+end
+
+-- Starts a commit of the shown pattern at the edit cursor.
+function Coordinator:commit_pattern()
+  if not self:processing() then
+    return
+  end
+  if self.tool then
+    self.message = "another lane tool is still running"
+    return
+  end
+  local lanes, longest = self:clone_lanes()
+  self.tool = {
+    kind = "commit", stage = "settling", created = reaper.time_precise(), source = self.pattern or 0,
+    lanes = lanes, longest = longest, block = 0, rows = {},
+  }
+end
+
+-- Keeps every step row of one side window for the commit. False when a row is missing.
+function Coordinator:collect_commit(tool, snap)
+  for _, lane in ipairs(tool.lanes) do
+    local rows = snap.steps[lane.slot] or {}
+    tool.rows[lane.slot] = tool.rows[lane.slot] or {}
+    for step = snap.s0, math.min(snap.s0 + snap.ns, lane.length) - 1 do
+      local row = rows[step]
+      if not row then
+        self.message = "the commit could not read the pattern"
+        return false
+      end
+      local copy = {}
+      for field = 0, wire.STEP_FIELDS - 1 do
+        copy[field] = row[field]
+      end
+      tool.rows[lane.slot][step] = copy
+    end
+  end
+  tool.block = tool.block + 1
+  return true
+end
+
+-- Renders the pattern from the edit cursor, writes one item a lane, stores the source snapshot
+-- once for the group, and enters Items mode. One undo point covers all of it. If any host step
+-- fails, the items and tracks made so far go and the rack returns to its earlier mode.
+function Coordinator:run_commit(tool)
+  local snap = self.session.snapshot
+  local prior = snap.rack.mode
+  local rack_id = snap.rack.id
+  local qn = reaper.TimeMap2_timeToQN(self.proj, reaper.GetCursorPositionEx(self.proj))
+  local lanes = {}
+  for _, lane in ipairs(tool.lanes) do
+    lanes[#lanes + 1] = {
+      id = lane.id, slot = lane.slot, note = lane.note, volume = lane.volume, pan = lane.pan, bend = lane.bend,
+      mod_a = lane.mod_a, mod_b = lane.mod_b, swing = lane.swing, prob_key = lane.prob_key, length = lane.length,
+      rows = tool.rows[lane.slot],
+    }
+  end
+  table.sort(lanes, function(a, b) return a.slot < b.slot end)
+  local data = {
+    origin = qn, steps = tool.longest, seed = snap.rack.seed, swing = snap.rack.swing, truncate = snap.rack.truncate,
+    pattern_key = tool.source, lanes = lanes,
+  }
+  local rendered = commit.render(data)
+  local snapshot_text = commit.encode(data)
+  local group = math.random(1, 16777215)
+  local by_slot = {}
+  for _, lane in ipairs(tool.lanes) do
+    by_slot[lane.slot] = lane
+  end
+  local gesture = self:begin("commit pattern", {
+    undo_states = UNDO_ALL,
+    abort_on_failure = true,
+    rollback = { { wire.OP_SET_RACK, wire.R_MODE, prior } },
+    after = function(c)
+      local rack = c:rack_track()
+      if not rack then
+        return false, "the rack tracks are gone"
+      end
+      local made_tracks, made_items = {}, {}
+      local function undo_all()
+        for _, item in ipairs(made_items) do
+          host.delete_item(item)
+        end
+        for _, track in ipairs(made_tracks) do
+          host.delete_child(track)
+        end
+      end
+      local ok, err = pcall(function()
+        for _, lane in ipairs(lanes) do
+          local lane_track = c:lane_track(by_slot[lane.slot])
+          if not lane_track then
+            error("a lane has no track", 0)
+          end
+          local items_track = host.find_items_track(rack, lane.id)
+          if not items_track then
+            local name = host.track_name(lane_track)
+            local created, message = host.create_items_track(rack, lane_track, name, lane.id, rack_id)
+            if not created then
+              error(message, 0)
+            end
+            made_tracks[#made_tracks + 1] = created
+            items_track = created
+          end
+          made_items[#made_items + 1] = host.write_item(c.proj, items_track, qn, tool.longest,
+            rendered[lane.slot], { group = group, lane = lane.id, rack = rack_id })
+        end
+        reaper.SetProjExtState(c.proj, "FurrowCommits", tostring(group), snapshot_text)
+      end)
+      if not ok then
+        undo_all()
+        return false, err
+      end
+      return true
+    end,
+  })
+  self:add(gesture, { { wire.OP_SET_RACK, wire.R_MODE, 1 } })
+  self:finish(gesture)
 end
 
 -- Finishes what a lost coordinator left half done. A lane the journal names is removed

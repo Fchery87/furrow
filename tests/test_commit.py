@@ -148,5 +148,24 @@ class CommitTest(unittest.TestCase):
         self.assertEqual(notes, [(0.875, 0x90), (1.0, 0x80)])
 
 
+    def test_the_snapshot_text_round_trips_and_the_fingerprint_tracks_every_byte(self):
+        lengths = {0: 16, 1: 6}
+        self.build(random_pattern(5, lengths), lengths, 3000, 1)
+        data = self.snapshot_input(lengths)
+        for lane in data.lanes.values():
+            lane.id = 1000 + lane.slot
+        text = self.commit.encode(data)
+        decoded = self.commit.decode(text)
+        self.assertEqual(self.commit.encode(decoded), text)
+        self.assertEqual((decoded.seed, decoded.swing, decoded.truncate, decoded.steps), (4242, 3000, 1, STEPS))
+        self.assertEqual(decoded.lanes[2].length, 6)
+        bad, message = (lambda r: r if isinstance(r, tuple) else (r, None))(self.commit.decode("nope"))
+        self.assertIsNone(bad)
+        fp = self.commit.fingerprint
+        self.assertEqual(len(fp(text)), 16)
+        self.assertNotEqual(fp(text), fp(text[:-2] + "x\n"))
+        self.assertEqual(fp(text), fp(text))
+
+
 if __name__ == "__main__":
     unittest.main()

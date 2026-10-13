@@ -150,4 +150,112 @@ function commit.render(o)
   return out
 end
 
+-- The source snapshot as printable text, one line a record. Only fields that differ from the
+-- step defaults are written, so a decoded step starts from the defaults. Lane ids are the
+-- stable ids, and each lane carries every step of its length.
+local LANE_KEYS = { "slot", "note", "volume", "pan", "bend", "mod_a", "mod_b", "swing", "prob_key", "length" }
+
+function commit.encode(o)
+  local lines = {
+    "furrow-commit 1",
+    string.format("rack seed %d swing %d truncate %d pattern %d steps %d origin %.17g",
+      o.seed, o.swing, o.truncate, o.pattern_key, o.steps, o.origin),
+  }
+  for _, lane in ipairs(o.lanes) do
+    local parts = { "lane", string.format("%d", lane.id) }
+    for _, key in ipairs(LANE_KEYS) do
+      parts[#parts + 1] = key .. "=" .. string.format("%d", lane[key])
+    end
+    lines[#lines + 1] = table.concat(parts, " ")
+    for pos = 0, lane.length - 1 do
+      local row = lane.rows[pos]
+      local fields = {}
+      for field = 0, wire.STEP_FIELDS - 1 do
+        if row[field] ~= wire.STEP_DEFAULTS[field] then
+          fields[#fields + 1] = field .. "=" .. string.format("%d", row[field])
+        end
+      end
+      if #fields > 0 then
+        lines[#lines + 1] = string.format("step %d %d %s", lane.id, pos, table.concat(fields, " "))
+      end
+    end
+  end
+  return table.concat(lines, "\n") .. "\n"
+end
+
+-- Reads encode's text back. Returns nil and a message when the text is not format 1.
+function commit.decode(text)
+  local first = text:match("^[^\n]*")
+  if first ~= "furrow-commit 1" then
+    return nil, "not a Furrow commit snapshot"
+  end
+  local o = { lanes = {} }
+  local by_id = {}
+  for line in text:gmatch("[^\n]+") do
+    local kind = line:match("^(%S+)")
+    if kind == "rack" then
+      o.seed, o.swing, o.truncate, o.pattern_key, o.steps, o.origin = line:match(
+        "^rack seed (%-?%d+) swing (%-?%d+) truncate (%-?%d+) pattern (%-?%d+) steps (%-?%d+) origin (%S+)$")
+      if not o.origin then
+        return nil, "bad rack line"
+      end
+      o.seed, o.swing, o.truncate = tonumber(o.seed), tonumber(o.swing), tonumber(o.truncate)
+      o.pattern_key, o.steps, o.origin = tonumber(o.pattern_key), tonumber(o.steps), tonumber(o.origin)
+    elseif kind == "lane" then
+      local lane = { id = tonumber(line:match("^lane (%-?%d+)")), rows = {} }
+      for key, value in line:gmatch("(%a[%a_]*)=(%-?%d+)") do
+        lane[key] = tonumber(value)
+      end
+      for _, key in ipairs(LANE_KEYS) do
+        if not lane[key] then
+          return nil, "lane line misses " .. key
+        end
+      end
+      for pos = 0, lane.length - 1 do
+        local row = {}
+        for field = 0, wire.STEP_FIELDS - 1 do
+          row[field] = wire.STEP_DEFAULTS[field]
+        end
+        lane.rows[pos] = row
+      end
+      o.lanes[#o.lanes + 1] = lane
+      by_id[lane.id] = lane
+    elseif kind == "step" then
+      local id, pos = line:match("^step (%-?%d+) (%d+)")
+      local lane = by_id[tonumber(id)]
+      if not lane or not lane.rows[tonumber(pos)] then
+        return nil, "step line for an unknown lane or position"
+      end
+      for field, value in line:gmatch("(%d+)=(%-?%d+)") do
+        lane.rows[tonumber(pos)][tonumber(field)] = tonumber(value)
+      end
+    end
+  end
+  if not o.steps then
+    return nil, "no rack line"
+  end
+  return o
+end
+
+-- A 64 bit fingerprint of text as 16 hex digits, from two FNV-1a runs with different bases.
+function commit.fingerprint(text)
+  local a, b = 0x811C9DC5, 0x1B873593
+  for i = 1, #text do
+    local byte = text:byte(i)
+    a = ((a ~ byte) * 16777619) & 0xFFFFFFFF
+    b = ((b ~ byte) * 0x01000193 + 0x9E3779B1) & 0xFFFFFFFF
+  end
+  return string.format("%08x%08x", a, b)
+end
+
+-- The text an item's fingerprint covers: its place on the timeline, its take offset, and
+-- its events one a line.
+function commit.item_text(position, length, offset, events)
+  local lines = { string.format("%.9f %.9f %.9f", position, length, offset) }
+  for _, e in ipairs(events) do
+    lines[#lines + 1] = string.format("%d %d %d %.9f", e.status, e.data1, e.data2, e.beat)
+  end
+  return table.concat(lines, "\n")
+end
+
 return commit

@@ -19,6 +19,16 @@ RS5K_PARAMS = ["Volume", "Pan", "Gain for minimum velocity", "Note range start",
                "Obey note-offs"]
 
 
+class Item:
+    def __init__(self, track, start, stop):
+        self.track = track
+        self.start = start
+        self.stop = stop
+        self.ext = {}
+        self.events = []
+        self.take = self
+
+
 class Track:
     ids = itertools.count(1)
 
@@ -29,6 +39,7 @@ class Track:
         self.fx = []
         self.sends = []
         self.ext = {}
+        self.items = []
 
 
 class StubReaper:
@@ -42,6 +53,8 @@ class StubReaper:
         self.proj_ext = {}
         self.play_time = 0.0
         self.fail_rs5k = False
+        self.fail_gate = False
+        self.cursor = 8.0
         self.clock = 1000.0
         self.selected = None
 
@@ -132,6 +145,10 @@ class StubReaper:
                 raise RuntimeError("RS5K failed to load")
             track.fx.append({"name": "VSTi: ReaSamplOmatic5000 (Cockos)", "params": [0.5] * len(RS5K_PARAMS),
                              "config": {}})
+        elif name == "JS:furrow_itemgate.jsfx":
+            if self.fail_gate:
+                return -1
+            track.fx.append({"name": "JS: Furrow Item Gate", "gate": {}})
         else:
             return -1
         return len(track.fx) - 1
@@ -146,6 +163,9 @@ class StubReaper:
         return track.fx[int(fx)]["engine"].slider(int(param)), 0, 0
 
     def TrackFX_SetParam(self, track, fx, param, value):
+        if "gate" in track.fx[int(fx)]:
+            track.fx[int(fx)]["gate"][int(param)] = value
+            return True
         track.fx[int(fx)]["engine"].set_slider(int(param), value)
         self.log.append(("revision", value))
         return True
@@ -196,6 +216,43 @@ class StubReaper:
 
     def TimeMap2_timeToQN(self, proj, time):
         return time * 2.0
+
+    def TimeMap2_QNToTime(self, proj, qn):
+        return qn / 2.0
+
+    def GetCursorPositionEx(self, proj):
+        return self.cursor
+
+    def CreateNewMIDIItemInProj(self, track, start, stop, qn_in):
+        item = Item(track, start, stop)
+        track.items.append(item)
+        return item
+
+    def GetActiveTake(self, item):
+        return item
+
+    def MIDI_GetPPQPosFromProjQN(self, take, qn):
+        return (qn - take.start * 2.0) * 960.0
+
+    def MIDI_InsertEvt(self, take, selected, muted, ppq, message):
+        take.events.append((ppq, message))
+        return True
+
+    def MIDI_Sort(self, take):
+        take.events.sort(key=lambda e: e[0])
+        return True
+
+    def GetSetMediaItemInfo_String(self, item, key, value, set_new):
+        if set_new:
+            item.ext[key] = value
+        return True, item.ext.get(key, "")
+
+    def GetMediaItem_Track(self, item):
+        return item.track
+
+    def DeleteTrackMediaItem(self, track, item):
+        track.items.remove(item)
+        return True
 
     def TimeMap_QNToMeasures(self, proj, qn):
         start = float(int(qn // 4) * 4)
@@ -511,6 +568,65 @@ class RackTest(unittest.TestCase):
         script = os.path.join(os.path.dirname(__file__), "..", "lua", "Furrow_Gate_Probe.lua")
         loaded, err = pair(self.rig.lua.eval("function(path) local f, e = loadfile(path); return f ~= nil, e end")(script))
         self.assertTrue(loaded, err)
+
+    def committed(self):
+        """Settles a commit started with commit_pattern and returns the items tracks."""
+        self.c("commit_pattern")
+        self.tick(30)
+        self.settle(80)
+        self.tick(12)
+        return [t for t in self.stub.tracks if t.ext.get("P_EXT:FurrowItems")]
+
+    def test_a_commit_writes_one_item_a_lane_stores_the_group_once_and_enters_items_mode_in_one_undo_point(self):
+        self.painted_lane([0, 4, 8])
+        self.c("add_sample", "/samples/snare.wav")
+        self.settle()
+        self.tick(8)
+        self.stub.undo.clear()
+        tracks = self.committed()
+        self.assertEqual(self.stub.undo, ["Furrow: commit pattern"])
+        self.assertEqual(len(tracks), 2)
+        self.assertEqual(self.coordinator.session.snapshot.rack.mode, 1)
+        rack_id = self.coordinator.session.snapshot.rack.id
+        for track in tracks:
+            self.assertEqual(track.info["B_MAINSEND"], 0.0)
+            self.assertEqual(track.fx[0]["gate"][0], rack_id)
+            self.assertEqual(len(track.sends), 1)
+            self.assertEqual(track.sends[0]["I_MIDIFLAGS"], 1 << 5)
+            self.assertEqual(len(track.items), 1)
+            self.assertTrue(track.items[0].ext["P_EXT:Furrow"].startswith("1 group "))
+        kick = [t for t in tracks if t.items[0].events][0]
+        item = kick.items[0]
+        ons = [e for e in item.events if ord(e[1][0]) == 0x90]
+        self.assertEqual([round(e[0]) for e in ons], [0, 960, 1920])
+        self.assertEqual((item.start, item.stop), (8.0, 8.0 + 16 * 0.25 / 2))
+        group = item.ext["P_EXT:Furrow"].split()[2]
+        text = self.stub.proj_ext[("FurrowCommits", group)]
+        decoded = self.rig.lua.eval('(require("furrow.commit"))').decode(text)
+        self.assertEqual((decoded.steps, decoded.origin), (16, 16.0))
+
+    def test_a_commit_that_cannot_build_its_tracks_leaves_nothing_and_restores_the_mode(self):
+        self.painted_lane([0, 4])
+        self.stub.fail_gate = True
+        before = len(self.stub.tracks)
+        tracks = self.committed()
+        self.assertEqual(tracks, [])
+        self.assertEqual(len(self.stub.tracks), before)
+        self.assertEqual(self.coordinator.session.snapshot.rack.mode, 0)
+        self.assertIn("commit pattern failed", self.coordinator.message)
+        self.assertEqual(self.stub.undo, [])
+
+    def test_the_mode_buttons_switch_between_live_and_items_with_one_undo_point_each(self):
+        self.painted_lane([0])
+        self.c("set_mode", 1)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.coordinator.session.snapshot.rack.mode, 1)
+        self.c("set_mode", 0)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.coordinator.session.snapshot.rack.mode, 0)
+        self.assertEqual(self.stub.undo, ["Furrow: play committed items", "Furrow: play live"])
 
     def test_a_bar_drag_edits_velocity_pitch_and_gate_that_the_engine_plays(self):
         self.c("add_sample", "/samples/kick.wav")

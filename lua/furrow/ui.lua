@@ -469,6 +469,30 @@ function ui.run(ImGui)
   end
 
   -- One button for each 16 steps of the longest lane. Every lane shows the chosen page.
+  -- What plays. Live is SeqCore's pattern. Items is the committed MIDI items, which sound
+  -- only while the rack is in Items mode. Commit renders the shown pattern at the edit cursor.
+  local function playback_row(c)
+    local snap = c.session and c.session.snapshot
+    if not snap then
+      return
+    end
+    local items = snap.rack.mode == 1
+    ImGui.Text(ctx, "Playing " .. (items and "committed items" or "live pattern"))
+    ImGui.SameLine(ctx, 0, GAP * 3)
+    if ImGui.SmallButton(ctx, "Live##mode") and items then
+      c:set_mode(0)
+    end
+    ImGui.SameLine(ctx, 0, GAP)
+    if ImGui.SmallButton(ctx, "Items##mode") and not items then
+      c:set_mode(1)
+    end
+    ImGui.SameLine(ctx, 0, GAP * 3)
+    if ImGui.SmallButton(ctx, "Commit at cursor##commit") then
+      c:commit_pattern()
+    end
+    ImGui.Separator(ctx)
+  end
+
   local function pager(c)
     local longest = wire.PAGE_STEPS
     for _, lane in ipairs(c:lanes()) do
@@ -561,6 +585,7 @@ function ui.run(ImGui)
     if c.session and c.session.snapshot then
       patterns_row(c)
       feel(c)
+      playback_row(c)
       pager(c)
       for _, lane in ipairs(c:lanes()) do
         lane_row(c, lane)

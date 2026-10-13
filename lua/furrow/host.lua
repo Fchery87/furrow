@@ -338,4 +338,77 @@ function host.create_sample_lane(rack, engine, file, slot)
   return track
 end
 
+-- Committed items. Each lane has its own "items" track inside the rack folder. The track holds
+-- the item gate first, so the rack's mode decides whether its MIDI plays, and a MIDI send to
+-- the lane's track. Its main send is off. P_EXT:FurrowItems names the lane it belongs to.
+host.ITEMS_KEY = "P_EXT:FurrowItems"
+host.ITEM_KEY = "P_EXT:Furrow"
+host.GATE_NAMES = { "JS:furrow_itemgate.jsfx", "JS:Furrow/furrow_itemgate.jsfx" }
+host.ITEM_NOTE_STEPS = 0.25
+
+function host.find_items_track(rack, lane_id)
+  local first = math.floor(reaper.GetMediaTrackInfo_Value(rack, "IP_TRACKNUMBER"))
+  for i = first, host.last_child(rack) do
+    local track = reaper.GetTrack(0, i)
+    local _, text = reaper.GetSetMediaTrackInfo_String(track, host.ITEMS_KEY, "", false)
+    if text == "lane " .. lane_id then
+      return track
+    end
+  end
+  return nil
+end
+
+-- Creates the items track for a lane. Returns the track, or nil and a message after removing
+-- whatever it created.
+function host.create_items_track(rack, lane_track, name, lane_id, rack_id)
+  local track = host.append_child(rack, name .. " items")
+  local ok, err = pcall(function()
+    reaper.SetMediaTrackInfo_Value(track, "B_MAINSEND", 0)
+    reaper.GetSetMediaTrackInfo_String(track, host.ITEMS_KEY, "lane " .. lane_id, true)
+    local gate
+    for _, gate_name in ipairs(host.GATE_NAMES) do
+      gate = reaper.TrackFX_AddByName(track, gate_name, false, -1)
+      if gate >= 0 then
+        break
+      end
+    end
+    if not gate or gate < 0 then
+      error("REAPER could not load furrow_itemgate.jsfx. Copy it into the Effects folder.", 0)
+    end
+    reaper.TrackFX_SetParam(track, gate, 0, rack_id)
+    local send = reaper.CreateTrackSend(track, lane_track)
+    reaper.SetTrackSendInfo_Value(track, 0, send, "I_SRCCHAN", -1)
+    reaper.SetTrackSendInfo_Value(track, 0, send, "I_MIDIFLAGS", 1 << 5)
+  end)
+  if not ok then
+    host.delete_child(track)
+    return nil, err
+  end
+  return track
+end
+
+-- Writes one MIDI item of `steps` sixteenths from quarter note `qn`, with the rendered events
+-- and a versioned reference to the commit group. Returns the item.
+function host.write_item(proj, track, qn, steps, events, meta)
+  local commit = require("furrow.commit")
+  local start = reaper.TimeMap2_QNToTime(proj, qn)
+  local stop = reaper.TimeMap2_QNToTime(proj, qn + steps * host.ITEM_NOTE_STEPS)
+  local item = reaper.CreateNewMIDIItemInProj(track, start, stop, false)
+  local take = reaper.GetActiveTake(item)
+  for _, e in ipairs(events) do
+    local ppq = reaper.MIDI_GetPPQPosFromProjQN(take, qn + e.beat)
+    reaper.MIDI_InsertEvt(take, false, false, ppq, string.char(e.status, e.data1, e.data2))
+  end
+  reaper.MIDI_Sort(take)
+  local fingerprint = commit.fingerprint(commit.item_text(start, stop - start, 0, events))
+  reaper.GetSetMediaItemInfo_String(item, host.ITEM_KEY,
+    string.format("1 group %d lane %d rack %d fp %s", meta.group, meta.lane, meta.rack, fingerprint), true)
+  return item
+end
+
+-- Removes an item from its track.
+function host.delete_item(item)
+  reaper.DeleteTrackMediaItem(reaper.GetMediaItem_Track(item), item)
+end
+
 return host
