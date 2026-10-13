@@ -1,5 +1,5 @@
 -- @description Furrow: Write diagnostic report
--- Writes the project's tracks, FX, sends, RS5K settings, SeqCore state and undo history to
+-- Writes the project's tracks, FX, sends, RS5K settings, media items, SeqCore state and undo history to
 -- diag/report.txt in the repo. Run it once, with the rack open, and share the file.
 local dir = debug.getinfo(1, "S").source:match("^@?(.*[/\\])")
 package.path = dir .. "?.lua;" .. package.path
@@ -84,6 +84,23 @@ guarded("tracks", function()
 end)
 
 out("")
+out("media items")
+guarded("items", function()
+  for i = 0, reaper.CountTracks(0) - 1 do
+    local track = reaper.GetTrack(0, i)
+    local _, name = reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)
+    for n = 0, reaper.CountTrackMediaItems(track) - 1 do
+      local item = reaper.GetTrackMediaItem(track, n)
+      local take = reaper.GetActiveTake(item)
+      local notes = take and reaper.TakeIsMIDI(take) and select(2, reaper.MIDI_CountEvts(take)) or 0
+      out("track %d %s  item %d  position %.3f  length %.3f  muted %s  midi notes %s", i, name, n,
+        reaper.GetMediaItemInfo_Value(item, "D_POSITION"), reaper.GetMediaItemInfo_Value(item, "D_LENGTH"),
+        tostring(reaper.GetMediaItemInfo_Value(item, "B_MUTE") == 1), tostring(notes))
+    end
+  end
+end)
+
+out("")
 out("gmem")
 guarded("gmem", function()
   reaper.gmem_attach(wire.GMEM)
@@ -96,6 +113,8 @@ guarded("gmem", function()
       out("slot %d owner %s magic %s wire %s heartbeat %s playing %s beat %.3f lanes %s pool_free %s",
         s, tostring(owner), tostring(h(wire.H_MAGIC)), tostring(h(wire.H_WIRE)), tostring(h(wire.H_HEARTBEAT)),
         tostring(h(wire.H_PLAYING)), h(wire.H_BEAT), tostring(h(wire.H_LANE_COUNT)), tostring(h(wire.H_POOL_FREE)))
+      out("  rack id %s mode %s (0 Live, 1 Items) gate word %s pattern %s",
+        tostring(h(wire.H_RACK_ID)), tostring(h(wire.H_MODE)), tostring(h(wire.H_GATE)), tostring(h(wire.H_PATTERN)))
       out("  revision %s generation %s block_us %s block_max_us %s overruns %s load_error %s",
         tostring(h(wire.H_REVISION)), tostring(h(wire.H_GENERATION)), tostring(h(wire.H_BLOCK_US)),
         tostring(h(wire.H_BLOCK_MAX_US)), tostring(h(wire.H_OVERRUNS)), tostring(h(wire.H_LOAD_ERROR)))
