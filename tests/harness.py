@@ -114,7 +114,7 @@ class Rig:
         self.block(playing=False)
         self.slot = int(self.engine.slider(1))
         self.wire = None
-        self.lua = lua54.LuaRuntime(unpack_returned_tuples=True)
+        self.lua = lua54.LuaRuntime(unpack_returned_tuples=True, encoding="latin-1")
         self.lua.execute('package.path = "%s/?.lua;" .. package.path' % LUA.as_posix())
         self.wire = self.lua.eval('(require("furrow.wire"))')
         self.mirror = Mirror(self.gmem, self.wire.SLOT_BASE + self.slot * self.wire.SLOT_SIZE, self.wire.SLOT_SIZE)
