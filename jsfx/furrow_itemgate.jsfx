@@ -29,8 +29,10 @@ H_GATE = 38;
 STALE_BLOCKS = 64;
 KEYS = 16 * 16 * 128;
 PASSED = 0;
-memset(PASSED, 0, KEYS);
+SUSTAIN = KEYS;
+memset(PASSED, 0, KEYS + 256);
 passed_count = 0;
+sustain_count = 0;
 last_beat = -1;
 stale = 0;
 gate_open = 0;
@@ -50,6 +52,19 @@ function find_slot(rack) local(s, base, found) (
 
 // Releases every note this gate let through, so closing never leaves one sounding.
 function release_passed() local(key, bus, ch, note) (
+  // A sustain pedal the items left down is lifted first, so the releases below end the notes.
+  sustain_count > 0 ? (
+    key = 0;
+    loop(256,
+      SUSTAIN[key] ? (
+        midi_bus = floor(key / 16);
+        midisend(0, $xB0 + key % 16, 64, 0);
+        SUSTAIN[key] = 0;
+      );
+      key += 1;
+    );
+    sustain_count = 0;
+  );
   passed_count > 0 ? (
     key = 0;
     loop(KEYS,
@@ -94,6 +109,10 @@ while (midirecv(offset, msg1, msg2, msg3)) (
     midisend(offset, msg1, msg2, msg3);
     note_on && !PASSED[key] ? (PASSED[key] = 1; passed_count += 1);
     note_off && PASSED[key] ? (PASSED[key] = 0; passed_count -= 1);
+    status == $xB0 && msg2 == 64 ? (
+      key = bus * 16 + (msg1 & 15);
+      msg3 >= 64 ? (!SUSTAIN[key] ? sustain_count += 1; SUSTAIN[key] = 1) : (SUSTAIN[key] ? sustain_count -= 1; SUSTAIN[key] = 0);
+    );
   ) : (
     // A release for a note already let through still passes, so it does not hang.
     note_off && PASSED[key] ? (

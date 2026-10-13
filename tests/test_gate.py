@@ -105,6 +105,21 @@ class GateTest(unittest.TestCase):
         self.assertIn((0x80, 80), released)
         self.assertEqual(self.note_ons(self.block(playing=False)[0]), [])
 
+    def test_closing_the_gate_lifts_a_sustain_pedal_the_items_left_down(self):
+        self.configure()
+        self.set_mode(1)
+        for _ in range(4):
+            self.block(playing=False)
+        self.gate.send_midi(0xB0, 64, 127, 0)
+        self.gate.time(120, 1, 0)
+        self.gate.process(1024)
+        self.set_mode(0)
+        pedal = []
+        for _ in range(4):
+            out, _ = self.block(playing=False, item_notes=False)
+            pedal += [(e[2], e[3], e[4]) for e in out if e[2] == 0xB0 and e[3] == 64]
+        self.assertEqual(pedal, [(0xB0, 64, 0)])
+
     def test_a_stalled_engine_closes_the_gate(self):
         self.configure()
         self.set_mode(1)
