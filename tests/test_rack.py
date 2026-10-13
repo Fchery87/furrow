@@ -240,6 +240,23 @@ class StubReaper:
 
     def MIDI_Sort(self, take):
         take.events.sort(key=lambda e: e[0])
+
+    def MIDI_CountEvts(self, take):
+        notes = sum(1 for _, m in take.events if (ord(m[0]) if isinstance(m, str) else m[0]) & 0xF0 == 0x90)
+        return True, notes, len(take.events) - notes, 0
+
+    def MIDI_GetEvt(self, take, index):
+        ppq, message = take.events[index]
+        return True, False, False, ppq, message
+
+    def MIDI_GetProjQNFromPPQPos(self, take, ppq):
+        return ppq / 960.0 + take.start * 2.0
+
+    def GetMediaItemInfo_Value(self, item, key):
+        return {"D_POSITION": item.start, "D_LENGTH": item.stop - item.start}[key]
+
+    def GetMediaItemTakeInfo_Value(self, take, key):
+        return 0.0
         return True
 
     def GetSetMediaItemInfo_String(self, item, key, value, set_new):
@@ -1343,6 +1360,51 @@ class WindowTest(unittest.TestCase):
             self.assertEqual(stub.deferred, [])
         finally:
             rig.close()
+
+
+@unittest.skipIf(SKIP, SKIP)
+class ItemReadTest(unittest.TestCase):
+    """Writes an item with the host, reads it back and checks capture sees it as unedited."""
+
+    def setUp(self):
+        self.rig = Rig()
+        self.stub = StubReaper(self.rig)
+        self.lua = self.rig.lua
+        self.lua.globals().reaper = self.stub.table(self.lua)
+        self.host = self.lua.eval('(require("furrow.host"))')
+        self.capture = self.lua.eval('(require("furrow.capture"))')
+        self.track = Track()
+        self.stub.tracks.append(self.track)
+
+    def tearDown(self):
+        self.rig.close()
+
+    def write(self, events):
+        table = self.lua.table_from([self.lua.table_from({"beat": b, "status": s, "data1": d1, "data2": d2})
+                                     for b, s, d1, d2 in events])
+        meta = self.lua.table_from({"group": 7, "lane": 3, "rack": 9})
+        self.host.write_item(0, self.track, 0.0, 4, table, meta)
+        return self.track.items[-1]
+
+    def check(self, item):
+        read = self.host.read_item(item)
+        meta = self.capture.parse_meta(read.meta)
+        return self.capture.check(meta, read.position, read.length, read.offset, read.events)
+
+    def test_an_item_reads_back_as_unedited(self):
+        item = self.write([(0.0, 0x90, 60, 100), (0.5, 0x80, 60, 0), (1.0, 0xB0, 7, 90)])
+        self.assertEqual(self.check(item), "unedited")
+
+    def test_events_that_share_a_tick_read_back_unedited_in_any_order(self):
+        item = self.write([(0.0, 0x90, 60, 100), (0.0, 0xB0, 7, 90), (0.5, 0x80, 60, 0)])
+        item.take.events[0], item.take.events[1] = item.take.events[1], item.take.events[0]
+        self.assertEqual(self.check(item), "unedited")
+
+    def test_a_changed_velocity_reads_back_as_edited(self):
+        item = self.write([(0.0, 0x90, 60, 100), (0.5, 0x80, 60, 0)])
+        ppq, _ = item.take.events[0]
+        item.take.events[0] = (ppq, "\x90\x3c\x5a")
+        self.assertEqual(self.check(item), "edited")
 
 
 if __name__ == "__main__":

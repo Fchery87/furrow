@@ -411,4 +411,29 @@ function host.delete_item(item)
   reaper.DeleteTrackMediaItem(reaper.GetMediaItem_Track(item), item)
 end
 
+-- Reads what capture needs from an item: its metadata text, its place, its take offset and
+-- its events, with each event's beat counted from the item's start in quarter notes, the
+-- same way write_item and commit.item_text use them.
+function host.read_item(item)
+  local take = reaper.GetActiveTake(item)
+  local _, meta = reaper.GetSetMediaItemInfo_String(item, host.ITEM_KEY, "", false)
+  local _, notes, controllers, sysex = reaper.MIDI_CountEvts(take)
+  local start_qn = reaper.MIDI_GetProjQNFromPPQPos(take, 0)
+  local events = {}
+  for i = 0, notes + controllers + sysex - 1 do
+    local _, _, _, ppq, message = reaper.MIDI_GetEvt(take, i)
+    events[#events + 1] = {
+      beat = reaper.MIDI_GetProjQNFromPPQPos(take, ppq) - start_qn,
+      status = message:byte(1), data1 = message:byte(2), data2 = message:byte(3),
+    }
+  end
+  return {
+    meta = meta,
+    position = reaper.GetMediaItemInfo_Value(item, "D_POSITION"),
+    length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH"),
+    offset = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS"),
+    events = events,
+  }
+end
+
 return host
