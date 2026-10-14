@@ -297,6 +297,11 @@ class StubReaper:
         self.log.append(("message", text))
         return 1
 
+    def GetUserFileNameForRead(self, name, title, ext):
+        self.log.append(("browse", title))
+        picked = getattr(self, "pick", None)
+        return (True, picked) if picked else (False, "")
+
 
 @unittest.skipIf(SKIP, SKIP)
 class RackTest(unittest.TestCase):
@@ -602,6 +607,7 @@ class RackTest(unittest.TestCase):
         self.assertEqual(self.stub.undo, ["Furrow: commit pattern"])
         self.assertEqual(len(tracks), 2)
         self.assertEqual(self.coordinator.session.snapshot.rack.mode, 1)
+        self.assertEqual(self.coordinator.notice.text, "Committed 2 lanes at the edit cursor. Now playing the items.")
         rack_id = self.coordinator.session.snapshot.rack.id
         for track in tracks:
             self.assertEqual(track.info["B_MAINSEND"], 0.0)
@@ -759,7 +765,7 @@ class RackTest(unittest.TestCase):
         self.assertEqual((lane.swing, lane.bend, lane.mod_a, lane.mod_b), (4000, 12, 1, 2))
         self.assertEqual((lane.volume, lane.pan), (5000, 0))
 
-    def test_a_long_lane_pages_through_the_snapshot_window_and_plays_to_its_length(self):
+    def test_a_long_lane_shows_every_step_in_one_window_and_plays_to_its_length(self):
         self.c("add_sample", "/samples/kick.wav")
         self.settle()
         self.stub.undo.clear()
@@ -773,23 +779,52 @@ class RackTest(unittest.TestCase):
         self.tick(8)
         self.assertEqual(self.stub.undo, ["Furrow: set length", "Furrow: paint steps"])
         self.assertEqual(self.c("lanes")[1].length, 40)
-        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [1, 0])
         self.assertTrue(self.c("page_ready"))
+        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [1, 1])
+        window = self.coordinator.session.window
+        self.assertEqual((window.nl, window.s0, window.ns), (1, 0, 48))
         self.c("set_page", 2)
-        self.assertFalse(self.c("page_ready"))
-        self.tick(8)
-        self.assertTrue(self.c("page_ready"))
-        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in (3, 35)], [0, 1])
-        self.c("set_page", 99)
-        self.assertEqual(self.coordinator.page, 31)
-        self.c("set_page", 0)
-        self.tick(8)
-        self.assertEqual(self.c("step_value", 0, 3, F_ON), 1)
+        self.assertEqual(self.coordinator.page, 0)
         self.rig.events.clear()
         self.rig.seek(0.0)
         self.rig.run(200)
         starts = [round(e[0] / 5512.5) for e in self.rig.events if e[2] == 0x90 and e[4] > 0]
         self.assertEqual(starts, [3, 35])
+
+    def test_a_pattern_switch_is_not_ready_until_the_snapshot_shows_the_new_pattern(self):
+        self.painted_lane([0])
+        self.tick(8)
+        self.assertTrue(self.c("page_ready"))
+        self.c("set_view", 5)
+        self.assertFalse(self.c("page_ready"))
+        self.tick(8)
+        self.assertEqual(self.coordinator.session.snapshot.pattern, 5)
+        self.assertTrue(self.c("page_ready"))
+
+    def test_lanes_too_long_for_one_window_split_into_pages_that_fit(self):
+        for name in ("a", "b", "c", "d", "e"):
+            self.c("add_sample", "/samples/%s.wav" % name)
+            self.settle()
+        lua = self.rig.lua
+        self.c("set_length", 0, 512)
+        self.settle()
+        self.c("run", "paint steps", lua.table_from([lua.table_from([OP_SET_STEP, 0, 0, 450, F_ON, 1])]))
+        self.settle()
+        self.tick(8)
+        # Five lanes leave room for 409 steps, which rounds down to 400 in groups of 16.
+        self.assertEqual(tuple(self.c("view")), (5, 400, 2))
+        window = self.coordinator.session.window
+        self.assertEqual((window.nl, window.s0, window.ns), (5, 0, 400))
+        self.c("set_page", 1)
+        self.tick(8)
+        self.assertTrue(self.c("page_ready"))
+        window = self.coordinator.session.window
+        self.assertEqual((window.s0, window.ns), (400, 112))
+        self.assertEqual(self.c("step_value", 0, 450, F_ON), 1)
+        self.c("set_length", 0, 16)
+        self.settle()
+        self.tick(8)
+        self.assertEqual((self.coordinator.page, tuple(self.c("view"))), (0, (5, 16, 1)))
 
     def lane_steps(self, slot, steps, fields=(0, 1)):
         return {s: [self.c("step_value", slot, s, f) for f in fields] for s in steps}
@@ -863,7 +898,9 @@ class RackTest(unittest.TestCase):
         self.assertEqual(self.stub.undo, [])
         self.assertEqual(self.on_steps(), [0, 4, 8, 12])
         self.assertIsNone(self.coordinator.tool)
-        self.assertEqual(self.coordinator.session.window.nl, 64)
+        window, grid = self.coordinator.session.window, self.c("window")
+        self.assertEqual((window.nl, window.s0, window.ns), (grid.nl, grid.s0, grid.ns))
+        self.assertIsNone(self.coordinator.session.side)
 
     def test_a_tool_waits_for_pending_edits_before_it_reads_the_lane(self):
         self.painted_lane([])
@@ -1097,8 +1134,26 @@ class FakeImGui:
         self.small_labels = []
         self.press = None
         self.menu_open = False
+        self.popup = None
+        self.expanded = True
         self.typed = None
         self.slide = None
+        # A mouse for drag tests. Step cells sit at x = step * 25 in their lane's row, and
+        # bars sit in one row at y = 500, so a test can move the mouse over real places.
+        self.mouse = None
+        self.down = False
+        self.clicked = False
+        self.lane = 0
+        self.bar = None
+        self.rect = None
+        self.mods = 0
+
+    def place(self, label, width, height):
+        if label.startswith("##s"):
+            return (int(label[3:]) * 25.0, self.lane * 25.0, width, height)
+        if label == "##bar":
+            return (self.bar * 25.0, 500.0, width, height)
+        return None
 
     def table(self, lua):
         fake = self
@@ -1106,6 +1161,33 @@ class FakeImGui:
         def call(name):
             def fn(*args):
                 fake.calls.append(name)
+                if name == "PushID" and isinstance(args[1], str):
+                    if args[1].startswith("lane"):
+                        fake.lane = int(args[1][4:])
+                    elif args[1].startswith("bar"):
+                        fake.bar = int(args[1][3:])
+                if name == "InvisibleButton":
+                    fake.rect = fake.place(args[1], args[2], args[3])
+                elif name in ("Button", "SmallButton", "Text", "TextDisabled", "SliderInt", "Checkbox",
+                              "InputInt", "InputText", "BeginCombo", "Selectable", "Dummy"):
+                    fake.rect = None
+                if name == "GetItemRectMin":
+                    return (fake.rect[0], fake.rect[1]) if fake.rect else (0.0, 0.0)
+                if name == "GetMousePos":
+                    return fake.mouse if fake.mouse else (-1000.0, -1000.0)
+                if name == "IsMouseDown":
+                    return fake.down
+                if name == "IsMouseClicked":
+                    return fake.clicked
+                if name == "GetKeyMods":
+                    return fake.mods
+                if name == "GetCursorScreenPos":
+                    return 0.0, 0.0
+                if name == "IsItemHovered":
+                    if not (fake.mouse and fake.rect):
+                        return False
+                    x, y, w, h = fake.rect
+                    return x <= fake.mouse[0] < x + w and y <= fake.mouse[1] < y + h
                 if name == "InputInt" and fake.typed is not None:
                     typed, fake.typed = fake.typed, None
                     return True, typed
@@ -1115,10 +1197,14 @@ class FakeImGui:
                     return True, value
                 if name == "BeginPopupContextItem":
                     return fake.menu_open
+                if name == "BeginPopup":
+                    return args[1] == fake.popup
+                if name == "CollapsingHeader":
+                    return fake.expanded
                 if name == "MenuItem" and args[1] == fake.press:
                     fake.press = None
                     return True
-                if name == "SmallButton":
+                if name in ("SmallButton", "Button"):
                     fake.small_labels.append(args[1])
                     if args[1] == fake.press:
                         fake.press = None
@@ -1131,7 +1217,7 @@ class FakeImGui:
                     return (True, len(fake.drop)) if fake.drop else (False, 0)
                 if name == "GetDragDropPayloadFile":
                     return True, fake.drop.pop(0)
-                if name in ("GetItemRectMin", "GetContentRegionAvail"):
+                if name == "GetContentRegionAvail":
                     return 0.0, 0.0
                 if name.startswith(("Is", "Button", "SmallButton", "MenuItem", "BeginPopup", "InvisibleButton")):
                     return False
@@ -1154,6 +1240,7 @@ class WindowTest(unittest.TestCase):
             host = lua.eval('(require("furrow.host"))')
             host.create_rack()
             imgui = FakeImGui()
+            imgui.popup = "groove"
             ui = lua.eval('(require("furrow.ui"))')
             ui.run(imgui.table(lua))
             for frame in range(30):
@@ -1170,12 +1257,12 @@ class WindowTest(unittest.TestCase):
             self.assertIn("SliderInt", imgui.calls)
             self.assertIn("Checkbox", imgui.calls)
             self.assertIn("BeginCombo", imgui.calls)
-            self.assertIn("New##pattern", imgui.small_labels)
+            self.assertIn("CollapsingHeader", imgui.calls)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
         finally:
             rig.close()
 
-    def test_the_window_shows_page_buttons_for_a_lane_longer_than_16_steps(self):
+    def test_a_longer_lane_grows_its_row_instead_of_adding_pages(self):
         rig = Rig()
         try:
             stub = StubReaper(rig)
@@ -1200,11 +1287,14 @@ class WindowTest(unittest.TestCase):
                     fn()
                 rig.block(playing=False)
                 stub.clock += 0.03
-            self.assertIn("1-16##page0", imgui.small_labels)
-            self.assertIn("17-32##page1", imgui.small_labels)
-            self.assertIn("33-48##page2", imgui.small_labels)
-            self.assertIn("97-112##page6", imgui.small_labels)
-            self.assertNotIn("113-128##page7", imgui.small_labels)
+            # A 100-step lane fits one window, so its row grows and no page buttons appear.
+            self.assertFalse([label for label in imgui.small_labels if "##page" in label])
+            imgui.calls.clear()
+            pending, stub.deferred = stub.deferred, []
+            for fn in pending:
+                fn()
+            # One frame draws a cell and a bar for each of the 100 steps.
+            self.assertEqual(imgui.calls.count("InvisibleButton"), 200)
         finally:
             rig.close()
 
@@ -1249,7 +1339,8 @@ class WindowTest(unittest.TestCase):
                 if frame == 6:
                     imgui.drop.append("/samples/perc.wav")
                 if frame == 30:
-                    imgui.press = "Clone##pattern"
+                    imgui.popup = "pattern menu"
+                    imgui.press = "Clone pattern##pattern"
                 pending, stub.deferred = stub.deferred, []
                 for fn in pending:
                     fn()
@@ -1325,13 +1416,188 @@ class WindowTest(unittest.TestCase):
                 if frame == 6:
                     imgui.drop.append("/samples/perc.wav")
                 if frame == 30:
-                    imgui.press = "New##pattern"
+                    imgui.popup = "pattern menu"
+                    imgui.press = "New pattern##pattern"
                 pending, stub.deferred = stub.deferred, []
                 for fn in pending:
                     fn()
                 rig.block(playing=False)
                 stub.clock += 0.03
             self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: new pattern"])
+        finally:
+            rig.close()
+
+    def test_clicking_the_drop_zone_browses_for_a_file_that_becomes_a_lane(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            stub.pick = "/samples/kick.wav"
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(40):
+                if frame == 6:
+                    imgui.press = "Drop audio files here, or click to browse##addlanes"
+                if frame == 20:
+                    stub.pick = None
+                    imgui.press = "+ Add audio files: click to browse, or drop them here##addlanes"
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual([t.name for t in stub.tracks], ["Furrow Rack", "Furrow Engine", "kick"])
+            self.assertEqual([e for e in stub.log if e[0] == "browse"], [("browse", "Add an audio file to Furrow")] * 2)
+            self.assertEqual(stub.undo, ["Furrow: add lane"])
+        finally:
+            rig.close()
+
+    def test_clicking_a_lane_name_selects_it_quietly_and_alt_click_or_the_menu_plays_it(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            heard = {}
+            for frame in range(70):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame == 25:
+                    rig.events.clear()
+                    imgui.press = "perc##name"
+                if frame == 35:
+                    heard["click"] = [e for e in rig.events if e[2] == 0x90 and e[4] > 0]
+                    imgui.mods = 1
+                    imgui.press = "perc##name"
+                if frame == 36:
+                    imgui.mods = 0
+                if frame == 45:
+                    heard["alt"] = [e for e in rig.events if e[2] == 0x90 and e[4] > 0]
+                    rig.events.clear()
+                    imgui.menu_open = True
+                    imgui.press = "Hear sample"
+                if frame == 46:
+                    imgui.menu_open = False
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            heard["menu"] = [e for e in rig.events if e[2] == 0x90 and e[4] > 0]
+            self.assertEqual((len(heard["click"]), len(heard["alt"]), len(heard["menu"])), (0, 1, 1))
+        finally:
+            rig.close()
+
+    def test_shade_scales_the_colour_and_keeps_its_alpha(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            rig.lua.globals().reaper = stub.table(rig.lua)
+            ui = rig.lua.eval('(require("furrow.ui"))')
+            self.assertEqual(ui.shade(0xE8A33DFF, 1.0), 0xE8A33DFF)
+            self.assertEqual(ui.shade(0xE8A33D80, 0.5), 0x74521F80)
+            self.assertEqual(ui.shade(0xFFFFFFFF, 0.0), 0x000000FF)
+        finally:
+            rig.close()
+
+    def test_holding_a_length_button_repeats_and_makes_one_undo_point(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for frame in range(60):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                # Five repeats while the mouse stays down, then the release.
+                if 30 <= frame < 35:
+                    imgui.down = True
+                    imgui.press = "+1##length1"
+                if frame == 35:
+                    imgui.down = False
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: set length"])
+            imgui.calls.clear()
+            pending, stub.deferred = stub.deferred, []
+            for fn in pending:
+                fn()
+            # The lane grew from 16 to 21 steps, so one frame draws 21 cells and 21 bars.
+            self.assertEqual(imgui.calls.count("InvisibleButton"), 42)
+        finally:
+            rig.close()
+
+    def test_a_fast_drag_paints_every_cell_and_bar_it_crosses(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            lua.eval('(require("furrow.host"))').create_rack()
+            imgui = FakeImGui()
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            # Each drag jumps from step 1 to step 13 in a single frame.
+            moves = {
+                30: ((11.0, 11.0), True, True), 31: ((311.0, 11.0), True, False), 32: (None, False, False),
+                40: ((11.0, 500.0), True, True), 41: ((311.0, 584.0), True, False), 42: (None, False, False),
+            }
+            for frame in range(60):
+                if frame == 6:
+                    imgui.drop.append("/samples/perc.wav")
+                if frame in moves:
+                    imgui.mouse, imgui.down, imgui.clicked = moves[frame]
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(stub.undo, ["Furrow: add lane", "Furrow: paint steps", "Furrow: edit velocity"])
+            rig.events.clear()
+            rig.seek(0.0)
+            rig.run(88)
+            hits = [(round(e[0] / 5512.5), e[4]) for e in rig.events if e[2] == 0x90 and e[4] > 0]
+            hits = [hit for hit in hits if hit[0] < 16]
+            self.assertEqual([step for step, _ in hits], list(range(13)))
+            velocities = [v for _, v in hits]
+            # A bar takes the path's last height over it, so the first sits just under the top.
+            self.assertGreaterEqual(velocities[0], 120)
+            self.assertEqual(velocities[-1], 1)
+            self.assertEqual(velocities, sorted(velocities, reverse=True))
+            self.assertEqual(len(set(velocities)), 13)
+        finally:
+            rig.close()
+
+    def test_the_multi_file_dialog_answer_becomes_one_path_each(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            ui = lua.eval('(require("furrow.ui"))')
+            answers = {"several": (1, "/samples/drums\0kick.wav\0snare.wav"), "one": (1, "/samples/hat.wav"),
+                       "cancel": (0, "")}
+            for case, (code, text) in answers.items():
+                lua.globals().reaper.JS_Dialog_BrowseForOpenFiles = lambda *a, code=code, text=text: (code, text)
+                files = ui.browse_files()
+                got = [files[i] for i in range(1, len(files) + 1)]
+                expected = {"several": ["/samples/drums/kick.wav", "/samples/drums/snare.wav"],
+                            "one": ["/samples/hat.wav"], "cancel": []}[case]
+                self.assertEqual(got, expected, case)
         finally:
             rig.close()
 
