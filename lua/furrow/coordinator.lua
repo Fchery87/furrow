@@ -218,7 +218,7 @@ function Coordinator:page_ready()
     return false
   end
   local want = self:window()
-  return snap.s0 == want.s0 and snap.ns >= want.ns and snap.nl >= want.nl
+  return snap.pattern == want.pattern and snap.s0 == want.s0 and snap.ns >= want.ns and snap.nl >= want.nl
 end
 
 function Coordinator:set_length(slot, length)

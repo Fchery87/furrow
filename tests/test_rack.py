@@ -776,6 +776,16 @@ class RackTest(unittest.TestCase):
         starts = [round(e[0] / 5512.5) for e in self.rig.events if e[2] == 0x90 and e[4] > 0]
         self.assertEqual(starts, [3, 35])
 
+    def test_a_pattern_switch_is_not_ready_until_the_snapshot_shows_the_new_pattern(self):
+        self.painted_lane([0])
+        self.tick(8)
+        self.assertTrue(self.c("page_ready"))
+        self.c("set_view", 5)
+        self.assertFalse(self.c("page_ready"))
+        self.tick(8)
+        self.assertEqual(self.coordinator.session.snapshot.pattern, 5)
+        self.assertTrue(self.c("page_ready"))
+
     def test_lanes_too_long_for_one_window_split_into_pages_that_fit(self):
         for name in ("a", "b", "c", "d", "e"):
             self.c("add_sample", "/samples/%s.wav" % name)

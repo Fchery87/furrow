@@ -64,7 +64,7 @@ Version 1 provides a Channel Rack workflow and per-step probability. MIDI channe
 
 ### Window layout
 
-- **Top bar.** Play state, tempo readout, Live or Items mode, pattern selector, global swing, commit length, tools menu.
+- **Top bar.** Play state, tempo readout, Live or Items mode, pattern selector, global swing, tools menu.
 - **Rack.** One row per lane. The left side shows mute, solo, name, volume and pan. The right side shows the step grid, with beats shaded in groups of four and a moving playhead.
 - **Step lane editor.** A panel under the rack, as in FL's Graph Editor. Tabs for each step lane. Click a lane name to show its bars.
 - **Inspector.** A side panel for the selected lane. It shows the target track, MIDI note and channel, length, rate, direction and swing amount.
@@ -79,7 +79,7 @@ Version 1 provides a Channel Rack workflow and per-step probability. MIDI channe
 
 ## Data model
 
-A rack holds lanes and patterns. Each pattern owns its step grid, per-lane loop lengths and commit length. Lane targets, rate, direction and instrument settings stay the same when switching patterns. V1 fixes rate to 1/16 and direction to forward. Grids and length maps use stable lane IDs, never display row positions.
+A rack holds lanes and patterns. Each pattern owns its step grid and per-lane loop lengths. Lane targets, rate, direction and instrument settings stay the same when switching patterns. V1 fixes rate to 1/16 and direction to forward. Grids and length maps use stable lane IDs, never display row positions.
 
 ### Rack
 
@@ -342,7 +342,7 @@ On REAPER 7.82 for Linux, a probe engine sent each lane's note-off and then CC 1
 
 ### Commit and source metadata
 
-Commit takes an acknowledged full-pattern snapshot and writes one MIDI item per lane to the target tracks at the edit cursor. All items have the same nominal duration, `commit_length_steps` × 0.25 quarter-note beats. Repeat each lane over that interval independently. Do not expand the interval to the least common multiple of the lane lengths. Start each lane at logical traversal position zero at the cursor, then apply its configured direction mapping. Clip releases at the item end and omit delayed hits that start outside the interval.
+Commit takes an acknowledged full-pattern snapshot and writes one MIDI item per lane to the target tracks at the edit cursor. All items have the same nominal duration, `commit_length_steps` × 0.25 quarter-note beats, where `commit_length_steps` is the length in steps of the longest lane in the pattern at commit time. Repeat each lane over that interval independently. Do not expand the interval to the least common multiple of the lane lengths. Start each lane at logical traversal position zero at the cursor, then apply its configured direction mapping. Clip releases at the item end and omit delayed hits that start outside the interval.
 
 Bake probability using the destination project positions. In V2, commit begins a fresh condition epoch and evaluates Fill automation over the destination range. With the same origin, initial condition state and inputs, committed events must match live events. Moving a baked item later moves its notes and keeps the baked rolls. The commit action says it renders a new performance at the edit cursor. Probability rolls and swung positions can differ from live playback that used another origin. Commit does not record the notes that just played.
 
