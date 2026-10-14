@@ -81,6 +81,24 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual((lane.id, lane.length, lane.note), (7, 4, 60))
         self.assertEqual(lane.rows[2][1], 92)
 
+    def test_restore_commands_rebuild_the_steps_and_length_of_a_matching_rack_lane(self):
+        self.lua.execute("source = commit.decode(stored); lanes = { { id = 7, slot = 5, length = 16 } }")
+        self.assertEqual(self.lua.eval("#capture.restore_commands(source, lanes, 3)") > 0, True)
+        # The first command sets the length: op 7, pattern 3, slot 5.
+        self.assertEqual(self.lua.eval("capture.restore_commands(source, lanes, 3)[1][1]"), 7)
+        self.assertEqual(self.lua.eval("capture.restore_commands(source, lanes, 3)[1][3]"), 5)
+
+    def test_restore_commands_name_a_missing_lane_and_plan_nothing(self):
+        self.lua.execute("source = commit.decode(stored); other = { { id = 99, slot = 0, length = 4 } }")
+        self.assertEqual(self.lua.eval("select(2, capture.restore_commands(source, other, 1))[1]"), 7)
+        self.assertIsNone(self.lua.eval("(capture.restore_commands(source, other, 1))"))
+
+    def test_lane_settings_that_differ_are_reported_not_applied(self):
+        self.lua.execute("source = commit.decode(stored); lanes = { { id = 7, slot = 0, length = 16, note = 61, "
+                         "volume = 100, pan = 0, bend = 0, mod_a = 0, mod_b = 0, swing = 0, prob_key = 1 } }")
+        found = self.lua.eval("table.concat(capture.setting_differences(source, lanes), ',')")
+        self.assertEqual(found, "lane 7 note")
+
     def test_restore_refuses_a_missing_or_broken_snapshot(self):
         self.assertEqual(self.lua.eval("select(2, capture.restore(nil))"), "the commit's source snapshot is missing")
         self.assertEqual(self.lua.eval("select(2, capture.restore('')) "), "the commit's source snapshot is missing")

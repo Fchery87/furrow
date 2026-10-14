@@ -592,6 +592,39 @@ class RackTest(unittest.TestCase):
         self.tick(12)
         return [t for t in self.stub.tracks if t.ext.get("P_EXT:FurrowItems")]
 
+    def test_a_commit_restores_its_steps_and_length_as_a_new_pattern(self):
+        self.painted_lane([0, 4, 9], length=20)
+        self.committed()
+        item = next(i for t in self.stub.tracks for i in t.items if i.ext.get("P_EXT:Furrow"))
+        group = item.ext["P_EXT:Furrow"].split()[2]
+        source = self.rig.lua.eval('(require("furrow.capture"))').restore(
+            self.stub.proj_ext[("FurrowCommits", group)])
+        before = [self.c("step_value", 0, s, F_ON) for s in range(20)]
+        self.c("restore_source", source)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.coordinator.pattern, 1)
+        self.assertEqual(self.c("lanes")[1].length, 20)
+        self.assertEqual([self.c("step_value", 0, s, F_ON) for s in range(20)], before)
+        self.assertEqual(self.stub.undo[-1], "Furrow: restore pattern")
+
+    def test_a_restore_with_a_missing_lane_changes_nothing_and_names_it(self):
+        self.painted_lane([0, 4, 9])
+        self.committed()
+        item = next(i for t in self.stub.tracks for i in t.items if i.ext.get("P_EXT:Furrow"))
+        group = item.ext["P_EXT:Furrow"].split()[2]
+        source = self.rig.lua.eval('(require("furrow.capture"))').restore(
+            self.stub.proj_ext[("FurrowCommits", group)])
+        self.c("remove_lane", self.c("lanes")[1])
+        self.settle()
+        self.tick(8)
+        undo_before = list(self.stub.undo)
+        self.c("restore_source", source)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.stub.undo, undo_before)
+        self.assertIn("not in the rack", self.coordinator.message)
+
     def test_a_commit_writes_one_item_a_lane_stores_the_group_once_and_enters_items_mode_in_one_undo_point(self):
         self.painted_lane([0, 4, 8])
         self.c("add_sample", "/samples/snare.wav")

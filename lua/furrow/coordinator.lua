@@ -12,6 +12,7 @@ local Session = require("furrow.session")
 local host = require("furrow.host")
 local tools = require("furrow.tools")
 local commit = require("furrow.commit")
+local capture = require("furrow.capture")
 
 local Coordinator = {}
 Coordinator.__index = Coordinator
@@ -781,6 +782,65 @@ function Coordinator:set_mode(mode)
     return
   end
   self:run(mode == 1 and "play committed items" or "play live", { { wire.OP_SET_RACK, wire.R_MODE, mode } })
+end
+
+-- Restores a commit's source snapshot as a new pattern and switches to it. Lanes must match
+-- by id. Otherwise nothing changes and the message names the missing lanes.
+function Coordinator:restore_source(source)
+  if not self:processing() then
+    return
+  end
+  local taken = {}
+  for _, entry in ipairs(self:patterns()) do
+    taken[entry.index] = true
+  end
+  local target = 0
+  while taken[target] do
+    target = target + 1
+  end
+  if target >= wire.PATTERNS then
+    self.message = "the rack already has " .. wire.PATTERNS .. " patterns"
+    return
+  end
+  local commands, missing = capture.restore_commands(source, self:lanes(), target)
+  if not commands then
+    self.message = "this commit uses lanes that are not in the rack: " .. table.concat(missing, ", ")
+    return
+  end
+  local shown = self.pattern or 0
+  local gesture = self:begin("restore pattern", {
+    undo_states = UNDO_ALL,
+    abort_on_failure = true,
+    rollback = { { wire.OP_CLEAR_PATTERN, target }, { wire.OP_QUEUE_PATTERN, shown, 0, 0 } },
+    on_abort = function(c) c:set_view(shown) end,
+    after = function(c)
+      local rack = c:rack_track()
+      if not rack then
+        return false, "the rack tracks are gone"
+      end
+      local list = host.read_patterns(rack)
+      for _, entry in ipairs(c:patterns()) do
+        list[entry.index] = list[entry.index] or entry.name
+      end
+      list[target] = host.clean_pattern_name("Restored")
+      host.write_patterns(rack, list)
+      return true
+    end,
+  })
+  for first = 1, #commands, TOOL_CHUNK do
+    local chunk = {}
+    for i = first, math.min(first + TOOL_CHUNK - 1, #commands) do
+      chunk[#chunk + 1] = commands[i]
+    end
+    self:add(gesture, chunk)
+  end
+  self:add(gesture, self:queue_commands(target))
+  self:finish(gesture)
+  self:set_view(target)
+  local differences = capture.setting_differences(source, self:lanes())
+  if #differences > 0 then
+    self.message = "restored; these lane settings differ and were not applied: " .. table.concat(differences, ", ")
+  end
 end
 
 -- Starts a commit of the shown pattern at the edit cursor.
