@@ -116,6 +116,15 @@ class CaptureTest(unittest.TestCase):
 
         self.assertEqual(self.capture.normalize_midi(plain), self.capture.normalize_midi(selected))
 
+    def test_same_tick_event_order_does_not_change_normalized_fingerprint_data(self):
+        blobs = self.lua.eval('''function()
+          local on = string.pack("i4Bs4", 0, 0, string.char(0x90, 60, 100))
+          local cc = string.pack("i4Bs4", 0, 0, string.char(0xB0, 7, 90))
+          return on .. cc, cc .. on
+        end''')()
+
+        self.assertEqual(self.capture.normalize_midi(blobs[0]), self.capture.normalize_midi(blobs[1]))
+
 
 if __name__ == "__main__":
     unittest.main()

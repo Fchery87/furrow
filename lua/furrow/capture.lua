@@ -62,14 +62,28 @@ function capture.inspect(metadata, current_fingerprint, snapshot_text)
 end
 
 local function read_blob(blob)
-  local offset, normalized = 1, {}
+  local offset, ppq, events = 1, 0, {}
   while offset <= #blob do
     local ok, delta, flags, message, next_offset = pcall(string.unpack, "i4Bs4", blob, offset)
     if not ok or next_offset <= offset then
       return nil, nil, "the MIDI event stream is malformed"
     end
-    normalized[#normalized + 1] = string.pack("i4Bs4", delta, flags & ~1, message)
+    ppq = ppq + delta
+    events[#events + 1] = { ppq = ppq, flags = flags & ~1, message = message }
     offset = next_offset
+  end
+
+  table.sort(events, function(a, b)
+    if a.ppq ~= b.ppq then return a.ppq < b.ppq end
+    if a.message ~= b.message then return a.message < b.message end
+    return a.flags < b.flags
+  end)
+
+  local normalized, previous_ppq = {}, 0
+  for _, event in ipairs(events) do
+    normalized[#normalized + 1] = string.pack(
+      "i4Bs4", event.ppq - previous_ppq, event.flags, event.message)
+    previous_ppq = event.ppq
   end
   return normalized, table.concat(normalized)
 end
