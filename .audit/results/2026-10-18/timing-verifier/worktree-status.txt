@@ -1,0 +1,29 @@
+ M Furrow-Spec-and-Architecture.md
+ M jsfx/furrow_probe_receiver.jsfx
+ M jsfx/furrow_seqcore.jsfx
+ M lua/Furrow_Rack.lua
+ M lua/furrow/commit.lua
+ M lua/furrow/coordinator.lua
+ M lua/furrow/host.lua
+ M lua/furrow/session.lua
+ M lua/furrow/ui.lua
+ M lua/furrow_probe_dump.lua
+ M lua/furrow_probe_render.lua
+ M probes/README.md
+ M probes/check_lua_scripts.py
+ M probes/check_schedule.py
+ M probes/diff_log.py
+ M probes/expected/constant-120.txt
+ M probes/expected/ramp-44100-1024.txt
+ M probes/expected/ramp-edge-44100-1024.txt
+ M probes/expected/step-off-grid-44100-1024.txt
+ M probes/expected/step-on-beat-44100-1024.txt
+ M probes/schedule.py
+ M tests/README.md
+ M tests/test_commit.py
+ M tests/test_rack.py
+ M tests/test_seqcore.py
+?? .audit/
+?? README.md
+?? lua/furrow/capture.lua
+?? tests/test_capture.py

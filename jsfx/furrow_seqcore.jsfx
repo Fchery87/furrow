@@ -718,7 +718,7 @@ function preflight(count) local(i, e, op, a, b, c, d, v, need, adds, code, pt, s
     ) : op == OP_REMOVE_LANE ? (
       !in_range(a, 0, LANES - 1) || !SIM[a] ? (code = ACK_INVALID) : (SIM[a] = 0);
     ) : op == OP_SET_LANE ? (
-      !in_range(a, 0, LANES - 1) || !SIM[a] || !in_range(b, L_ROW, L_MOD_B) || !in_range(c, LMIN[b], LMAX[b])
+      !in_range(a, 0, LANES - 1) || !SIM[a] || !in_range(b, L_PROB_KEY, L_MOD_B) || !in_range(c, LMIN[b], LMAX[b])
         ? code = ACK_INVALID;
     ) : op == OP_SET_RACK ? (
       lo = -1;

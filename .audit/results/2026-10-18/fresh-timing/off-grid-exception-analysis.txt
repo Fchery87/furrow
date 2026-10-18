@@ -1,0 +1,12 @@
+Case: step-off-grid-44100-1024
+Source: current uncommitted working tree at e4293986bafdfb4f340ab79184a7bb3b477dfa63
+Host: REAPER 7.82/linux-x86_64
+Sample rate: 44100 Hz
+Block size: 1024 samples
+
+The strict one-sample comparator exits 1 for two note-ons.
+Expected sample: 55814.
+Observed sample: 55125.
+Error: 689 samples early.
+
+The timing specification allows up to one block of error for events after an off-grid tempo marker in the same block. The observed error is less than the 1024-sample block size. This case is therefore within the documented exception. The raw capture and strict comparator failure are retained. The comparator tolerance was not changed.

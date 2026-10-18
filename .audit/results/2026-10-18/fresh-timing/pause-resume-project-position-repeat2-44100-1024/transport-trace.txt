@@ -1,0 +1,16 @@
+before-play wall=431860.427172 state=0 playex=2.057210884 cursor=0.000000000
+after-play-action wall=431860.429352 state=1 playex=0.000000000 cursor=0.000000000
+before-pause wall=431861.258568 state=1 playex=0.559591837 cursor=0.000000000
+after-pause wall=431861.258764 state=2 playex=0.618911565 cursor=0.618911565
+paused-sample wall=431861.381408 state=2 playex=0.618911565 cursor=0.618911565
+paused-sample wall=431861.418782 state=2 playex=0.618911565 cursor=0.618911565
+paused-sample wall=431861.453814 state=2 playex=0.618911565 cursor=0.618911565
+paused-sample wall=431861.490861 state=2 playex=0.618911565 cursor=0.618911565
+paused-sample wall=431861.527306 state=2 playex=0.618911565 cursor=0.618911565
+paused-sample wall=431861.563911 state=2 playex=0.618911565 cursor=0.618911565
+paused-sample wall=431861.601034 state=2 playex=0.618911565 cursor=0.618911565
+paused-sample wall=431861.638925 state=2 playex=0.618911565 cursor=0.618911565
+before-resume wall=431861.674299 state=2 playex=0.618911565 cursor=0.618911565
+after-resume wall=431861.674519 state=1 playex=0.618911565 cursor=0.618911565
+before-stop wall=431863.351076 state=1 playex=2.073854875 cursor=0.618911565
+after-stop wall=431863.351231 state=0 playex=2.073854875 cursor=0.618911565

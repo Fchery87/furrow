@@ -166,6 +166,18 @@ class CommitTest(unittest.TestCase):
         self.assertNotEqual(fp(text), fp(text[:-2] + "x\n"))
         self.assertEqual(fp(text), fp(text))
 
+    def test_the_source_snapshot_keeps_rack_identity_and_lane_target_guid(self):
+        self.build(random_pattern(6, {0: 4}), {0: 4}, 0, 0)
+        data = self.snapshot_input({0: 4})
+        data.rack_id = 17
+        data.lanes[1].id = 1001
+        data.lanes[1].target_guid = "{TRACK-1}"
+
+        decoded = self.commit.decode(self.commit.encode(data))
+
+        self.assertEqual(decoded.rack_id, 17)
+        self.assertEqual(decoded.lanes[1].target_guid, "{TRACK-1}")
+
 
 if __name__ == "__main__":
     unittest.main()

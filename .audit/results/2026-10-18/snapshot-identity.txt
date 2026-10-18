@@ -1,0 +1,7 @@
+Verification date: 2026-10-18
+HEAD: e4293986bafdfb4f340ab79184a7bb3b477dfa63
+Version tag: none
+Worktree: dirty; see worktree-status.txt
+Tracked diff SHA-256: see tracked-diff.sha256
+Automated test suite: completed against this HEAD and working-tree code; only specification, probe-guide, and audit text changed after the full suite.
+Scope: evidence identifies an uncommitted development tree, not a release snapshot.

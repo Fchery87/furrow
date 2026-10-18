@@ -1,18 +1,34 @@
 -- REAPER objects for a rack: the folder, the engine track, lane tracks with RS5K, MIDI
 -- sends and the lane-to-track links. Every function here runs on REAPER's UI thread.
 local wire = require("furrow.wire")
+local capture = require("furrow.capture")
+local commit = require("furrow.commit")
 
 local host = {}
 
 host.ENGINE_NAMES = { "JS:furrow_seqcore.jsfx", "JS:Furrow/furrow_seqcore.jsfx" }
 host.RS5K = "ReaSamplOmatic5000"
 host.LINKS_KEY = "P_EXT:Furrow"
+host.CHANNELS_KEY = "P_EXT:FurrowChannels"
 -- Product choice, not a measurement. Velocity 1 plays this far below velocity 127.
 host.MIN_VELOCITY_DB = -30
 
 function host.track_name(track)
   local _, name = reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)
   return name
+end
+
+-- Return packed ImGui RGBA, or nil when the track uses REAPER's default colour.
+function host.track_color(track)
+  if not track then
+    return nil
+  end
+  local native = reaper.GetTrackColor(track)
+  if not native or native == 0 then
+    return nil
+  end
+  local r, g, b = reaper.ColorFromNative(native)
+  return (r << 24) | (g << 16) | (b << 8) | 0xFF
 end
 
 function host.track_by_guid(proj, guid)
@@ -176,6 +192,94 @@ function host.write_links(rack, links)
   reaper.GetSetMediaTrackInfo_String(rack, host.LINKS_KEY, table.concat(lines, "\n"), true)
 end
 
+function host.read_lane_channels(rack)
+  local channels = {}
+  if not rack then
+    return channels
+  end
+  local _, text = reaper.GetSetMediaTrackInfo_String(rack, host.CHANNELS_KEY, "", false)
+  for id, channel in (text or ""):gmatch("lane (%d+) channel (%d+)") do
+    channel = tonumber(channel)
+    if channel >= 1 and channel <= 16 then
+      channels[tonumber(id)] = channel
+    end
+  end
+  return channels
+end
+
+function host.write_lane_channels(rack, channels)
+  local ids = {}
+  for id in pairs(channels) do
+    ids[#ids + 1] = id
+  end
+  table.sort(ids)
+  local lines = { "1" }
+  for _, id in ipairs(ids) do
+    local channel = math.floor(channels[id])
+    if channel < 1 or channel > 16 then
+      return false, "MIDI channel must be from 1 to 16"
+    end
+    lines[#lines + 1] = string.format("lane %d channel %d", id, channel)
+  end
+  reaper.GetSetMediaTrackInfo_String(rack, host.CHANNELS_KEY, table.concat(lines, "\n"), true)
+  return true
+end
+
+-- A lane target must be a track in this project, cannot be its own engine, cannot share a
+-- target/channel pair with another lane, and must not route back to the engine.
+function host.validate_lane_target(proj, engine, target, channel, lane_id, links, channels)
+  channel = math.floor(tonumber(channel) or 0)
+  if not target then
+    return false, "choose an instrument track"
+  end
+  if target == engine then
+    return false, "the engine track cannot be a lane target"
+  end
+  if reaper.GetMediaTrackInfo_Value(target, "I_FOLDERDEPTH") > 0 then
+    return false, "a folder track cannot be a lane target"
+  end
+  local _, managed_items = reaper.GetSetMediaTrackInfo_String(target, host.ITEMS_KEY, "", false)
+  if managed_items and managed_items ~= "" then
+    return false, "a managed item track cannot be a lane target"
+  end
+  if channel < 1 or channel > 16 then
+    return false, "MIDI channel must be from 1 to 16"
+  end
+  local present = false
+  for i = 0, reaper.CountTracks(proj) - 1 do
+    if reaper.GetTrack(proj, i) == target then
+      present = true
+      break
+    end
+  end
+  if not present then
+    return false, "the target track is not in this project"
+  end
+  local guid = reaper.GetTrackGUID(target)
+  for id, assigned_guid in pairs(links or {}) do
+    if tonumber(id) ~= lane_id and assigned_guid == guid and ((channels or {})[tonumber(id)] or 1) == channel then
+      return false, "that track and MIDI channel are already assigned to another lane"
+    end
+  end
+  local visited, pending = {}, { target }
+  while #pending > 0 do
+    local track = table.remove(pending)
+    if track == engine then
+      return false, "the target would create a routing cycle to the engine"
+    end
+    if not visited[track] then
+      visited[track] = true
+      for i = 0, reaper.GetTrackNumSends(track, 0) - 1 do
+        local next_track = reaper.GetTrackSendInfo_Value(track, 0, i, "P_DESTTRACK")
+        if next_track then
+          pending[#pending + 1] = next_track
+        end
+      end
+    end
+  end
+  return true
+end
+
 local function find_param(track, fx, prefix)
   for i = 0, reaper.TrackFX_GetNumParams(track, fx) - 1 do
     local _, name = reaper.TrackFX_GetParamName(track, fx, i, "")
@@ -308,11 +412,50 @@ function host.midi_flags(slot, dest_channel)
   return (slot % 16 + 1) | (dest_channel << 5) | ((slot // 16 + 1) << 14) | (1 << 22)
 end
 
-function host.add_send(engine, track, slot)
+function host.add_send(engine, track, slot, channel)
   local send = reaper.CreateTrackSend(engine, track)
+  if not send or send < 0 then
+    return nil, "REAPER could not create the lane MIDI send"
+  end
   reaper.SetTrackSendInfo_Value(engine, 0, send, "I_SRCCHAN", -1)
-  reaper.SetTrackSendInfo_Value(engine, 0, send, "I_MIDIFLAGS", host.midi_flags(slot, 1))
+  reaper.SetTrackSendInfo_Value(engine, 0, send, "I_MIDIFLAGS", host.midi_flags(slot, channel or 1))
   return send
+end
+
+function host.remove_send(engine, track, slot, channel)
+  local flags = host.midi_flags(slot, channel)
+  for index = reaper.GetTrackNumSends(engine, 0) - 1, 0, -1 do
+    if reaper.GetTrackSendInfo_Value(engine, 0, index, "P_DESTTRACK") == track
+        and reaper.GetTrackSendInfo_Value(engine, 0, index, "I_MIDIFLAGS") == flags then
+      reaper.RemoveTrackSend(engine, 0, index)
+      return true
+    end
+  end
+  return false
+end
+
+function host.lane_target_choices(proj, engine)
+  local choices = {}
+  for i = 0, reaper.CountTracks(proj) - 1 do
+    local track = reaper.GetTrack(proj, i)
+    local _, items_lane = reaper.GetSetMediaTrackInfo_String(track, host.ITEMS_KEY, "", false)
+    if track ~= engine and reaper.GetMediaTrackInfo_Value(track, "I_FOLDERDEPTH") <= 0 and items_lane == "" then
+      choices[#choices + 1] = track
+    end
+  end
+  return choices
+end
+
+function host.route_lane(engine, slot, old_track, old_channel, target, channel)
+  if old_track == target and old_channel == channel then
+    return true
+  end
+  local new_send = host.add_send(engine, target, slot, channel)
+  if new_send == nil then return false, "REAPER could not create the lane MIDI send" end
+  if old_track then
+    host.remove_send(engine, old_track, slot, old_channel)
+  end
+  return true
 end
 
 -- Creates a sample lane's track, RS5K and send. Returns the track, or nil and a message
@@ -390,7 +533,6 @@ end
 -- Writes one MIDI item of `steps` sixteenths from quarter note `qn`, with the rendered events
 -- and a versioned reference to the commit group. Returns the item.
 function host.write_item(proj, track, qn, steps, events, meta)
-  local commit = require("furrow.commit")
   local start = reaper.TimeMap2_QNToTime(proj, qn)
   local stop = reaper.TimeMap2_QNToTime(proj, qn + steps * host.ITEM_NOTE_STEPS)
   local item = reaper.CreateNewMIDIItemInProj(track, start, stop, false)
@@ -400,10 +542,76 @@ function host.write_item(proj, track, qn, steps, events, meta)
     reaper.MIDI_InsertEvt(take, false, false, ppq, string.char(e.status, e.data1, e.data2))
   end
   reaper.MIDI_Sort(take)
-  local fingerprint = commit.fingerprint(commit.item_text(start, stop - start, 0, events))
+  local fingerprint, fingerprint_error = host.item_fingerprint(item, take)
+  if not fingerprint then
+    error(fingerprint_error, 0)
+  end
   reaper.GetSetMediaItemInfo_String(item, host.ITEM_KEY,
     string.format("1 group %d lane %d rack %d fp %s", meta.group, meta.lane, meta.rack, fingerprint), true)
   return item
+end
+
+local function item_properties(item)
+  return {
+    position = reaper.GetMediaItemInfo_Value(item, "D_POSITION"),
+    length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH"),
+    startoffs = reaper.GetMediaItemInfo_Value(item, "D_STARTOFFS"),
+    playrate = reaper.GetMediaItemInfo_Value(item, "D_PLAYRATE"),
+    loopsrc = reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC"),
+    beatattach = reaper.GetMediaItemInfo_Value(item, "C_BEATATTACHMODE"),
+  }
+end
+
+function host.item_fingerprint(item, take)
+  local ok, raw = reaper.MIDI_GetAllEvts(take, "")
+  if not ok then
+    return nil, "REAPER could not read the item's MIDI events"
+  end
+  local normalized, err = capture.normalize_midi(raw)
+  if not normalized then
+    return nil, err
+  end
+  return commit.item_fingerprint(normalized, item_properties(item))
+end
+
+-- Reads the single selected MIDI item and classifies its source metadata. The returned item
+-- pointer is only a preview reference; callers must rescan it before applying any changes.
+function host.read_selected_capture(proj)
+  if reaper.CountSelectedMediaItems(proj) ~= 1 then
+    return nil, "select one MIDI item to capture"
+  end
+  local item = reaper.GetSelectedMediaItem(proj, 0)
+  local take = item and reaper.GetActiveTake(item)
+  if not take or not reaper.TakeIsMIDI(take) then
+    return nil, "the selected item has no active MIDI take"
+  end
+  local _, metadata = reaper.GetSetMediaItemInfo_String(item, host.ITEM_KEY, "", false)
+  local reference = capture.parse_reference(metadata)
+  local source
+  if reference then
+    local _, value = reaper.GetProjExtState(proj, "FurrowCommits", tostring(reference.group))
+    source = value
+  end
+  local fingerprint, fingerprint_error = host.item_fingerprint(item, take)
+  if not fingerprint then
+    return nil, fingerprint_error
+  end
+  local decision = capture.inspect(metadata, fingerprint, source)
+  local ok, raw = reaper.MIDI_GetAllEvts(take, "")
+  if not ok then
+    return nil, "REAPER could not read the item's MIDI events"
+  end
+  local start = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+  local stop = start + reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+  local start_qn = reaper.TimeMap2_timeToQN(proj, start)
+  local end_qn = reaper.TimeMap2_timeToQN(proj, stop)
+  local notes, unsupported = capture.scan_midi(raw, function(ppq)
+    return reaper.MIDI_GetProjQNFromPPQPos(take, ppq)
+  end, end_qn)
+  return {
+    item = item, take = take, fingerprint = fingerprint, decision = decision, reference = reference, notes = notes,
+    unsupported = unsupported, start_qn = start_qn, end_qn = end_qn,
+  }
 end
 
 -- Removes an item from its track.

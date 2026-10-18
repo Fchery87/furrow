@@ -6,7 +6,7 @@
 -- furrow-render-<project>-events.txt, the second argument to probes/diff_log.py.
 
 local GMEM = "FurrowProbeReceiver"
-local VERSION = 3
+local VERSION = 4
 local SLOTS = 4
 local BLOCK_LOG = 1000
 local EVENT_LOG = 2000000
@@ -90,15 +90,7 @@ local function write_events(path)
       events[#events + 1] = row
     end
   end
-  table.sort(events, function(a, b)
-    for field = 1, 3 do
-      if a[field] ~= b[field] then
-        return a[field] < b[field]
-      end
-    end
-    return false
-  end)
-  local out = { "# sample order lane src_bus dst_bus channel note velocity kind" }
+  local out = { "# sample sequence receiver lane bus channel note velocity kind" }
   for _, row in ipairs(events) do
     out[#out + 1] = string.format("%d %d %d %d %d %d %d %d %s", row[1], row[2], row[3], row[4], row[5], row[6],
       row[7], row[8], ({ [0] = "off", [1] = "on", [2] = "cc" })[row[9]])

@@ -1,0 +1,24 @@
+{
+  "case": "constant-96000-256-120",
+  "sample_rate_hz": 96000,
+  "block_size_samples": 256,
+  "tempo_bpm": 120.0,
+  "host": "REAPER 7.82/linux-x86_64",
+  "project": "/tmp/furrow-v1-timing/cases/constant-96000-256-120.RPP",
+  "capture_format": "sequenced receiver gmem layout v4; per-receiver order, receiver slot, mapped lane, observed destination bus, destination channel and event data",
+  "source_head": "e4293986bafdfb4f340ab79184a7bb3b477dfa63",
+  "tracked_diff_sha256_excluding_original_project": "e7e16dddc4f379d6753f0af816f9d1cc92cb68b88b262e239a2b1252f892894e",
+  "source_sha256": {
+    "jsfx/furrow_probe_receiver.jsfx": "c4bbc397bf72a6af68c374b2bb5844a6589cd03e1997c7946071308aee8f91c5",
+    "lua/furrow_probe_dump.lua": "47960e9900101dfc5e5857bc3fc9ee291750fe02a986a6f9ffcddc9b827b415f",
+    "probes/diff_log.py": "4a2a816bf30fd23be493090ee853332bcd02f147cd7b5eb2bb8ef5f29eb14a9e",
+    "probes/schedule.py": "701b5c17503f8f77289161e96c1431bd12b20ab10744fa55c5dce290292aae1e",
+    "probes/check_schedule.py": "c44c8d20ea31ea198967a4deb3d34c5f2666f4059c4f7a4b9873fdef7fbf1ee0",
+    "probes/expected/constant-120.txt": "cf829c23353215efadff00c75a5374f6797390efd8817069042413973c0f4567"
+  },
+  "capture_sha256": "502f41cc366e21ab45eed6a118e1a3cd12c31ed049d16c2e86c965962357509d",
+  "expected_sha256": "ec5751da3a864ed967e2094e2550fae69a9be75f57e0bf0f21405cd7efdbf88f",
+  "comparison": "38 events match within 1 sample; routing and documented event order agree",
+  "comparator_exit_status": 0,
+  "procedure": "Saved in the disposable /tmp project. The REAPER capture helper set the constant tempo, moved to project time zero, started transport, recorded at least one pattern pass, stopped transport, and ran lua/furrow_probe_dump.lua. Expected events were generated independently by probes/schedule.py from probes/pattern-4x16.txt and the case tempo map."
+}

@@ -1,0 +1,24 @@
+Verification date: 2026-10-18
+Git HEAD: e4293986bafdfb4f340ab79184a7bb3b477dfa63
+Version tag: none
+Worktree: dirty; see worktree-status.txt
+Scoped tracked diff SHA-256: 685806fd5fb675e8b2e3596e9f8f8c7ed23944748ddbc4d310516670138963dd
+Original Testing-furrow.RPP: unchanged (no worktree entry)
+Host: REAPER 7.82/linux-x86_64; bridge ping verified. No host timing project/capture was run in this continuation.
+Probe source availability: user REAPER Effects entries for furrow_seqcore.jsfx and furrow_probe_receiver.jsfx resolve by symlink to this workspace. No REAPER profile file was modified.
+
+Relevant source hashes at test time:
+c4bbc397bf72a6af68c374b2bb5844a6589cd03e1997c7946071308aee8f91c5  jsfx/furrow_probe_receiver.jsfx
+47960e9900101dfc5e5857bc3fc9ee291750fe02a986a6f9ffcddc9b827b415f  lua/furrow_probe_dump.lua
+00b6b56a3c2681b74cc5e92bb9d2e8f19659e819bfa78319dd762399dcac7df6  lua/furrow_probe_render.lua
+4a2a816bf30fd23be493090ee853332bcd02f147cd7b5eb2bb8ef5f29eb14a9e  probes/diff_log.py
+701b5c17503f8f77289161e96c1431bd12b20ab10744fa55c5dce290292aae1e  probes/schedule.py
+c44c8d20ea31ea198967a4deb3d34c5f2666f4059c4f7a4b9873fdef7fbf1ee0  probes/check_schedule.py
+5373dfd88075304dfd6d6683a6c2089f8ccb53edc43980069b79848566d46326  probes/check_lua_scripts.py
+cf829c23353215efadff00c75a5374f6797390efd8817069042413973c0f4567  probes/expected/constant-120.txt
+a5a6a572ae819119d75a7931b5624b5a8fda02b59f0b4e774c95ad635a04dcbe  probes/expected/ramp-44100-1024.txt
+c518f0141e8aa31d04360c365474bea9f1497e90320312fb62d8709f7fdfcf95  probes/expected/ramp-edge-44100-1024.txt
+05a532ffa06338b323d2558864327990ba9efa72e5174b442a6db030bb2bc564  probes/expected/step-off-grid-44100-1024.txt
+da3b3b2c742bcd1b4b4fc042299cfe1de216c515b0975746639d475dc5f90940  probes/expected/step-on-beat-44100-1024.txt
+
+21 schedule tests and 31 Lua-host probe tests pass; 1 engine-bit probe and `git diff --check` pass. Python byte-compilation exits 0. Logs in this directory validate the current uncommitted verifier/tooling files only; they do not constitute current-source REAPER timing evidence.

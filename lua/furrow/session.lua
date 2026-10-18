@@ -174,14 +174,22 @@ end
 -- replaces the snapshot the grid draws.
 function Session:request(window, side)
   self.window = window
-  self.side = side and window or nil
+  self.snapshot_request = self:h(wire.H_SNAP_REQ) + 1
+  self.side = side and {
+    request = self.snapshot_request,
+    pattern = window.pattern,
+    l0 = window.l0,
+    nl = window.nl,
+    s0 = window.s0,
+    ns = window.ns,
+  } or nil
   self.side_snapshot = nil
   self:set_h(wire.H_SNAP_PATTERN, window.pattern)
   self:set_h(wire.H_SNAP_L0, window.l0)
   self:set_h(wire.H_SNAP_NL, window.nl)
   self:set_h(wire.H_SNAP_S0, window.s0)
   self:set_h(wire.H_SNAP_NS, window.ns)
-  self:set_h(wire.H_SNAP_REQ, self:h(wire.H_SNAP_REQ) + 1)
+  self:set_h(wire.H_SNAP_REQ, self.snapshot_request)
 end
 
 local function decode_bank(mem, at)
@@ -190,6 +198,7 @@ local function decode_bank(mem, at)
   end
   local snap = {
     seq = r(wire.B_SEQ),
+    request = r(wire.B_REQ),
     revision = r(wire.B_REVISION),
     generation = r(wire.B_GENERATION),
     pattern = r(wire.B_PATTERN),
@@ -271,7 +280,8 @@ function Session:read_snapshot()
   if snap then
     self.last_snap = snap.seq
     local side = self.side
-    if side and snap.l0 == side.l0 and snap.nl == side.nl and snap.s0 == side.s0 and snap.ns == side.ns then
+    if side and snap.request == side.request and snap.pattern == side.pattern
+        and snap.l0 == side.l0 and snap.nl == side.nl and snap.s0 == side.s0 and snap.ns == side.ns then
       self.side_snapshot = snap
       return nil
     end

@@ -11,9 +11,10 @@ SKIP = missing()
 
 OP_COMMIT, OP_SET_STEP, OP_ADD_LANE, OP_REMOVE_LANE, OP_SET_LANE, OP_SET_RACK, OP_SET_LENGTH = 1, 2, 3, 4, 5, 6, 7
 OP_AUDITION = 8
+OP_PANIC = 9
 OP_QUEUE_PATTERN, OP_CLEAR_PATTERN = 10, 11
 OK, STALE, INVALID, CAPACITY, ABORTED, LOAD_ERROR = 1, 2, 3, 4, 5, 6
-L_MUTE, L_SOLO, L_VOLUME, L_PAN = 5, 6, 7, 8
+L_PROB_KEY, L_MUTE, L_SOLO, L_VOLUME, L_PAN = 2, 5, 6, 7, 8
 F_ON, F_VEL, F_REL, F_FINE, F_PAN, F_MOD_A, F_MOD_B, F_SHIFT, F_GATE, F_RATCHET, F_PROB = 0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 12
 L_MOD_A_CC, L_MOD_B_CC = 74, 71
 R_SEED, R_SWING, R_TRUNCATE, R_MODE = 1, 4, 5, 3
@@ -106,6 +107,36 @@ class SeqCoreTest(unittest.TestCase):
         self.assertEqual((snap.steps[3][5][F_ON], snap.steps[3][5][F_VEL]), (1, 64))
         self.assertEqual(snap.rack.value_count, 3)
 
+    def test_a_lane_probability_key_can_be_restored_with_the_source_snapshot(self):
+        self.assertEqual(self.rig.apply([add_lane(0)]), OK)
+
+        result = self.rig.apply([[OP_SET_LANE, 0, L_PROB_KEY, 12345]])
+
+        self.assertEqual(result, OK)
+        self.assertEqual(self.rig.snapshot().lanes[0].prob_key, 12345)
+
+    def test_a_side_snapshot_rejects_a_published_grid_bank_with_matching_dimensions(self):
+        grid = self.rig.lua.table_from({"pattern": 0, "l0": 0, "nl": 4, "s0": 0, "ns": 16})
+        self.rig.session.request(grid)
+        self.rig.run(8, playing=False)
+        bank_states = [
+            self.rig.mirror.read(self.rig.session.base + self.rig.wire.BANK0 + bank * self.rig.wire.BANK_STRIDE + self.rig.wire.B_STATE)
+            for bank in range(2)
+        ]
+        self.assertIn(self.rig.wire.BANK_PUBLISHED, bank_states)
+
+        tool = self.rig.lua.table_from({"pattern": 0, "l0": 0, "nl": 4, "s0": 0, "ns": 16})
+        self.rig.session.request(tool, True)
+        stale = self.rig.session.read_snapshot()
+        self.assertIsNone(self.rig.session.side_snapshot)
+        self.assertIsNotNone(stale)
+        self.assertEqual(stale.pattern, 0)
+
+        self.rig.run(8, playing=False)
+        self.rig.session.read_snapshot()
+        self.assertEqual(self.rig.session.side_snapshot.pattern, 0)
+        self.assertEqual(self.rig.session.side_snapshot.request, self.rig.session.snapshot_request)
+
     def test_an_invalid_command_leaves_no_partial_state(self):
         self.assertEqual(self.rig.apply([add_lane(0)]), OK)
         code = self.rig.apply([step_on(0, 1), [OP_SET_STEP, 0, 0, 2, F_VEL, 500]])
@@ -184,6 +215,19 @@ class SeqCoreTest(unittest.TestCase):
             self.rig.sample += self.rig.block_size
         kinds = [(e[0], e[2], e[3]) for e in self.rig.events if e[3] == 60]
         self.assertEqual(kinds, [(0, 0x90, 60), (4410, 0x80, 60)])
+
+    def test_panic_releases_a_held_note_and_sends_all_notes_off(self):
+        self.rig.apply([add_lane(0), step_on(0, 0), [OP_SET_STEP, 0, 0, 0, F_GATE, 160000]])
+        self.rig.seek(0.0)
+        self.rig.run(2)
+        self.assertTrue(any(e[2] & 0xF0 == 0x90 and e[4] > 0 for e in self.rig.events))
+        self.rig.events.clear()
+
+        self.rig.session.immediate(OP_PANIC, 0, 0)
+        self.rig.block(playing=False)
+
+        self.assertIn((0x80, 60), [e[2:4] for e in self.rig.events])
+        self.assertIn((0xB0, 123), [e[2:4] for e in self.rig.events])
 
     def test_an_interrupted_transaction_is_aborted(self):
         self.rig.apply([add_lane(0)])

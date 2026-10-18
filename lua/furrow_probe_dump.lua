@@ -3,7 +3,7 @@
 -- The events file is the second argument to probes/diff_log.py.
 
 local GMEM = "FurrowProbeReceiver"
-local VERSION = 3
+local VERSION = 4
 local SLOTS = 4
 local BLOCK_LOG = 1000
 local SAMPLE_LOG = 200000
@@ -54,16 +54,7 @@ for slot = 0, SLOTS - 1 do
   end
 end
 
-table.sort(events, function(a, b)
-  for field = 1, 3 do
-    if a[field] ~= b[field] then
-      return a[field] < b[field]
-    end
-  end
-  return false
-end)
-
-local event_lines = { "# sample order lane src_bus dst_bus channel note velocity kind" }
+local event_lines = { "# sample sequence receiver lane bus channel note velocity kind" }
 for _, row in ipairs(events) do
   event_lines[#event_lines + 1] = string.format(
     "%d %d %d %d %d %d %d %d %s",

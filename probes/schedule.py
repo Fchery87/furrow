@@ -122,7 +122,7 @@ def schedule(pattern_path, case_path):
                         sample,
                         order,
                         lane["lane"],
-                        lane["bus"],
+                        lane["lane"],
                         0,
                         lane["channel"],
                         note,
@@ -132,8 +132,8 @@ def schedule(pattern_path, case_path):
                 )
     events.sort()
     return [
-        f"{sample} {order} {lane} {bus} {dest_bus} {channel} {note} {vel} {kind}"
-        for sample, order, lane, bus, dest_bus, channel, note, vel, kind in events
+        f"{sample} {order} {receiver} {lane} {bus} {channel} {note} {vel} {kind}"
+        for sample, order, receiver, lane, bus, channel, note, vel, kind in events
     ]
 
 

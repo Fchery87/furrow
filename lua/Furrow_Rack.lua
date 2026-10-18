@@ -11,5 +11,13 @@ if not reaper.ImGui_GetBuiltinPath then
 end
 
 package.path = reaper.ImGui_GetBuiltinPath() .. "/?.lua;" .. package.path
-local ImGui = require("imgui")("0.9")
+local ok, ImGui = pcall(function()
+  return require("imgui")("0.9")
+end)
+if not ok or not ImGui then
+  reaper.ShowMessageBox(
+    "Furrow could not load ReaImGui API 0.9. Install or update ReaImGui from Extensions > ReaPack > Browse packages, then restart REAPER.",
+    "Furrow", 0)
+  return
+end
 require("furrow.ui").run(ImGui)

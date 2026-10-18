@@ -1,0 +1,3 @@
+expected-events: event mismatch in : expected sample 54000 on lane 3 receiver 3 bus 0 ch 3 note 46 velocity 100; observed sample 14400 on lane 3 receiver 3 bus 0 ch 3 note 46 velocity 100
+expected-events: event mismatch in : expected sample 55800 off lane 3 receiver 3 bus 0 ch 3 note 46 velocity 0; observed sample 16200 off lane 3 receiver 3 bus 0 ch 3 note 46 velocity 0
+EXIT_STATUS=1

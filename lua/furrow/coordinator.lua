@@ -12,6 +12,7 @@ local Session = require("furrow.session")
 local host = require("furrow.host")
 local tools = require("furrow.tools")
 local commit = require("furrow.commit")
+local capture = require("furrow.capture")
 
 local Coordinator = {}
 Coordinator.__index = Coordinator
@@ -630,6 +631,255 @@ function Coordinator:patterns()
   return list
 end
 
+function Coordinator:free_pattern()
+  local taken = {}
+  for _, entry in ipairs(self:patterns()) do taken[entry.index] = true end
+  for index = 0, wire.PATTERNS - 1 do
+    if not taken[index] then return index end
+  end
+  return nil
+end
+
+function Coordinator:scan_capture()
+  local data, err = host.read_selected_capture(self.proj)
+  if not data then return nil, err end
+  data.destination_compatible = false
+  data.settings_match = false
+  data.settings_differ = {}
+  local snap = self.session and self.session.snapshot
+  local reference, source = data.reference, data.decision.snapshot
+  if not (data.decision.can_restore and snap and reference and source) then
+    data.destination_error = data.decision.reason
+    return data
+  end
+  if snap.rack.id ~= reference.rack then
+    data.destination_error = "the source belongs to another rack"
+    return data
+  end
+  local links, active = host.read_links(self:rack_track()), {}
+  for slot, lane in pairs(snap.lanes) do
+    active[lane.id] = { slot = slot, lane = lane, target_guid = links[lane.id] }
+  end
+  for _, source_lane in ipairs(source.lanes) do
+    local current = active[source_lane.id]
+    if not current then
+      data.destination_error = "a source lane is missing from this rack"
+      return data
+    end
+    if not source_lane.target_guid or current.target_guid ~= source_lane.target_guid then
+      data.destination_error = "a source lane now targets a different track"
+      return data
+    end
+    local lane = current.lane
+    for key, value in pairs({ note = lane.note, volume = lane.volume, pan = lane.pan, bend = lane.bend,
+        mod_a = lane.mod_a, mod_b = lane.mod_b, swing = lane.swing, prob_key = lane.prob_key }) do
+      if source_lane[key] ~= value then
+        data.settings_differ[#data.settings_differ + 1] = { lane_id = source_lane.id, key = key,
+          source = source_lane[key], current = value }
+      end
+    end
+  end
+  for _, key in ipairs({ "seed", "swing", "truncate" }) do
+    if source[key] ~= snap.rack[key] then
+      data.settings_differ[#data.settings_differ + 1] = { key = key, source = source[key], current = snap.rack[key] }
+    end
+  end
+  data.destination_compatible = true
+  data.settings_match = #data.settings_differ == 0
+  if not data.settings_match then
+    data.destination_error = "source rack settings differ; choose whether to apply them"
+  end
+  return data
+end
+
+local function same_capture_preview(old, fresh)
+  if not (old and fresh and old.item == fresh.item and old.fingerprint == fresh.fingerprint) then return false end
+  if not old.reference or not fresh.reference then return old.reference == fresh.reference end
+  return old.reference.group == fresh.reference.group and old.reference.lane == fresh.reference.lane
+end
+
+local function import_commands(pattern, lanes)
+  local commands = { { wire.OP_CLEAR_PATTERN, pattern } }
+  for _, lane in ipairs(lanes) do
+    commands[#commands + 1] = { wire.OP_SET_LENGTH, pattern, lane.slot, lane.length }
+    for step = 0, lane.length - 1 do
+      local row = lane.rows[step]
+      for field = 0, wire.STEP_FIELDS - 1 do
+        if row[field] ~= wire.STEP_DEFAULTS[field] then
+          commands[#commands + 1] = { wire.OP_SET_STEP, pattern, lane.slot, step, field, row[field] }
+        end
+      end
+    end
+  end
+  return commands
+end
+
+function Coordinator:begin_pattern_import(name, lanes, settings, new_lanes)
+  local pattern = self:free_pattern()
+  if not pattern then return false, "the rack already has " .. wire.PATTERNS .. " patterns" end
+  local source_pattern = self.pattern or 0
+  local commands, rollback = {}, { { wire.OP_CLEAR_PATTERN, pattern } }
+  for _, lane in ipairs(new_lanes or {}) do
+    commands[#commands + 1] = { wire.OP_ADD_LANE, lane.slot, lane.id, lane.prob_key, lane.note, lane.row }
+    commands[#commands + 1] = { wire.OP_SET_LANE, lane.slot, wire.L_SWING, 0 }
+    rollback[#rollback + 1] = { wire.OP_REMOVE_LANE, lane.slot }
+    self.reserved[lane.slot] = true
+  end
+  for _, command in ipairs(import_commands(pattern, lanes)) do commands[#commands + 1] = command end
+  for _, command in ipairs(settings or {}) do commands[#commands + 1] = command end
+  for _, command in ipairs(self:queue_commands(pattern)) do commands[#commands + 1] = command end
+  rollback[#rollback + 1] = { wire.OP_QUEUE_PATTERN, source_pattern, 0, 0 }
+  local gesture = self:begin(name, {
+    undo_states = UNDO_ALL,
+    abort_on_failure = true,
+    rollback = rollback,
+    after = function(c)
+      local rack = c:rack_track()
+      if not rack then return false, "the rack tracks are gone" end
+      if #(new_lanes or {}) > 0 then
+        local engine = c:engine()
+        local links = host.read_links(rack)
+        local channels = host.read_lane_channels(rack)
+        local made = {}
+        for _, lane in ipairs(new_lanes) do
+          local ok, err = host.route_lane(engine, lane.slot, nil, 1, lane.track, lane.channel)
+          if not ok then
+            for _, route in ipairs(made) do host.remove_send(engine, route.track, route.slot, route.channel) end
+            return false, err
+          end
+          made[#made + 1] = lane
+          links[lane.id] = reaper.GetTrackGUID(lane.track)
+          channels[lane.id] = lane.channel
+        end
+        host.write_links(rack, links)
+        local saved, save_error = host.write_lane_channels(rack, channels)
+        if not saved then return false, save_error end
+      end
+      local names = host.read_patterns(rack)
+      for _, entry in ipairs(c:patterns()) do names[entry.index] = names[entry.index] or entry.name end
+      names[pattern] = host.default_pattern_name(pattern)
+      host.write_patterns(rack, names)
+      return true
+    end,
+  })
+  for first = 1, #commands, TOOL_CHUNK do
+    local chunk = {}
+    for i = first, math.min(first + TOOL_CHUNK - 1, #commands) do chunk[#chunk + 1] = commands[i] end
+    self:add(gesture, chunk)
+  end
+  self:finish(gesture)
+  self:set_view(pattern)
+  return true
+end
+
+function Coordinator:restore_capture(previous, apply_settings)
+  local fresh, err = self:scan_capture()
+  if not fresh then return false, err end
+  if not same_capture_preview(previous, fresh) then
+    return false, "the selected item changed; scan it again before restoring"
+  end
+  if not fresh.decision.can_restore or not fresh.destination_compatible then
+    return false, fresh.destination_error or fresh.decision.reason or "the source cannot be restored here"
+  end
+  if not fresh.settings_match and apply_settings ~= true then
+    return false, "choose whether to apply the source settings"
+  end
+  local current_by_id, lanes = {}, {}
+  for slot, lane in pairs(self.session.snapshot.lanes) do current_by_id[lane.id] = slot end
+  for _, source_lane in ipairs(fresh.decision.snapshot.lanes) do
+    local slot = current_by_id[source_lane.id]
+    if slot == nil then return false, "a source lane is missing from this rack" end
+    lanes[#lanes + 1] = { slot = slot, length = source_lane.length, rows = source_lane.rows }
+  end
+  local settings = {}
+  if apply_settings then
+    local source = fresh.decision.snapshot
+    settings = {
+      { wire.OP_SET_RACK, wire.R_SEED, source.seed },
+      { wire.OP_SET_RACK, wire.R_SWING, source.swing },
+      { wire.OP_SET_RACK, wire.R_TRUNCATE, source.truncate },
+    }
+    for _, lane in ipairs(source.lanes) do
+      local slot = current_by_id[lane.id]
+      for _, pair in ipairs({ { wire.L_NOTE, lane.note }, { wire.L_PROB_KEY, lane.prob_key },
+          { wire.L_VOLUME, lane.volume }, { wire.L_PAN, lane.pan }, { wire.L_BEND, lane.bend },
+          { wire.L_SWING, lane.swing }, { wire.L_MOD_A, lane.mod_a }, { wire.L_MOD_B, lane.mod_b } }) do
+        settings[#settings + 1] = { wire.OP_SET_LANE, slot, pair[1], pair[2] }
+      end
+    end
+  end
+  return self:begin_pattern_import("restore source pattern", lanes, settings)
+end
+
+function Coordinator:preview_capture(previous, mapping)
+  local fresh, err = self:scan_capture()
+  if not fresh then return nil, err end
+  if not same_capture_preview(previous, fresh) then
+    return nil, "the selected item changed; scan it again before previewing"
+  end
+  local by_id, mapped, additions = {}, {}, {}
+  local links = host.read_links(self:rack_track())
+  local channels = host.read_lane_channels(self:rack_track())
+  local engine = self:engine()
+  local reserved_slots = {}
+  local next_row = 0
+  for _, lane in ipairs(self:lanes()) do next_row = math.max(next_row, lane.row + 1) end
+  for _, lane in ipairs(self:lanes()) do by_id[lane.id] = lane end
+  for channel, target in pairs(mapping or {}) do
+    channel = tonumber(channel)
+    if target.new_track then
+      local slot = self:free_slot()
+      while slot and reserved_slots[slot] do
+        self.reserved[slot] = true
+        slot = self:free_slot()
+      end
+      if not slot then
+        for reserved in pairs(reserved_slots) do self.reserved[reserved] = nil end
+        return nil, "the rack has no free lanes for capture"
+      end
+      local id, destination_channel = math.random(1, 16777215), math.floor(tonumber(target.channel) or 0)
+      local note = math.floor(tonumber(target.note) or 60)
+      local valid, reason = host.validate_lane_target(self.proj, engine, target.new_track,
+        destination_channel, id, links, channels)
+      if not valid then
+        for reserved in pairs(reserved_slots) do self.reserved[reserved] = nil end
+        return nil, reason
+      end
+      links[id], channels[id], reserved_slots[slot] = reaper.GetTrackGUID(target.new_track), destination_channel, true
+      local addition = { id = id, slot = slot, track = target.new_track, channel = destination_channel,
+        note = note, row = math.min(next_row, 63), prob_key = math.random(0, wire.SEED_MAX) }
+      additions[#additions + 1] = addition
+      next_row = next_row + 1
+      mapped[channel] = { slot = slot, note = note }
+    else
+      local lane = by_id[target.lane_id]
+      if not lane then
+        for reserved in pairs(reserved_slots) do self.reserved[reserved] = nil end
+        return nil, "a selected destination lane is no longer available"
+      end
+      if lane.swing ~= 0 then
+        for reserved in pairs(reserved_slots) do self.reserved[reserved] = nil end
+        return nil, "capture requires zero swing on destination lanes"
+      end
+      mapped[channel] = { slot = lane.slot, note = lane.note }
+    end
+  end
+  local preview = capture.preview(fresh.notes, fresh.start_qn, mapped, fresh.unsupported)
+  preview.new_lanes = additions
+  for reserved in pairs(reserved_slots) do self.reserved[reserved] = nil end
+  return preview
+end
+
+function Coordinator:convert_capture(previous, mapping)
+  local preview, err = self:preview_capture(previous, mapping)
+  if not preview then return false, err end
+  if not preview.accepted then return false, table.concat(preview.reasons, "; ") end
+  local lanes = {}
+  for _, lane in pairs(preview.lanes) do lanes[#lanes + 1] = lane end
+  table.sort(lanes, function(a, b) return a.slot < b.slot end)
+  return self:begin_pattern_import("convert MIDI item", lanes, nil, preview.new_lanes)
+end
+
 -- Shows a pattern now and queues the engine's switch for the next measure boundary while
 -- playing, or applies it at the cursor when stopped.
 function Coordinator:queue_commands(pattern)
@@ -876,18 +1126,19 @@ function Coordinator:run_commit(tool)
   local snap = self.session.snapshot
   local prior = snap.rack.mode
   local rack_id = snap.rack.id
+  local links = host.read_links(self:rack_track())
   local qn = reaper.TimeMap2_timeToQN(self.proj, reaper.GetCursorPositionEx(self.proj))
   local lanes = {}
   for _, lane in ipairs(tool.lanes) do
     lanes[#lanes + 1] = {
       id = lane.id, slot = lane.slot, note = lane.note, volume = lane.volume, pan = lane.pan, bend = lane.bend,
       mod_a = lane.mod_a, mod_b = lane.mod_b, swing = lane.swing, prob_key = lane.prob_key, length = lane.length,
-      rows = tool.rows[lane.slot],
+      target_guid = links[lane.id], rows = tool.rows[lane.slot],
     }
   end
   table.sort(lanes, function(a, b) return a.slot < b.slot end)
   local data = {
-    origin = qn, steps = tool.longest, seed = snap.rack.seed, swing = snap.rack.swing, truncate = snap.rack.truncate,
+    rack_id = rack_id, origin = qn, steps = tool.longest, seed = snap.rack.seed, swing = snap.rack.swing, truncate = snap.rack.truncate,
     pattern_key = tool.source, lanes = lanes,
   }
   local rendered = commit.render(data)
@@ -1087,6 +1338,9 @@ function Coordinator:add_sample(file)
       local links = host.read_links(rack)
       links[id] = reaper.GetTrackGUID(track)
       host.write_links(rack, links)
+      local channels = host.read_lane_channels(rack)
+      channels[id] = 1
+      host.write_lane_channels(rack, channels)
       return true
     end,
   })
@@ -1132,8 +1386,73 @@ function Coordinator:lane_track(lane)
   return guid and host.track_by_guid(self.proj, guid)
 end
 
+-- Reassigns one lane's MIDI destination and channel. The route and rack metadata share one
+-- host undo point; validation runs before either is changed.
+function Coordinator:set_lane_target(lane, target, channel)
+  if not self:processing() then
+    self.message = "the rack is not connected yet"
+    return false
+  end
+  local rack = self:rack_track()
+  local engine = self:engine()
+  if not rack or not engine then
+    self.message = "the rack tracks are gone"
+    return false
+  end
+  local links = host.read_links(rack)
+  local channels = host.read_lane_channels(rack)
+  channel = math.floor(tonumber(channel) or 0)
+  local valid, reason = host.validate_lane_target(self.proj, engine, target, channel, lane.id, links, channels)
+  if not valid then
+    self.message = reason
+    return false
+  end
+  local old_track = links[lane.id] and host.track_by_guid(self.proj, links[lane.id])
+  local old_channel = channels[lane.id] or 1
+  if old_track == target and old_channel == channel then
+    return true
+  end
+  local gesture = self:begin("set lane target", {
+    host_only = true,
+    undo_states = UNDO_ALL,
+    after = function(c)
+      local ok, err = host.route_lane(engine, lane.slot, old_track, old_channel, target, channel)
+      if not ok then
+        return false, err
+      end
+      links[lane.id] = reaper.GetTrackGUID(target)
+      channels[lane.id] = channel
+      host.write_links(rack, links)
+      local saved, save_error = host.write_lane_channels(rack, channels)
+      if not saved then
+        return false, save_error
+      end
+      return true
+    end,
+  })
+  self:finish(gesture)
+  return true
+end
+
+function Coordinator:lane_channel(lane)
+  local channels = host.read_lane_channels(self:rack_track())
+  return channels[lane.id] or 1
+end
+
 function Coordinator:audition(slot)
   self.session:immediate(wire.OP_AUDITION, slot, 100)
+end
+
+function Coordinator:panic()
+  if not self:processing() then
+    self.message = "SeqCore is not processing; panic is unavailable"
+    return false
+  end
+  local sent = self.session:immediate(wire.OP_PANIC, 0, 0)
+  if not sent then
+    self.message = "the command ring is full; panic was not sent"
+  end
+  return sent
 end
 
 return Coordinator

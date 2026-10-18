@@ -1,0 +1,11 @@
+# Ramp case required by the first timing proof.
+# In REAPER, a 100 BPM marker at 1.1.00 with gradual transition, then 140 BPM at 2.1.00.
+# REAPER 7.82 ramped BPM linearly in time and reached 140 at 2.0 s.
+# See probes/results/reaper-7.82-linux/README.md.
+name ramp-44100-1024
+sample_rate_hz 44100
+block_size 1024
+origin_beat 0
+points
+0 100
+4 140

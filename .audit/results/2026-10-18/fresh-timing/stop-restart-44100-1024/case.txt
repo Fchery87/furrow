@@ -1,0 +1,7 @@
+name stop-restart-44100-1024
+sample_rate_hz 44100
+block_size 1024
+constant_tempo_bpm 120
+first_run_stop_at_or_after_seconds 0.4
+restart_position_seconds 0
+second_run_capture_until_seconds 2.05

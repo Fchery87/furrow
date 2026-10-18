@@ -1,0 +1,25 @@
+{
+  "case": "pause-resume-project-position-counts-44100-1024",
+  "sample_rate_hz": 44100,
+  "block_size_samples": 1024,
+  "tempo_bpm": 120.0,
+  "host": "REAPER 7.82/linux-x86_64",
+  "project": "/tmp/furrow-v1-timing/cases/stop-restart-44100-1024.RPP",
+  "capture_format": "sequenced receiver gmem layout v4; per-receiver sequence and routing identity",
+  "source_head": "e4293986bafdfb4f340ab79184a7bb3b477dfa63",
+  "tracked_diff_sha256_excluding_original_project": "e7e16dddc4f379d6753f0af816f9d1cc92cb68b88b262e239a2b1252f892894e",
+  "source_sha256": {
+    "jsfx/furrow_probe_receiver.jsfx": "c4bbc397bf72a6af68c374b2bb5844a6589cd03e1997c7946071308aee8f91c5",
+    "lua/furrow_probe_dump.lua": "47960e9900101dfc5e5857bc3fc9ee291750fe02a986a6f9ffcddc9b827b415f",
+    "probes/diff_log.py": "4a2a816bf30fd23be493090ee853332bcd02f147cd7b5eb2bb8ef5f29eb14a9e",
+    "probes/schedule.py": "701b5c17503f8f77289161e96c1431bd12b20ab10744fa55c5dce290292aae1e",
+    "probes/check_schedule.py": "c44c8d20ea31ea198967a4deb3d34c5f2666f4059c4f7a4b9873fdef7fbf1ee0",
+    "probes/expected/constant-120.txt": "cf829c23353215efadff00c75a5374f6797390efd8817069042413973c0f4567"
+  },
+  "capture_sha256": "e11c08f733e3f80c03fbdf5fd54ee2bc374f88ff54f805e8d813e451b56fdedf",
+  "expected_sha256": "cf829c23353215efadff00c75a5374f6797390efd8817069042413973c0f4567",
+  "transport_and_count_trace": "before-pause wall=431980.571730 state=1 play=0.594331066 counts=4.0,4.0,8.0,2.0\nafter-pause wall=431980.572025 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\npaused-sample wall=431980.673171 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\npaused-sample wall=431980.709233 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\npaused-sample wall=431980.743341 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\npaused-sample wall=431980.781778 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\npaused-sample wall=431980.816848 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\npaused-sample wall=431980.853791 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\npaused-sample wall=431980.905792 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\npaused-sample wall=431980.942480 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\nbefore-resume wall=431980.975602 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0\nafter-resume wall=431980.975873 state=1 play=0.616371882 counts=4.0,4.0,8.0,2.0\nbefore-stop wall=431982.678730 state=1 play=2.071700680 counts=8.0,10.0,18.0,6.0\nafter-stop wall=431982.678885 state=0 play=2.071700680 counts=8.0,10.0,18.0,6.0\n",
+  "comparator": "expected-events: extra event: observed sample 33075 on lane 1 receiver 1 bus 0 ch 1 note 38 velocity 100\nexpected-events: extra event: observed sample 35831 off lane 1 receiver 1 bus 0 ch 1 note 38 velocity 0\nexpected-events: extra event: observed sample 33075 on lane 2 receiver 2 bus 0 ch 2 note 42 velocity 100\nexpected-events: extra event: observed sample 35831 off lane 2 receiver 2 bus 0 ch 2 note 42 velocity 0",
+  "comparator_exit_status": 1,
+  "procedure": "Start from project time zero. Pause after GetPlayPositionEx(project) reaches 0.55 s. Read receiver event counters at the pause transition and at 0.05 s intervals during a 0.4 s pause. Resume using the REAPER Pause action, continue to project time 2.05 s, stop, and dump sequenced events."
+}

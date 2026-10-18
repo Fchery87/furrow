@@ -161,10 +161,16 @@ function commit.encode(o)
     string.format("rack seed %d swing %d truncate %d pattern %d steps %d origin %.17g",
       o.seed, o.swing, o.truncate, o.pattern_key, o.steps, o.origin),
   }
+  if o.rack_id then
+    lines[#lines + 1] = string.format("identity rack %d", o.rack_id)
+  end
   for _, lane in ipairs(o.lanes) do
     local parts = { "lane", string.format("%d", lane.id) }
     for _, key in ipairs(LANE_KEYS) do
       parts[#parts + 1] = key .. "=" .. string.format("%d", lane[key])
+    end
+    if lane.target_guid and lane.target_guid:match("^[%w{}%-]+$") then
+      parts[#parts + 1] = "target=" .. lane.target_guid
     end
     lines[#lines + 1] = table.concat(parts, " ")
     for pos = 0, lane.length - 1 do
@@ -201,8 +207,14 @@ function commit.decode(text)
       end
       o.seed, o.swing, o.truncate = tonumber(o.seed), tonumber(o.swing), tonumber(o.truncate)
       o.pattern_key, o.steps, o.origin = tonumber(o.pattern_key), tonumber(o.steps), tonumber(o.origin)
+    elseif kind == "identity" then
+      o.rack_id = tonumber(line:match("^identity rack (%d+)$"))
+      if not o.rack_id then
+        return nil, "bad identity line"
+      end
     elseif kind == "lane" then
       local lane = { id = tonumber(line:match("^lane (%-?%d+)")), rows = {} }
+      lane.target_guid = line:match("target=(%S+)")
       for key, value in line:gmatch("(%a[%a_]*)=(%-?%d+)") do
         lane[key] = tonumber(value)
       end
@@ -256,6 +268,14 @@ function commit.item_text(position, length, offset, events)
     lines[#lines + 1] = string.format("%d %d %d %.9f", e.status, e.data1, e.data2, e.beat)
   end
   return table.concat(lines, "\n")
+end
+
+-- Hashes the post-sort REAPER MIDI bytes and item properties used by capture. The selected
+-- event flag is stripped before hashing, but muted events remain part of the fingerprint.
+function commit.item_fingerprint(midi, props)
+  local header = string.format("%.9f %.9f %.9f %.9f %d %d\n",
+    props.position, props.length, props.startoffs, props.playrate, props.loopsrc, props.beatattach)
+  return commit.fingerprint(header .. midi)
 end
 
 return commit

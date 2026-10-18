@@ -257,6 +257,22 @@ class StubUndoReaper(StubReaper):
 
 
 @unittest.skipIf(lua54 is None, "lupa is not installed")
+class RackEntryTest(unittest.TestCase):
+    def test_incompatible_reaimgui_api_shows_a_dependency_message(self):
+        lua = lua54.LuaRuntime(unpack_returned_tuples=True)
+        messages = []
+        reaper = lua.table_from({
+            "ImGui_GetBuiltinPath": lambda: "/unused",
+            "ShowMessageBox": lambda text, title, kind: messages.append(text),
+        })
+        lua.globals().reaper = reaper
+        lua.execute("package.preload['imgui'] = function() return function(version) error('unsupported API') end end")
+        lua.eval("function(path) assert(loadfile(path))() end")(str(LUA / "Furrow_Rack.lua"))
+        self.assertEqual(len(messages), 1)
+        self.assertIn("ReaImGui API 0.9", messages[0])
+
+
+@unittest.skipIf(lua54 is None, "lupa is not installed")
 class LayoutTest(unittest.TestCase):
     def test_each_send_filters_its_own_source_channel(self):
         stub = StubReaper()
@@ -289,13 +305,13 @@ class DumpTest(unittest.TestCase):
     def test_dump_of_the_expected_events_diffs_clean(self):
         expected_path = ROOT / "expected" / "constant-120.txt"
         expected = diff_log.load(expected_path)
-        gmem = {0: 3, 2: 2, 1000: 0, 1001: 120.0, 1002: 0.0, 1003: 1024, 1004: 120.0, 1005: 0.0464399093, 3: 2, 4: 0, 200000: 120.0, 200001: 120.0}
+        gmem = {0: 4, 2: 2, 1000: 0, 1001: 120.0, 1002: 0.0, 1003: 1024, 1004: 120.0, 1005: 0.0464399093, 3: 2, 4: 0, 200000: 120.0, 200001: 120.0}
         counts = [0, 0, 0, 0]
-        for row in reversed(expected):
-            slot = int(row["channel"])
+        for row in expected:
+            slot = int(row["receiver"])
             at = 2000000 + slot * 500000 + counts[slot] * 9
-            values = [row["sample"], row["order"], slot, row["src_bus"], row["dst_bus"],
-                      row["channel"], row["note"], row["velocity"], 1 if row["kind"] == "on" else 0]
+            values = [row["sample"], counts[slot], slot, row["lane"], row["bus"],
+                      row["channel"], row["note"], row["velocity"], {"off": 0, "on": 1, "cc": 2}[row["kind"]]]
             for offset, value in enumerate(values):
                 gmem[at + offset] = float(value)
             counts[slot] += 1
@@ -307,8 +323,8 @@ class DumpTest(unittest.TestCase):
             events = Path(directory) / "furrow-capture-events.txt"
             self.assertEqual(diff_log.compare(expected, diff_log.load(events), 0), [])
             dumped = [line for line in events.read_text().splitlines() if not line.startswith("#")]
-            stored = [line for line in expected_path.read_text().splitlines() if line and not line.startswith("#")]
-            self.assertEqual(dumped, stored)
+            self.assertEqual(len(dumped), len(expected))
+            self.assertEqual(events.read_text().splitlines()[0], "# sample sequence receiver lane bus channel note velocity kind")
             self.assertEqual(
                 (Path(directory) / "furrow-capture-tempo-sample.txt").read_text().splitlines()[1:],
                 ["0 120.0000000000", "1 120.0000000000"],
@@ -1007,7 +1023,7 @@ class StubRenderReaper(StubReaper):
     """
 
     def __init__(self, project, expected, playing=True):
-        super().__init__(gmem={0: 3}, project=project)
+        super().__init__(gmem={0: 4}, project=project)
         self.InsertTrackAtIndex(0, True)
         self.tracks[0]["name"] = "Furrow Probe Engine"
         self.expected = diff_log.load(expected)
@@ -1063,7 +1079,7 @@ class StubRenderReaper(StubReaper):
                 lane = int(row["lane"])
                 count = int(self.gmem.get(10 + lane, 0))
                 at = 2000000 + lane * 500000 + count * 9
-                values = [row["sample"], int(row["order"]), lane, int(row["src_bus"]), int(row["dst_bus"]),
+                values = [row["sample"], count, lane, int(row["lane"]), int(row["bus"]),
                           int(row["channel"]), int(row["note"]), int(row["velocity"]),
                           {"off": 0, "on": 1, "cc": 2}[row["kind"]]]
                 for field, value in enumerate(values):

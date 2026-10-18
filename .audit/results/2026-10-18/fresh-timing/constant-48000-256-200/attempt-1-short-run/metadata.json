@@ -1,0 +1,24 @@
+{
+  "case": "constant-48000-256-200",
+  "sample_rate_hz": 48000,
+  "block_size_samples": 256,
+  "tempo_bpm": 200.0,
+  "host": "REAPER 7.82/linux-x86_64",
+  "project": "/tmp/furrow-v1-timing/cases/constant-48000-256-200.RPP",
+  "capture_format": "sequenced receiver gmem layout v4; per-receiver order, receiver slot, mapped lane, observed destination bus, destination channel and event data",
+  "source_head": "e4293986bafdfb4f340ab79184a7bb3b477dfa63",
+  "tracked_diff_sha256_excluding_original_project": "e7e16dddc4f379d6753f0af816f9d1cc92cb68b88b262e239a2b1252f892894e",
+  "source_sha256": {
+    "jsfx/furrow_probe_receiver.jsfx": "c4bbc397bf72a6af68c374b2bb5844a6589cd03e1997c7946071308aee8f91c5",
+    "lua/furrow_probe_dump.lua": "47960e9900101dfc5e5857bc3fc9ee291750fe02a986a6f9ffcddc9b827b415f",
+    "probes/diff_log.py": "4a2a816bf30fd23be493090ee853332bcd02f147cd7b5eb2bb8ef5f29eb14a9e",
+    "probes/schedule.py": "701b5c17503f8f77289161e96c1431bd12b20ab10744fa55c5dce290292aae1e",
+    "probes/check_schedule.py": "c44c8d20ea31ea198967a4deb3d34c5f2666f4059c4f7a4b9873fdef7fbf1ee0",
+    "probes/expected/constant-120.txt": "cf829c23353215efadff00c75a5374f6797390efd8817069042413973c0f4567"
+  },
+  "capture_sha256": "eb776f04d44c3cd7698ad09ab68ea3bee064f1ddbe6a35d76fff03869975f536",
+  "expected_sha256": "7a1c23ed8d1d3cdab1ae1990ea94623ef7475b881aa86748b4fa637c31c82c03",
+  "comparison": "expected-events: event mismatch in : expected sample 54000 on lane 3 receiver 3 bus 0 ch 3 note 46 velocity 100; observed sample 14400 on lane 3 receiver 3 bus 0 ch 3 note 46 velocity 100\nexpected-events: event mismatch in : expected sample 55800 off lane 3 receiver 3 bus 0 ch 3 note 46 velocity 0; observed sample 16200 off lane 3 receiver 3 bus 0 ch 3 note 46 velocity 0",
+  "comparator_exit_status": 1,
+  "procedure": "Saved in the disposable /tmp project. The REAPER capture helper set the constant tempo, moved to project time zero, started transport, recorded at least one pattern pass, stopped transport, and ran lua/furrow_probe_dump.lua. Expected events were generated independently by probes/schedule.py from probes/pattern-4x16.txt and the case tempo map."
+}

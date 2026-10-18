@@ -1,0 +1,7 @@
+name seek-during-play-44100-1024
+sample_rate_hz 44100
+block_size 1024
+constant_tempo_bpm 120
+initial_segment_seconds 1.0..1.4
+seek_to_seconds 0
+final_segment_seconds 0..0.6

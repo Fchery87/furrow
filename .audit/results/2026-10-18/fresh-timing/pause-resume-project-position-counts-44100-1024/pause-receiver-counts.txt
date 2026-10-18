@@ -1,0 +1,14 @@
+before-pause wall=431980.571730 state=1 play=0.594331066 counts=4.0,4.0,8.0,2.0
+after-pause wall=431980.572025 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+paused-sample wall=431980.673171 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+paused-sample wall=431980.709233 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+paused-sample wall=431980.743341 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+paused-sample wall=431980.781778 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+paused-sample wall=431980.816848 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+paused-sample wall=431980.853791 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+paused-sample wall=431980.905792 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+paused-sample wall=431980.942480 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+before-resume wall=431980.975602 state=2 play=0.616371882 counts=4.0,4.0,8.0,2.0
+after-resume wall=431980.975873 state=1 play=0.616371882 counts=4.0,4.0,8.0,2.0
+before-stop wall=431982.678730 state=1 play=2.071700680 counts=8.0,10.0,18.0,6.0
+after-stop wall=431982.678885 state=0 play=2.071700680 counts=8.0,10.0,18.0,6.0

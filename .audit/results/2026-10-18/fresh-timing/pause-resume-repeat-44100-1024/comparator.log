@@ -1,0 +1,7 @@
+expected-events: extra event: observed sample 22050 on lane 0 receiver 0 bus 0 ch 0 note 36 velocity 100
+expected-events: extra event: observed sample 24806 off lane 0 receiver 0 bus 0 ch 0 note 36 velocity 0
+expected-events: extra event: observed sample 22050 on lane 2 receiver 2 bus 0 ch 2 note 42 velocity 100
+expected-events: extra event: observed sample 24806 off lane 2 receiver 2 bus 0 ch 2 note 42 velocity 0
+expected-events: extra event: observed sample 22050 on lane 3 receiver 3 bus 0 ch 3 note 46 velocity 100
+expected-events: extra event: observed sample 24806 off lane 3 receiver 3 bus 0 ch 3 note 46 velocity 0
+EXIT_STATUS=1

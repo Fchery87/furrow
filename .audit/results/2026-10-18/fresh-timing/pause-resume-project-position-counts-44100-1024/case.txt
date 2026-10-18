@@ -1,0 +1,5 @@
+name pause-resume-project-position-counts-44100-1024
+sample_rate_hz 44100
+block_size 1024
+constant_tempo_bpm 120
+pause_trigger_project_seconds 0.55

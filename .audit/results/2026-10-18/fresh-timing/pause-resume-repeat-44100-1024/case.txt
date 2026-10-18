@@ -1,0 +1,6 @@
+name pause-resume-repeat-44100-1024
+sample_rate_hz 44100
+block_size 1024
+constant_tempo_bpm 120
+pause_at_or_after_seconds 0.55
+pause_duration_seconds 0.413

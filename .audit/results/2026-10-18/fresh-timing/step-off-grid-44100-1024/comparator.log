@@ -1,0 +1,3 @@
+expected-events: timing mismatch: expected sample 55814 on lane 1 receiver 1 bus 0 ch 1 note 38 velocity 100; observed sample 55125 on lane 1 receiver 1 bus 0 ch 1 note 38 velocity 100 (tolerance 1 sample)
+expected-events: timing mismatch: expected sample 55814 on lane 2 receiver 2 bus 0 ch 2 note 42 velocity 100; observed sample 55125 on lane 2 receiver 2 bus 0 ch 2 note 42 velocity 100 (tolerance 1 sample)
+EXIT_STATUS=1

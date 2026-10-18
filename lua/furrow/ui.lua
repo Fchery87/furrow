@@ -130,6 +130,8 @@ function ui.run(ImGui)
   local open = true
   local closing_at = nil
   local browse_requested = false
+  local capture_data = nil
+  local capture_mapping = {}
   -- Undo and redo wait here until pending gestures have their undo points.
   local history = nil
 
@@ -312,6 +314,13 @@ function ui.run(ImGui)
     -- A click selects the lane for editing. Hearing it is deliberate, so selecting during
     -- playback stays quiet.
     local clicked = ImGui.Button(ctx, name .. "##name", NAME_WIDTH, CELL)
+    local lane_color = host.track_color(track)
+    if lane_color then
+      local x1, y1 = ImGui.GetItemRectMin(ctx)
+      local _, y2 = ImGui.GetItemRectMax(ctx)
+      ImGui.DrawList_AddRectFilled(ImGui.GetWindowDrawList(ctx), x1 + 1, y1 + 3, x1 + 4, y2 - 3,
+        lane_color, 1)
+    end
     local alt = ((ImGui.GetKeyMods(ctx) or 0) & ImGui.Mod_Alt) ~= 0
     local hear = (clicked and alt)
       or (ImGui.IsItemHovered(ctx) and ImGui.IsMouseDoubleClicked(ctx, ImGui.MouseButton_Left))
@@ -468,6 +477,35 @@ function ui.run(ImGui)
   }
 
   local function lane_settings(c, lane)
+    local engine = c:engine()
+    local target = c:lane_track(lane)
+    local channel = c:lane_channel(lane)
+    local choices = host.lane_target_choices(c.proj, engine)
+    ImGui.SetNextItemWidth(ctx, 220)
+    if ImGui.BeginCombo(ctx, "Target track##lane" .. lane.slot, target and host.track_name(target) or "Choose track") then
+      for _, candidate in ipairs(choices) do
+        if ImGui.Selectable(ctx, host.track_name(candidate) .. "##target" .. lane.slot .. candidate.guid,
+            candidate == target) then
+          c:set_lane_target(lane, candidate, channel)
+        end
+      end
+      ImGui.EndCombo(ctx)
+    end
+    ImGui.SameLine(ctx, 0, GAP * 3)
+    ImGui.SetNextItemWidth(ctx, 120)
+    if ImGui.BeginCombo(ctx, "MIDI channel##lane" .. lane.slot, tostring(channel)) then
+      for candidate = 1, 16 do
+        if ImGui.Selectable(ctx, tostring(candidate) .. "##channel" .. lane.slot, candidate == channel) then
+          if target then
+            c:set_lane_target(lane, target, candidate)
+          end
+        end
+      end
+      ImGui.EndCombo(ctx)
+    end
+    if c.message then
+      ImGui.TextDisabled(ctx, c.message)
+    end
     for index, spec in ipairs(LANE_SLIDERS) do
       if index > 1 then
         ImGui.SameLine(ctx, 0, GAP * 4)
@@ -746,6 +784,113 @@ function ui.run(ImGui)
       c:commit_pattern()
     end
     tooltip("Render the shown pattern to MIDI items at the edit cursor")
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    if ImGui.Button(ctx, "Capture MIDI item##capture") then
+      capture_data, c.message = c:scan_capture()
+      capture_mapping = {}
+    end
+    tooltip("Restore or convert one selected MIDI item into a new pattern")
+    ImGui.SameLine(ctx, 0, GAP * 2)
+    if ImGui.Button(ctx, "Panic##panic") then
+      c:panic()
+    end
+    tooltip("Release held notes and send all-notes-off to every lane")
+  end
+
+  local function capture_panel(c)
+    if not capture_data then return end
+    ImGui.Separator(ctx)
+    ImGui.Text(ctx, "Capture selected MIDI item")
+    if capture_data.destination_error then
+      ImGui.TextDisabled(ctx, capture_data.destination_error)
+    end
+    if capture_data.decision.can_restore and capture_data.destination_compatible then
+      if capture_data.decision.kind == "choice" then
+        ImGui.TextDisabled(ctx, "The item's MIDI or timing changed. Choose the embedded source or convert the current MIDI.")
+      end
+      if capture_data.settings_match then
+        if ImGui.Button(ctx, "Restore source to new pattern##capture_restore") then
+          local ok, err = c:restore_capture(capture_data, false)
+          if not ok then c.message = err end
+        end
+      else
+        if ImGui.Button(ctx, "Apply source settings and restore##capture_settings") then
+          local ok, err = c:restore_capture(capture_data, true)
+          if not ok then c.message = err end
+        end
+      end
+    elseif capture_data.decision.can_restore then
+      ImGui.TextDisabled(ctx, "Source restore is unavailable for this rack. Convert the current MIDI instead.")
+    end
+
+    local channels = {}
+    for _, note in ipairs(capture_data.notes or {}) do channels[note.channel] = true end
+    local ordered = {}
+    for channel in pairs(channels) do ordered[#ordered + 1] = channel end
+    table.sort(ordered)
+    local lanes = c:lanes()
+    for _, channel in ipairs(ordered) do
+      local selected = capture_mapping[channel]
+      local label = "Choose lane"
+      for _, lane in ipairs(lanes) do
+        if selected and lane.id == selected.lane_id then
+          local track = c:lane_track(lane)
+          label = track and host.track_name(track) or ("Lane " .. (lane.slot + 1))
+        end
+      end
+      if selected and selected.new_track then label = "New lane: " .. host.track_name(selected.new_track) end
+      ImGui.SetNextItemWidth(ctx, 220)
+      if ImGui.BeginCombo(ctx, "MIDI channel " .. channel .. "##capture" .. channel, label) then
+        for _, lane in ipairs(lanes) do
+          local track = c:lane_track(lane)
+          local name = track and host.track_name(track) or ("Lane " .. (lane.slot + 1))
+          if ImGui.Selectable(ctx, name .. "##capturelane" .. channel .. lane.slot,
+              selected and selected.lane_id == lane.id) then
+            capture_mapping[channel] = { lane_id = lane.id }
+          end
+        end
+        ImGui.EndCombo(ctx)
+      end
+      local engine = c:engine()
+      local targets = host.lane_target_choices(c.proj, engine)
+      local new_target_name = selected and selected.new_track and host.track_name(selected.new_track) or "New lane on track…"
+      ImGui.SameLine(ctx, 0, GAP * 2)
+      ImGui.SetNextItemWidth(ctx, 220)
+      if ImGui.BeginCombo(ctx, "Create lane for channel " .. channel .. "##captarget" .. channel, new_target_name) then
+        for _, track in ipairs(targets) do
+          if ImGui.Selectable(ctx, host.track_name(track) .. "##newtarget" .. channel .. track.guid,
+              selected and selected.new_track == track) then
+            capture_mapping[channel] = { new_track = track, channel = selected and selected.channel or 1, note = 60 }
+          end
+        end
+        ImGui.EndCombo(ctx)
+      end
+      if selected and selected.new_track then
+        ImGui.SameLine(ctx, 0, GAP * 2)
+        ImGui.SetNextItemWidth(ctx, 100)
+        if ImGui.BeginCombo(ctx, "Target channel##captargetchannel" .. channel, tostring(selected.channel)) then
+          for destination = 1, 16 do
+            if ImGui.Selectable(ctx, tostring(destination) .. "##targetchannel" .. channel, destination == selected.channel) then
+              capture_mapping[channel] = { new_track = selected.new_track, channel = destination, note = selected.note or 60 }
+            end
+          end
+          ImGui.EndCombo(ctx)
+        end
+      end
+    end
+    local preview, preview_error = c:preview_capture(capture_data, capture_mapping)
+    if preview_error then
+      ImGui.TextDisabled(ctx, preview_error)
+    elseif preview and not preview.accepted then
+      for _, reason in ipairs(preview.reasons) do ImGui.TextDisabled(ctx, reason) end
+    elseif preview then
+      ImGui.TextDisabled(ctx, "Preview: " .. tostring(#ordered) .. " MIDI channel(s) mapped to the displayed grid.")
+      if ImGui.Button(ctx, "Convert current MIDI to new pattern##capture_convert") then
+        local ok, err = c:convert_capture(capture_data, capture_mapping)
+        if not ok then c.message = err end
+      end
+    end
+    if ImGui.Button(ctx, "Close capture##capture_close") then capture_data = nil end
   end
 
   local function groove(c)
@@ -777,6 +922,7 @@ function ui.run(ImGui)
     ImGui.SameLine(ctx, 0, GAP * 6)
     transport(c)
     ImGui.Dummy(ctx, 0, GAP)
+    capture_panel(c)
   end
 
   -- One button for each 16 steps of the longest lane. Every lane shows the chosen page.

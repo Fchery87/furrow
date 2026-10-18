@@ -15,6 +15,102 @@ ROOT = Path(__file__).resolve().parent
 
 
 class ScheduleTest(unittest.TestCase):
+    @staticmethod
+    def event(sample, sequence, receiver, lane, bus, channel, note, velocity, kind):
+        return {
+            "sample": sample,
+            "sequence": sequence,
+            "receiver": receiver,
+            "lane": lane,
+            "bus": bus,
+            "channel": channel,
+            "note": note,
+            "velocity": velocity,
+            "kind": kind,
+        }
+
+    @staticmethod
+    def expected(sample, order, receiver, lane, bus, channel, note, velocity, kind):
+        return {
+            "sample": sample,
+            "order": order,
+            "receiver": receiver,
+            "lane": lane,
+            "bus": bus,
+            "channel": channel,
+            "note": note,
+            "velocity": velocity,
+            "kind": kind,
+        }
+
+    def test_diff_rejects_wrong_lane_delivery(self):
+        expected = [self.expected(100, 1, 0, 0, 0, 0, 36, 100, "on")]
+        captured = [self.event(100, 0, 0, 1, 0, 0, 36, 100, "on")]
+        problems = diff_log.compare(expected, captured, 1)
+        self.assertTrue(any("lane 0" in problem and "lane 1" in problem for problem in problems), problems)
+
+    def test_diff_rejects_wrong_receiver_routing(self):
+        expected = [self.expected(100, 1, 0, 0, 0, 0, 36, 100, "on")]
+        captured = [self.event(100, 0, 1, 0, 0, 0, 36, 100, "on")]
+        problems = diff_log.compare(expected, captured, 1)
+        self.assertTrue(any("receiver 0" in problem and "receiver 1" in problem for problem in problems), problems)
+
+    def test_diff_rejects_wrong_destination_bus(self):
+        expected = [self.expected(100, 1, 0, 0, 0, 0, 36, 100, "on")]
+        captured = [self.event(100, 0, 0, 0, 1, 0, 36, 100, "on")]
+        problems = diff_log.compare(expected, captured, 1)
+        self.assertTrue(any("bus 0" in problem and "bus 1" in problem for problem in problems), problems)
+
+    def test_diff_rejects_release_after_simultaneous_note_on(self):
+        expected = [
+            self.expected(100, 0, 0, 0, 0, 0, 36, 0, "off"),
+            self.expected(100, 2, 0, 0, 0, 0, 36, 100, "on"),
+        ]
+        captured = [
+            self.event(100, 0, 0, 0, 0, 0, 36, 100, "on"),
+            self.event(100, 1, 0, 0, 0, 0, 36, 0, "off"),
+        ]
+        problems = diff_log.compare(expected, captured, 1)
+        self.assertTrue(any("order" in problem.lower() for problem in problems), problems)
+
+    def test_diff_enforces_controller_between_release_and_note_on(self):
+        expected = [
+            self.expected(100, 0, 0, 0, 0, 0, 36, 0, "off"),
+            self.expected(100, 1, 0, 0, 0, 0, 0, 64, "cc"),
+            self.expected(100, 2, 0, 0, 0, 0, 36, 100, "on"),
+        ]
+        captured = [
+            self.event(100, 0, 0, 0, 0, 0, 0, 64, "cc"),
+            self.event(100, 1, 0, 0, 0, 0, 36, 0, "off"),
+            self.event(100, 2, 0, 0, 0, 0, 36, 100, "on"),
+        ]
+        problems = diff_log.compare(expected, captured, 1)
+        self.assertTrue(any("order" in problem.lower() and "cc" in problem and "off" in problem for problem in problems), problems)
+
+    def test_diff_rejects_missing_note_release(self):
+        expected = [
+            self.expected(100, 1, 0, 0, 0, 0, 36, 100, "on"),
+            self.expected(200, 0, 0, 0, 0, 0, 36, 0, "off"),
+        ]
+        captured = [self.event(100, 0, 0, 0, 0, 0, 36, 100, "on")]
+        problems = diff_log.compare(expected, captured, 1)
+        self.assertTrue(any("missing" in problem and "off" in problem for problem in problems), problems)
+
+    def test_diff_rejects_unexpected_event(self):
+        expected = [self.expected(100, 1, 0, 0, 0, 0, 36, 100, "on")]
+        captured = [
+            self.event(100, 0, 0, 0, 0, 0, 36, 100, "on"),
+            self.event(150, 1, 0, 0, 0, 0, 38, 100, "on"),
+        ]
+        problems = diff_log.compare(expected, captured, 1)
+        self.assertTrue(any("extra" in problem and "note 38" in problem for problem in problems), problems)
+
+    def test_diff_rejects_event_outside_tolerance(self):
+        expected = [self.expected(100, 1, 0, 0, 0, 0, 36, 100, "on")]
+        captured = [self.event(102, 0, 0, 0, 0, 0, 36, 100, "on")]
+        problems = diff_log.compare(expected, captured, 1)
+        self.assertTrue(any("timing" in problem.lower() and "100" in problem and "102" in problem for problem in problems), problems)
+
     def test_half_sample_tie_moves_to_even(self):
         self.assertEqual(schedule.round_half_even(0.5), 0)
         self.assertEqual(schedule.round_half_even(1.5), 2)
@@ -65,7 +161,7 @@ class ScheduleTest(unittest.TestCase):
         # Lanes enable 4, 4, 8 and 3 steps. Each step is one note-on and one note-off.
         self.assertEqual(len(lines), 38)
         self.assertEqual(lines[0], "0 1 0 0 0 0 36 100 on")
-        self.assertEqual(lines[1], "0 1 2 0 0 2 42 100 on")
+        self.assertEqual(lines[1], "0 1 2 2 0 2 42 100 on")
         self.assertEqual(lines[2], "2756 0 0 0 0 0 36 0 off")
 
     def test_generated_files_match_a_fresh_run(self):
@@ -81,25 +177,13 @@ class ScheduleTest(unittest.TestCase):
             ]
             self.assertEqual(stored, fresh)
 
-    def test_reaper_782_captures_against_the_schedule(self):
+    def test_legacy_capture_is_rejected_as_unverifiable(self):
         results = ROOT / "results" / "reaper-7.82-linux"
-        constant = diff_log.load(ROOT / "expected" / "constant-120.txt")
-        ramp = diff_log.load(ROOT / "expected" / "ramp-44100-1024.txt")
-        self.assertEqual(diff_log.compare(constant, diff_log.load(results / "constant-120-events.txt"), 1), [])
+        expected = diff_log.load(ROOT / "expected" / "constant-120.txt")
+        legacy = diff_log.load(results / "constant-120-events.txt")
         self.assertEqual(
-            diff_log.compare(ramp, diff_log.load(results / "ramp-44100-1024-events.txt"), 1),
-            ["missing 85828 off note 46 ch 3", "extra 85830 off note 46 ch 3"],
-        )
-
-    def test_reaper_782_extrapolating_engine_captures(self):
-        results = ROOT / "results" / "reaper-7.82-linux"
-        constant = diff_log.load(ROOT / "expected" / "constant-120.txt")
-        ramp = diff_log.load(ROOT / "expected" / "ramp-44100-1024.txt")
-        self.assertEqual(
-            diff_log.compare(constant, diff_log.load(results / "constant-120-extrapolate-events.txt"), 1), []
-        )
-        self.assertEqual(
-            diff_log.compare(ramp, diff_log.load(results / "ramp-44100-1024-extrapolate-events.txt"), 0), []
+            diff_log.compare(expected, legacy, 1),
+            ["unverifiable: legacy capture discarded observed sequence and receiver identity"],
         )
 
     def test_tempo_project_writes_a_ramp_and_a_step(self):
@@ -127,46 +211,45 @@ class ScheduleTest(unittest.TestCase):
             ],
         )
 
-    def test_reaper_782_tempo_edge_captures(self):
+    def test_legacy_tempo_edge_captures_are_unverifiable(self):
         results = ROOT / "results" / "reaper-7.82-linux"
 
         def problems(name, tolerance):
             expected = diff_log.load(ROOT / "expected" / f"{name}.txt")
             return diff_log.compare(expected, diff_log.load(results / f"{name}-events.txt"), tolerance)
 
-        self.assertEqual(problems("ramp-edge-44100-1024", 0), [])
-        self.assertEqual(problems("step-on-beat-44100-1024", 1), [])
-        self.assertEqual(
-            problems("step-off-grid-44100-1024", 1),
-            [
-                "missing 55814 on note 38 ch 1",
-                "missing 55814 on note 42 ch 2",
-                "extra 55125 on note 38 ch 1",
-                "extra 55125 on note 42 ch 2",
-            ],
-        )
+        for name in ("ramp-edge-44100-1024", "step-on-beat-44100-1024", "step-off-grid-44100-1024"):
+            self.assertEqual(
+                problems(name, 1),
+                ["unverifiable: legacy capture discarded observed sequence and receiver identity"],
+            )
 
     def test_diff_rejects_an_extra_note(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             expect = base / "expect.txt"
             seen = base / "seen.txt"
-            expect.write_text("0 1 0 0 0 0 36 100 on\n")
-            seen.write_text("0 1 0 0 0 0 36 100 on\n10 1 1 0 0 1 38 100 on\n")
+            expect.write_text("# sample order receiver lane bus channel note velocity kind\n0 1 0 0 0 0 36 100 on\n")
+            seen.write_text("# sample sequence receiver lane bus channel note velocity kind\n0 0 0 0 0 0 36 100 on\n10 1 1 1 0 1 38 100 on\n")
             problems = diff_log.compare(diff_log.load(expect), diff_log.load(seen), 1)
-            self.assertEqual(problems, ["extra 10 on note 38 ch 1"])
+            self.assertEqual(
+                problems,
+                ["extra event: observed sample 10 on lane 1 receiver 1 bus 0 ch 1 note 38 velocity 100"],
+            )
 
     def test_diff_accepts_one_sample_and_rejects_two(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             expect = base / "expect.txt"
             seen = base / "seen.txt"
-            expect.write_text("100 1 0 0 0 0 36 100 on\n")
-            seen.write_text("101 1 0 0 0 0 36 100 on\n")
+            expect.write_text("# sample order receiver lane bus channel note velocity kind\n100 1 0 0 0 0 36 100 on\n")
+            seen.write_text("# sample sequence receiver lane bus channel note velocity kind\n101 0 0 0 0 0 36 100 on\n")
             self.assertEqual(diff_log.compare(diff_log.load(expect), diff_log.load(seen), 1), [])
-            seen.write_text("102 1 0 0 0 0 36 100 on\n")
+            seen.write_text("# sample sequence receiver lane bus channel note velocity kind\n102 0 0 0 0 0 36 100 on\n")
             problems = diff_log.compare(diff_log.load(expect), diff_log.load(seen), 1)
-            self.assertEqual(len(problems), 2)
+            self.assertEqual(len(problems), 1)
+            self.assertIn("expected sample 100", problems[0])
+            self.assertIn("observed sample 102", problems[0])
 
 
 if __name__ == "__main__":

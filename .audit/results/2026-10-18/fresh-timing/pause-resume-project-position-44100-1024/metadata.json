@@ -1,0 +1,25 @@
+{
+  "case": "pause-resume-project-position-44100-1024",
+  "sample_rate_hz": 44100,
+  "block_size_samples": 1024,
+  "tempo_bpm": 120.0,
+  "host": "REAPER 7.82/linux-x86_64",
+  "project": "/tmp/furrow-v1-timing/cases/stop-restart-44100-1024.RPP",
+  "capture_format": "sequenced receiver gmem layout v4; per-receiver order, receiver slot, mapped lane, observed destination bus, destination channel and event data",
+  "source_head": "e4293986bafdfb4f340ab79184a7bb3b477dfa63",
+  "tracked_diff_sha256_excluding_original_project": "e7e16dddc4f379d6753f0af816f9d1cc92cb68b88b262e239a2b1252f892894e",
+  "source_sha256": {
+    "jsfx/furrow_probe_receiver.jsfx": "c4bbc397bf72a6af68c374b2bb5844a6589cd03e1997c7946071308aee8f91c5",
+    "lua/furrow_probe_dump.lua": "47960e9900101dfc5e5857bc3fc9ee291750fe02a986a6f9ffcddc9b827b415f",
+    "probes/diff_log.py": "4a2a816bf30fd23be493090ee853332bcd02f147cd7b5eb2bb8ef5f29eb14a9e",
+    "probes/schedule.py": "701b5c17503f8f77289161e96c1431bd12b20ab10744fa55c5dce290292aae1e",
+    "probes/check_schedule.py": "c44c8d20ea31ea198967a4deb3d34c5f2666f4059c4f7a4b9873fdef7fbf1ee0",
+    "probes/expected/constant-120.txt": "cf829c23353215efadff00c75a5374f6797390efd8817069042413973c0f4567"
+  },
+  "capture_sha256": "1f4e57690fb972bbb6fa6b1afdcbd080c8fb76f218550ea7d52e9b06abe33892",
+  "expected_sha256": "cf829c23353215efadff00c75a5374f6797390efd8817069042413973c0f4567",
+  "transport_trace": "before-play wall=431815.835214 state=0 playex=1.814920635 cursor=0.000000000\nafter-play-action wall=431815.835421 state=1 playex=0.000000000 cursor=0.000000000\nbefore-pause wall=431816.654385 state=1 playex=0.587709751 cursor=0.000000000\nafter-pause wall=431816.654578 state=2 playex=0.613786848 cursor=0.613786848\npaused-sample wall=431816.788138 state=2 playex=0.613786848 cursor=0.613786848\npaused-sample wall=431816.824478 state=2 playex=0.613786848 cursor=0.613786848\npaused-sample wall=431816.861204 state=2 playex=0.613786848 cursor=0.613786848\npaused-sample wall=431816.898656 state=2 playex=0.613786848 cursor=0.613786848\npaused-sample wall=431816.935613 state=2 playex=0.613786848 cursor=0.613786848\npaused-sample wall=431816.971660 state=2 playex=0.613786848 cursor=0.613786848\npaused-sample wall=431817.008038 state=2 playex=0.613786848 cursor=0.613786848\npaused-sample wall=431817.046801 state=2 playex=0.613786848 cursor=0.613786848\nbefore-resume wall=431817.081473 state=2 playex=0.613786848 cursor=0.613786848\nafter-resume wall=431817.081702 state=1 playex=0.613786848 cursor=0.613786848\nbefore-stop wall=431818.795359 state=1 playex=2.057210884 cursor=0.613786848\nafter-stop wall=431818.795515 state=0 playex=2.057210884 cursor=0.613786848\n",
+  "comparison": "expected-events: extra event: observed sample 27068 off lane 1 receiver 1 bus 0 ch 1 note 38 velocity 0\nexpected-events: extra event: observed sample 33075 on lane 1 receiver 1 bus 0 ch 1 note 38 velocity 100\nexpected-events: extra event: observed sample 27068 off lane 2 receiver 2 bus 0 ch 2 note 42 velocity 0\nexpected-events: extra event: observed sample 33075 on lane 2 receiver 2 bus 0 ch 2 note 42 velocity 100",
+  "comparator_exit_status": 1,
+  "procedure": "On the saved disposable probe project, reset project time to zero, start playback, pause after GetPlayPositionEx(project) reaches at least 0.55 s, verify project position remains fixed for about 0.4 wall-clock seconds, resume with the REAPER Pause action, continue until project time reaches at least 2.05 s, stop, and dump receiver plus tempo logs. The capture controller uses project-scoped transport APIs."
+}

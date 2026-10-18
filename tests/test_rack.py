@@ -3,6 +3,7 @@
 The stub records what the Lua asks REAPER to do. It does not prove REAPER honours it."""
 
 import itertools
+import struct
 import unittest
 
 from harness import LUA, Rig, missing, pair
@@ -13,7 +14,7 @@ OP_SET_STEP = 2
 OP_SET_LANE = 5
 OP_SET_RACK = 6
 R_SEED, R_SWING, R_TRUNCATE = 1, 4, 5
-F_ON = 0
+F_ON, F_GATE = 0, 9
 RS5K_PARAMS = ["Volume", "Pan", "Gain for minimum velocity", "Note range start", "Note range end",
                "Pitch for start note", "Pitch for end note", "MIDI channel", "Max voices", "Attack", "Release",
                "Obey note-offs"]
@@ -27,6 +28,8 @@ class Item:
         self.ext = {}
         self.events = []
         self.take = self
+        self.info = {"D_POSITION": start, "D_LENGTH": stop - start, "D_STARTOFFS": 0.0,
+                     "D_PLAYRATE": 1.0, "B_LOOPSRC": 0.0, "C_BEATATTACHMODE": 0.0}
 
 
 class Track:
@@ -40,6 +43,7 @@ class Track:
         self.sends = []
         self.ext = {}
         self.items = []
+        self.native_color = 0
 
 
 class StubReaper:
@@ -57,6 +61,7 @@ class StubReaper:
         self.cursor = 8.0
         self.clock = 1000.0
         self.selected = None
+        self.selected_items = []
 
     def table(self, lua):
         names = [n for n in dir(self) if n[0].isupper() or n.startswith("gmem") or n in ("defer", "time_precise")]
@@ -101,8 +106,22 @@ class StubReaper:
     def GetSelectedTrack(self, proj, index):
         return self.selected
 
+    def CountSelectedMediaItems(self, proj):
+        return len(self.selected_items)
+
+    def GetSelectedMediaItem(self, proj, index):
+        return self.selected_items[index] if 0 <= index < len(self.selected_items) else None
+
     def GetTrackGUID(self, track):
         return track.guid
+
+    def GetTrackColor(self, track):
+        return track.native_color
+
+    def ColorFromNative(self, native):
+        if native == 1:
+            return 18, 52, 86
+        return 0, 0, 0
 
     def InsertTrackAtIndex(self, index, defaults):
         self.tracks.insert(int(index), Track())
@@ -197,6 +216,16 @@ class StubReaper:
         src.sends.append({"dst": dst})
         return len(src.sends) - 1
 
+    def GetTrackNumSends(self, track, category):
+        return len(track.sends)
+
+    def GetTrackSendInfo_Value(self, track, category, index, key):
+        send = track.sends[int(index)]
+        return send["dst"] if key == "P_DESTTRACK" else send.get(key, 0.0)
+
+    def RemoveTrackSend(self, track, category, index):
+        del track.sends[int(index)]
+
     def SetTrackSendInfo_Value(self, track, category, index, key, value):
         track.sends[int(index)][key] = value
         return True
@@ -231,12 +260,27 @@ class StubReaper:
     def GetActiveTake(self, item):
         return item
 
+    def TakeIsMIDI(self, take):
+        return take is not None
+
     def MIDI_GetPPQPosFromProjQN(self, take, qn):
         return (qn - take.start * 2.0) * 960.0
 
     def MIDI_InsertEvt(self, take, selected, muted, ppq, message):
         take.events.append((ppq, message))
         return True
+
+    def MIDI_GetAllEvts(self, take, buffer):
+        out, previous = [], 0
+        for ppq, message in sorted(take.events, key=lambda event: event[0]):
+            current = int(round(ppq))
+            raw = message.encode("latin-1") if isinstance(message, str) else message
+            out.append(struct.pack("<iBI", current - previous, 0, len(raw)) + raw)
+            previous = current
+        return True, b"".join(out).decode("latin-1")
+
+    def MIDI_GetProjQNFromPPQPos(self, take, ppq):
+        return take.start * 2.0 + ppq / 960.0
 
     def MIDI_Sort(self, take):
         take.events.sort(key=lambda e: e[0])
@@ -249,6 +293,9 @@ class StubReaper:
 
     def GetMediaItem_Track(self, item):
         return item.track
+
+    def GetMediaItemInfo_Value(self, item, key):
+        return item.info.get(key, 0.0)
 
     def DeleteTrackMediaItem(self, track, item):
         track.items.remove(item)
@@ -328,6 +375,82 @@ class RackTest(unittest.TestCase):
         names = [(t.name, t.info["I_FOLDERDEPTH"], t.info["B_MAINSEND"]) for t in self.stub.tracks]
         self.assertEqual(names, [("Furrow Rack", 1.0, 1.0), ("Furrow Engine", -1.0, 0.0)])
         self.assertEqual(self.coordinator.status, "ready")
+
+    def test_track_color_uses_reaper_conversion_and_keeps_custom_black(self):
+        track = Track()
+        track.native_color = 1
+        self.assertEqual(self.host.track_color(track), 0x123456FF)
+        track.native_color = 0x1000000
+        self.assertEqual(self.host.track_color(track), 0x000000FF)
+        self.assertIsNone(self.host.track_color(None))
+        track.native_color = 0
+        self.assertIsNone(self.host.track_color(track))
+
+    def test_lane_target_and_channel_are_persisted_with_the_stable_lane_id(self):
+        rack = self.stub.tracks[0]
+        target = Track()
+        target.name = "Third party instrument"
+        self.stub.tracks.append(target)
+        links = self.rig.lua.table_from({17: target.guid})
+        channels = self.rig.lua.table_from({17: 12})
+
+        self.host.write_links(rack, links)
+        self.host.write_lane_channels(rack, channels)
+
+        self.assertEqual(self.host.read_links(rack)[17], target.guid)
+        self.assertEqual(self.host.read_lane_channels(rack)[17], 12)
+
+    def test_lane_target_rejects_engine_target_duplicate_assignment_and_routing_cycle(self):
+        engine = self.stub.tracks[1]
+        rack = self.stub.tracks[0]
+        target, other = Track(), Track()
+        self.stub.tracks.extend([target, other])
+        managed = Track()
+        managed.ext["P_EXT:FurrowItems"] = "lane 88"
+        self.stub.tracks.append(managed)
+        links = self.rig.lua.table_from({17: target.guid})
+        channels = self.rig.lua.table_from({17: 3})
+        engine.sends.append({"dst": target})
+        target.sends.append({"dst": engine})
+        other.sends.append({"dst": engine})
+
+        engine_target, engine_reason = pair(self.host.validate_lane_target(
+            "project", engine, engine, 1, 20, links, channels))
+        duplicate, duplicate_reason = pair(self.host.validate_lane_target(
+            "project", engine, target, 3, 20, links, channels))
+        cycle, cycle_reason = pair(self.host.validate_lane_target(
+            "project", engine, other, 1, 20, links, channels))
+        managed_ok, managed_reason = pair(self.host.validate_lane_target(
+            "project", engine, managed, 1, 20, links, channels))
+
+        self.assertFalse(engine_target)
+        self.assertIn("engine", str(engine_reason).lower())
+        self.assertFalse(duplicate)
+        self.assertIn("already assigned", str(duplicate_reason).lower())
+        self.assertFalse(cycle)
+        self.assertIn("cycle", str(cycle_reason).lower())
+        self.assertFalse(managed_ok)
+        self.assertIn("managed item", str(managed_reason).lower())
+
+    def test_lane_target_change_routes_and_persists_in_one_undo_point(self):
+        self.c("add_sample", "/samples/Kick.wav")
+        self.settle()
+        lane = self.c("lanes")[1]
+        target = Track()
+        target.name = "Instrument"
+        self.stub.tracks.append(target)
+
+        self.c("set_lane_target", lane, target, 4)
+        self.settle()
+
+        engine = self.stub.tracks[1]
+        rack = self.stub.tracks[0]
+        self.assertEqual(len(engine.sends), 1)
+        self.assertIs(engine.sends[0]["dst"], target)
+        self.assertEqual(engine.sends[0]["I_MIDIFLAGS"], self.host.midi_flags(lane.slot, 4))
+        self.assertEqual(self.host.read_links(rack)[lane.id], target.guid)
+        self.assertEqual(self.host.read_lane_channels(rack)[lane.id], 4)
+        self.assertEqual(self.stub.undo[-1], "Furrow: set lane target")
 
     def test_adding_a_sample_follows_the_acknowledgement_in_one_undo_point(self):
         self.c("add_sample", "/samples/Kick 01.wav")
@@ -622,6 +745,149 @@ class RackTest(unittest.TestCase):
         self.assertIn("commit pattern failed", self.coordinator.message)
         self.assertEqual(self.stub.undo, [])
 
+    def test_capture_scan_accepts_an_unchanged_committed_item(self):
+        self.painted_lane([0])
+        item = self.committed()[0].items[0]
+        self.stub.selected_items = [item]
+
+        result, error = pair(self.host.read_selected_capture("project"))
+
+        self.assertIsNone(error)
+        self.assertEqual(result.decision.kind, "restore")
+        self.assertTrue(result.notes)
+
+    def test_capture_scan_marks_edited_commit_as_a_restore_or_convert_choice(self):
+        self.painted_lane([0])
+        item = self.committed()[0].items[0]
+        self.stub.selected_items = [item]
+        ppq, message = item.events[0]
+        item.events[0] = (ppq, message[:-1] + chr((ord(message[-1]) + 1) % 128))
+
+        result, error = pair(self.host.read_selected_capture("project"))
+
+        self.assertIsNone(error)
+        self.assertEqual(result.decision.kind, "choice")
+
+    def test_capture_scan_allows_unrelated_midi_as_conversion_and_reports_controllers(self):
+        self.painted_lane([0])
+        tracks = self.committed()
+        item = tracks[0].items[0]
+        item.ext.clear()
+        self.stub.selected_items = [item]
+
+        result, error = pair(self.host.read_selected_capture("project"))
+
+        self.assertIsNone(error)
+        self.assertEqual(result.decision.kind, "convert")
+        self.assertFalse(result.decision.can_restore)
+        self.assertIn("control change", [str(result.unsupported[i]) for i in range(1, len(result.unsupported) + 1)])
+
+    def test_capture_restores_a_committed_source_into_a_new_pattern_in_one_undo_point(self):
+        self.painted_lane([0, 4])
+        self.stub.undo.clear()
+        item = self.committed()[0].items[0]
+        self.stub.selected_items = [item]
+        captured, error = pair(self.c("scan_capture"))
+        self.assertIsNone(error)
+        self.assertTrue(captured.destination_compatible)
+
+        restored, error = pair(self.c("restore_capture", captured, False))
+        self.assertIsNone(error)
+        self.assertTrue(restored)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.coordinator.pattern, 1)
+        self.assertEqual([self.c("step_value", 0, step, 0) for step in range(8)],
+                         [1, 0, 0, 0, 1, 0, 0, 0])
+        self.assertEqual(self.coordinator.session.snapshot.rack.mode, 1)
+        self.assertEqual(self.stub.undo[-1], "Furrow: restore source pattern")
+
+    def test_capture_requires_an_explicit_source_settings_choice_when_lane_settings_changed(self):
+        self.painted_lane([0])
+        item = self.committed()[0].items[0]
+        self.stub.selected_items = [item]
+        self.c("run", "change lane volume", self.rig.lua.table_from([
+            self.rig.lua.table_from([5, 0, 7, 7500])]))
+        self.settle()
+        self.tick(8)
+        captured, error = pair(self.c("scan_capture"))
+        self.assertIsNone(error)
+        self.assertFalse(captured.settings_match)
+
+        restored, error = pair(self.c("restore_capture", captured, False))
+
+        self.assertFalse(restored)
+        self.assertIn("choose whether to apply", str(error))
+
+        restored, error = pair(self.c("restore_capture", captured, True))
+        self.assertIsNone(error)
+        self.assertTrue(restored)
+        self.settle()
+        self.tick(8)
+        self.assertIsNone(self.coordinator.message)
+        lane = self.c("lanes")[1]
+        self.assertEqual(lane.volume, captured.decision.snapshot.lanes[1].volume)
+
+    def test_capture_conversion_applies_previewed_notes_to_a_new_pattern_in_one_undo_point(self):
+        self.c("add_sample", "/samples/Kick.wav")
+        self.settle()
+        lane = self.c("lanes")[1]
+        self.c("run", "set lane swing", self.rig.lua.table_from([
+            self.rig.lua.table_from([5, lane.slot, 10, 0])]))
+        self.settle()
+        item = Item(self.stub.tracks[-1], 8.0, 10.0)
+        item.events = [(0, bytes((0x90, 62, 100))), (120, bytes((0x80, 62, 25)))]
+        self.stub.tracks[-1].items.append(item)
+        self.stub.selected_items = [item]
+        captured, error = pair(self.c("scan_capture"))
+        self.assertIsNone(error)
+        mapping = self.rig.lua.table_from({1: self.rig.lua.table_from({"lane_id": lane.id})})
+        preview, error = pair(self.c("preview_capture", captured, mapping))
+        self.assertIsNone(error)
+        self.assertTrue(preview.accepted, [str(preview.reasons[i]) for i in range(1, len(preview.reasons) + 1)])
+        self.stub.undo.clear()
+
+        applied, error = pair(self.c("convert_capture", captured, mapping))
+        self.assertIsNone(error)
+        self.assertTrue(applied)
+        self.settle()
+        self.tick(8)
+        self.assertEqual(self.coordinator.pattern, 1)
+        row = self.c("step_value", lane.slot, 0, 0)
+        self.assertEqual(row, 1)
+        self.assertEqual(self.c("step_value", lane.slot, 0, 3), 2)
+        self.assertEqual(self.stub.undo[-1], "Furrow: convert MIDI item")
+
+    def test_capture_conversion_can_create_and_route_a_new_lane_in_one_undo_point(self):
+        item_track = self.stub.tracks[0]
+        item = Item(item_track, 8.0, 10.0)
+        item.events = [(0, bytes((0x92, 64, 100))), (120, bytes((0x82, 64, 0)))]
+        item_track.items.append(item)
+        target = Track()
+        target.name = "Instrument target"
+        self.stub.tracks.append(target)
+        self.stub.selected_items = [item]
+        captured, error = pair(self.c("scan_capture"))
+        self.assertIsNone(error)
+        mapping = self.rig.lua.table_from({3: self.rig.lua.table_from({
+            "new_track": target, "channel": 5, "note": 60})})
+
+        preview, error = pair(self.c("preview_capture", captured, mapping))
+        self.assertIsNone(error)
+        self.assertTrue(preview.accepted)
+        self.assertEqual(len(preview.new_lanes), 1)
+
+        applied, error = pair(self.c("convert_capture", captured, mapping))
+        self.assertIsNone(error)
+        self.assertTrue(applied)
+        self.settle()
+        self.tick(8)
+        lane = self.c("lanes")[1]
+        rack_track = self.stub.tracks[0]
+        self.assertEqual(self.host.read_links(rack_track)[lane.id], target.guid)
+        self.assertEqual(self.host.read_lane_channels(rack_track)[lane.id], 5)
+        self.assertEqual(self.stub.undo[-1], "Furrow: convert MIDI item")
+
     def test_the_mode_buttons_switch_between_live_and_items_with_one_undo_point_each(self):
         self.painted_lane([0])
         self.c("set_mode", 1)
@@ -633,6 +899,23 @@ class RackTest(unittest.TestCase):
         self.tick(8)
         self.assertEqual(self.coordinator.session.snapshot.rack.mode, 0)
         self.assertEqual(self.stub.undo, ["Furrow: play committed items", "Furrow: play live"])
+
+    def test_panic_is_available_without_an_undo_point(self):
+        self.painted_lane([0])
+        self.c("run", "hold note", self.rig.lua.table_from([
+            self.rig.lua.table_from([OP_SET_STEP, 0, 0, 0, F_GATE, 160000])
+        ]))
+        self.settle()
+        self.rig.seek(0.0)
+        self.rig.run(2)
+        self.rig.events.clear()
+
+        self.assertTrue(self.c("panic"))
+        self.tick()
+
+        self.assertIn((0x80, 60), [e[2:4] for e in self.rig.events])
+        self.assertIn((0xB0, 123), [e[2:4] for e in self.rig.events])
+        self.assertNotIn("Furrow: panic", self.stub.undo)
 
     def test_a_bar_drag_edits_velocity_pitch_and_gate_that_the_engine_plays(self):
         self.c("add_sample", "/samples/kick.wav")
@@ -1132,6 +1415,7 @@ class FakeImGui:
         self.bar = None
         self.rect = None
         self.mods = 0
+        self.filled_rects = []
 
     def place(self, label, width, height):
         if label.startswith("##s"):
@@ -1158,6 +1442,8 @@ class FakeImGui:
                     fake.rect = None
                 if name == "GetItemRectMin":
                     return (fake.rect[0], fake.rect[1]) if fake.rect else (0.0, 0.0)
+                if name == "GetItemRectMax":
+                    return (fake.rect[0] + fake.rect[2], fake.rect[1] + fake.rect[3]) if fake.rect else (0.0, 0.0)
                 if name == "GetMousePos":
                     return fake.mouse if fake.mouse else (-1000.0, -1000.0)
                 if name == "IsMouseDown":
@@ -1168,6 +1454,8 @@ class FakeImGui:
                     return fake.mods
                 if name == "GetCursorScreenPos":
                     return 0.0, 0.0
+                if name == "DrawList_AddRectFilled":
+                    fake.filled_rects.append(tuple(args[1:]))
                 if name == "IsItemHovered":
                     if not (fake.mouse and fake.rect):
                         return False
@@ -1191,6 +1479,8 @@ class FakeImGui:
                     return True
                 if name in ("SmallButton", "Button"):
                     fake.small_labels.append(args[1])
+                    if isinstance(args[1], str) and args[1].endswith("##name"):
+                        fake.rect = (0.0, float(fake.lane * 25), args[2], args[3])
                     if args[1] == fake.press:
                         fake.press = None
                         return True
@@ -1216,6 +1506,59 @@ class FakeImGui:
 
 @unittest.skipIf(SKIP, SKIP)
 class WindowTest(unittest.TestCase):
+    def test_lane_name_stripe_tracks_the_resolved_reaper_track_color(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            lua = rig.lua
+            lua.globals().reaper = stub.table(lua)
+            host = lua.eval('(require("furrow.host"))')
+            host.create_rack()
+            imgui = FakeImGui()
+            imgui.drop.append("/samples/kick.wav")
+            ui = lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(lua))
+            for _ in range(30):
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertEqual(len(stub.tracks), 3)
+            stub.tracks[2].native_color = 1
+            imgui.filled_rects.clear()
+            for _ in range(6):
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            stripes = [rect for rect in imgui.filled_rects if rect[4] == 0x123456FF]
+            self.assertTrue(stripes)
+            self.assertTrue(any(rect[2] - rect[0] == 3 for rect in stripes))
+        finally:
+            rig.close()
+
+    def test_the_capture_action_is_exposed_in_the_window(self):
+        rig = Rig()
+        try:
+            stub = StubReaper(rig)
+            rig.lua.globals().reaper = stub.table(rig.lua)
+            host = rig.lua.eval('(require("furrow.host"))')
+            host.create_rack()
+            imgui = FakeImGui()
+            ui = rig.lua.eval('(require("furrow.ui"))')
+            ui.run(imgui.table(rig.lua))
+            for _ in range(10):
+                pending, stub.deferred = stub.deferred, []
+                for fn in pending:
+                    fn()
+                rig.block(playing=False)
+                stub.clock += 0.03
+            self.assertIn("Capture MIDI item##capture", imgui.small_labels)
+        finally:
+            rig.close()
+
     def test_the_window_draws_and_a_dropped_file_becomes_a_lane(self):
         rig = Rig()
         try:
@@ -1243,6 +1586,7 @@ class WindowTest(unittest.TestCase):
             self.assertIn("Checkbox", imgui.calls)
             self.assertIn("BeginCombo", imgui.calls)
             self.assertIn("CollapsingHeader", imgui.calls)
+            self.assertIn("Panic##panic", imgui.small_labels)
             self.assertEqual(stub.undo, ["Furrow: add lane"])
         finally:
             rig.close()
