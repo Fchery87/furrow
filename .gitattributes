@@ -1,0 +1,5 @@
+# The engine tests read these files on every platform, and CI compares regenerated traces with
+# them byte for byte, so they keep LF line endings even in a Windows checkout.
+plugin/tests/golden/*.txt text eol=lf
+probes/expected/*.txt text eol=lf
+.audit/results/**/*.txt text eol=lf

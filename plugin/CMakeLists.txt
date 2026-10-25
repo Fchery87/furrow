@@ -83,7 +83,8 @@ endif()
 if(FURROW_BUILD_TESTS)
     FetchContent_Declare(Catch2
         URL https://github.com/catchorg/Catch2/archive/refs/tags/v3.16.1.tar.gz
-        URL_HASH SHA256=d16bd1b8b2364918bd472cb216394acb93bde6784890df0d91bccfb3f28d777d)
+        URL_HASH SHA256=d16bd1b8b2364918bd472cb216394acb93bde6784890df0d91bccfb3f28d777d
+        SYSTEM)
     FetchContent_MakeAvailable(Catch2)
 
     add_executable(furrow_engine_tests
@@ -92,7 +93,9 @@ if(FURROW_BUILD_TESTS)
         tests/ReaperCaptureTests.cpp)
     target_link_libraries(furrow_engine_tests PRIVATE furrow_engine Catch2::Catch2WithMain)
     target_compile_definitions(furrow_engine_tests PRIVATE FURROW_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(MSVC)
+        target_compile_options(furrow_engine_tests PRIVATE /W4 /WX /permissive- /utf-8)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(furrow_engine_tests PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wfloat-equal -Werror)
         if(FURROW_SANITIZE)
             target_compile_options(furrow_engine_tests PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)

@@ -36,6 +36,20 @@ cmake --build plugin/build
 
 The bundles land in `plugin/build/FurrowSpike_artefacts/Release/`.
 
+## Checks on GitHub
+
+`.github/workflows/plugin.yml` runs on every push or pull request that changes the plugin, SeqCore or the files its tests read:
+
+- the engine tests on Linux (GCC and Clang), macOS and Windows, with address and undefined-behaviour sanitizers except on Windows;
+- a check that the golden traces still match SeqCore;
+- a release build of the plugin on each platform, checked with pluginval at strictness 10, Steinberg's VST3 validator and clap-validator.
+
+To try a build in a host, open the run on the repository's Actions tab and download `furrow-spike-Windows`, `furrow-spike-macOS` or `furrow-spike-Linux` from its Artifacts list. Each holds a `VST3` and a `CLAP` folder. Copy the plugin into the host's plugin folder, for example `C:\Program Files\Common Files\VST3` on Windows or `~/Library/Audio/Plug-Ins/VST3` on macOS. The builds are not signed yet, so macOS blocks them until you clear the download flag:
+
+```sh
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Furrow Spike.vst3"
+```
+
 ## Golden traces
 
 `tests/golden/make_golden.py` runs the REAPER edition's SeqCore in ysfx and records what it does in each scenario. After changing SeqCore, build the ysfx host once with `tools/jsfx_host/build.sh`, then regenerate the traces from the repository root:
