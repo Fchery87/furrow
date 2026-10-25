@@ -28,16 +28,16 @@ The REAPER edition gets much of its power from controlling REAPER. It creates tr
 
 ## Licence
 
-The plugin is built on JUCE under AGPLv3, so everything under `plugin/` is licensed AGPLv3. The REAPER edition stays MIT. The Steinberg VST3 SDK and the CLAP SDK are both MIT-licensed. Distributing a binary requires offering its complete source under AGPLv3, which the public repository does.
+The plugin is built on JUCE 9 under AGPLv3, so everything under `plugin/` is licensed AGPLv3. The REAPER edition stays MIT. The Steinberg VST3 SDK and the CLAP SDK are both MIT-licensed. Distributing a binary requires offering its complete source under AGPLv3, which the public repository does.
 
 ## Formats and frameworks
 
 | Item | Choice | Why |
 | --- | --- | --- |
 | Plugin formats | VST3 and CLAP, plus a standalone app for development | All three target hosts load VST3. REAPER and Studio One also load CLAP. |
-| Framework | JUCE 8, pinned to an exact release | Mature, cross-platform, best Linux support among the main frameworks, built-in WebView UI support |
-| CLAP | `clap-juce-extensions`, pinned | JUCE 8 has no native CLAP target |
-| Language | C++20 | Supported by JUCE 8 and the three platform toolchains |
+| Framework | JUCE 9, pinned to an exact release (9.0.4 at the spike) | Mature, cross-platform, best Linux support among the main frameworks, built-in WebView UI support |
+| CLAP | `clap-juce-extensions`, pinned to a commit | JUCE 9 has no native CLAP target. The project publishes from `main` rather than tagged releases. |
+| Language | C++20 | Supported by JUCE 9 and the three platform toolchains |
 | Build | CMake, with dependencies fetched at pinned versions | One build description for all platforms and CI |
 | UI | Web front-end in JUCE's WebView, with the step grid drawn on a `<canvas>` | Fast iteration on visual design; canvas keeps 64 × 512 cells smooth |
 

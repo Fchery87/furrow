@@ -2,3 +2,4 @@ __pycache__/
 tools/jsfx_host/.build/
 tools/jsfx_host/*.so
 diag/
+plugin/build*/
