@@ -1,4 +1,4 @@
-#include "furrow/SpikePattern.h"
+#include "furrow/Engine.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -16,8 +16,10 @@
 #include <vector>
 
 using furrow::BlockInfo;
+using furrow::Command;
+using furrow::Engine;
 using furrow::MidiEvent;
-using furrow::SpikePattern;
+using furrow::Op;
 
 namespace
 {
@@ -29,11 +31,27 @@ struct Row
     auto operator<=> (const Row&) const = default;
 };
 
+// Lane n plays on channel n here, as in the captures. The capture logger and the expected
+// schedules record a note-off's velocity as 0.
 Row rowOf (std::int64_t blockStart, const MidiEvent& e)
 {
-    const bool on = (e.status & 0xF0) == 0x90;
-    const int channel = e.status & 0x0F;
-    return { { blockStart + e.offset, on ? 1 : 0, channel, channel, e.note, e.velocity } };
+    const bool on = e.status == 0x90;
+    return { { blockStart + e.offset, on ? 1 : 0, e.lane, e.lane, e.data1, on ? e.data2 : 0 } };
+}
+
+// The pattern in probes/pattern-4x16.txt: four lanes of 16 steps, gate half a step, velocity 100.
+void loadProbePattern (Engine& engine)
+{
+    const int notes[] = { 36, 38, 42, 46 };
+    const char* grid[] = { "1000100010001000", "0010001000100010", "1010101010101010", "0000100000001001" };
+    std::vector<Command> commands;
+    for (int lane = 0; lane < 4; ++lane)
+        commands.push_back ({ Op::AddLane, lane, lane + 1, lane + 1, notes[lane], lane });
+    for (int lane = 0; lane < 4; ++lane)
+        for (int step = 0; step < 16; ++step)
+            if (grid[lane][step] == '1')
+                commands.push_back ({ Op::SetStep, 0, lane, step, furrow::On, 1 });
+    REQUIRE (engine.apply (commands, [] (const MidiEvent&) {}) == furrow::Result::Ok);
 }
 
 // Reads an event file. Expected schedules and REAPER captures order their middle
@@ -114,18 +132,19 @@ bool sameOrHalfSampleTie (const std::vector<Row>& a, const std::vector<Row>& b, 
     });
 }
 
-// Drives the pattern the way a host would at a constant tempo from sample 0, and collects every
-// event before `endSample`.
+// Drives the engine the way a host would at a constant tempo from sample 0, and collects every
+// note event before `endSample`.
 std::vector<Row> play (double bpm, double sampleRate, int blockSize, std::int64_t endSample)
 {
-    SpikePattern pattern;
+    Engine engine;
+    loadProbePattern (engine);
     std::vector<Row> rows;
     const double samplesPerBeat = 60.0 * sampleRate / bpm;
     for (std::int64_t start = 0; start < endSample; start += blockSize)
     {
         const BlockInfo block { true, static_cast<double> (start) / samplesPerBeat, bpm, sampleRate, blockSize };
-        pattern.process (block, [&] (const MidiEvent& e) {
-            if (start + e.offset < endSample)
+        engine.process (block, [&] (const MidiEvent& e) {
+            if ((e.status == 0x80 || e.status == 0x90) && start + e.offset < endSample)
                 rows.push_back (rowOf (start, e));
         });
     }
@@ -133,15 +152,9 @@ std::vector<Row> play (double bpm, double sampleRate, int blockSize, std::int64_
     return rows;
 }
 
-std::vector<MidiEvent> processOne (SpikePattern& pattern, const BlockInfo& block)
-{
-    std::vector<MidiEvent> events;
-    pattern.process (block, [&] (const MidiEvent& e) { events.push_back (e); });
-    return events;
-}
 } // namespace
 
-TEST_CASE ("The spike plays exactly what SeqCore played in REAPER")
+TEST_CASE ("The engine plays exactly what SeqCore played in REAPER")
 {
     // The 18 October 2026 audit logged SeqCore's MIDI in REAPER 7.82 for Linux with the current
     // receiver logger, for one pass of this pattern at every sample rate, block size and tempo
@@ -161,7 +174,7 @@ TEST_CASE ("The spike plays exactly what SeqCore played in REAPER")
     CHECK (sameOrHalfSampleTie (play (bpm, sampleRate, blockSize, pass), seqcore, bpm, sampleRate));
 }
 
-TEST_CASE ("The spike stays within one sample of the reference schedule at any block size")
+TEST_CASE ("The engine stays within one sample of the reference schedule at any block size")
 {
     // One pass at 120 BPM and 44.1 kHz: 16 steps, 4 beats, 88,200 samples. probes/schedule.py
     // works in absolute time and rounds half to even, so it puts step 15 at 82,688. The spec's
@@ -172,111 +185,4 @@ TEST_CASE ("The spike stays within one sample of the reference schedule at any b
     const int blockSize = GENERATE (1024, 256, 64, 1000, 4096, 1);
     INFO ("block size " << blockSize);
     CHECK (withinSamples (play (120.0, 44100.0, blockSize, 88200), reference, 1));
-}
-
-TEST_CASE ("Every hit is followed by its release, and lanes never hold two notes")
-{
-    // Two passes at an awkward tempo and block size, checked event by event.
-    SpikePattern pattern;
-    const double bpm = 97.3;
-    const double sampleRate = 48000.0;
-    const int blockSize = 333;
-    const double samplesPerBeat = 60.0 * sampleRate / bpm;
-    std::vector<int> held (SpikePattern::lanes, -1);
-    int hits = 0;
-    for (std::int64_t start = 0; start < static_cast<std::int64_t> (8 * samplesPerBeat); start += blockSize)
-    {
-        const BlockInfo block { true, static_cast<double> (start) / samplesPerBeat, bpm, sampleRate, blockSize };
-        pattern.process (block, [&] (const MidiEvent& e) {
-            if (start + e.offset >= static_cast<std::int64_t> (8 * samplesPerBeat))
-                return;
-            const int lane = e.status & 0x0F;
-            if ((e.status & 0xF0) == 0x90)
-            {
-                CHECK (held[static_cast<std::size_t> (lane)] == -1);
-                held[static_cast<std::size_t> (lane)] = e.note;
-                ++hits;
-            }
-            else
-            {
-                CHECK (held[static_cast<std::size_t> (lane)] == e.note);
-                held[static_cast<std::size_t> (lane)] = -1;
-            }
-        });
-    }
-    // 4 + 4 + 8 + 3 hits per pass.
-    CHECK (hits == 2 * 19);
-}
-
-TEST_CASE ("Stopping releases held notes at the start of the block")
-{
-    SpikePattern pattern;
-    // Step 0 starts lanes 0 and 2. Their gates run past this short block.
-    const auto started = processOne (pattern, BlockInfo { true, 0.0, 120.0, 48000.0, 64 });
-    REQUIRE (started.size() == 2);
-
-    const auto stopped = processOne (pattern, BlockInfo { false, 0.003, 120.0, 48000.0, 64 });
-    REQUIRE (stopped.size() == 2);
-    for (const auto& e : stopped)
-    {
-        CHECK ((e.status & 0xF0) == 0x80);
-        CHECK (e.offset == 0);
-    }
-
-    // Nothing is left to release.
-    CHECK (processOne (pattern, BlockInfo { false, 0.003, 120.0, 48000.0, 64 }).empty());
-}
-
-TEST_CASE ("A seek releases held notes, then plays from the step at or after the new position")
-{
-    SpikePattern pattern;
-    processOne (pattern, BlockInfo { true, 0.0, 120.0, 48000.0, 64 });
-
-    // Jump to beat 1, which is step 4: lanes 0, 2 and 3 play there.
-    const auto events = processOne (pattern, BlockInfo { true, 1.0, 120.0, 48000.0, 64 });
-    REQUIRE (events.size() == 5);
-    CHECK ((events[0].status & 0xF0) == 0x80);
-    CHECK ((events[1].status & 0xF0) == 0x80);
-    for (std::size_t i = 2; i < events.size(); ++i)
-    {
-        CHECK ((events[i].status & 0xF0) == 0x90);
-        CHECK (events[i].offset == 0);
-    }
-    CHECK (events[2].note == 36);
-    CHECK (events[3].note == 42);
-    CHECK (events[4].note == 46);
-}
-
-TEST_CASE ("An empty block sends nothing and does not break continuity")
-{
-    SpikePattern pattern;
-    processOne (pattern, BlockInfo { true, 0.0, 120.0, 48000.0, 480 });
-    CHECK (processOne (pattern, BlockInfo { true, 0.02, 120.0, 48000.0, 0 }).empty());
-
-    // The next real block continues, so the held notes from step 0 are not cut by a false seek.
-    const auto events = processOne (pattern, BlockInfo { true, 0.02, 120.0, 48000.0, 480 });
-    CHECK (events.empty());
-}
-
-TEST_CASE ("Nothing plays before the pattern origin at beat 0")
-{
-    SpikePattern pattern;
-    // Pre-roll: half a beat before the origin, in one block that ends exactly at beat 0.
-    CHECK (processOne (pattern, BlockInfo { true, -0.5, 120.0, 48000.0, 12000 }).empty());
-
-    const auto events = processOne (pattern, BlockInfo { true, 0.0, 120.0, 48000.0, 480 });
-    REQUIRE (events.size() == 2);
-    CHECK (events[0].offset == 0);
-}
-
-TEST_CASE ("After a host reset, the next block releases notes held before it")
-{
-    SpikePattern pattern;
-    processOne (pattern, BlockInfo { true, 0.0, 120.0, 48000.0, 64 });
-    pattern.reset();
-
-    const auto events = processOne (pattern, BlockInfo { true, 0.003, 120.0, 48000.0, 64 });
-    REQUIRE (events.size() == 2);
-    CHECK ((events[0].status & 0xF0) == 0x80);
-    CHECK ((events[1].status & 0xF0) == 0x80);
 }

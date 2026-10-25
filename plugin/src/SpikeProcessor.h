@@ -1,14 +1,17 @@
 #pragma once
 
-#include "furrow/SpikePattern.h"
+#include "furrow/Engine.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
+#include <cstdint>
+#include <vector>
 
-// Milestone 1 spike: a plugin with no editor that plays the fixed 4 × 16 pattern in time with
-// the host. It sends MIDI out on channels 1 to 4 and, unless Tones is off, plays one sine blip
-// per hit so it can be heard without any routing.
+// The development plugin: the sequencer engine with no editor yet. A new instance plays the
+// 4 × 16 pattern in probes/pattern-4x16.txt in time with the host. It sends lane n's MIDI on
+// channel n + 1 and, unless Tones is off, plays one sine blip per hit so it can be heard without
+// any routing. Its saved state is the engine's state, so a host project restores the rack.
 class SpikeProcessor final : public juce::AudioProcessor
 {
 public:
@@ -51,9 +54,11 @@ private:
     void renderTones (juce::AudioBuffer<float>& buffer, int start, int end);
 
     juce::AudioParameterBool* tones = nullptr;
-    furrow::SpikePattern pattern;
-    std::array<Tone, furrow::SpikePattern::lanes> voices {};
+    furrow::Engine engine;
+    std::array<Tone, furrow::lanes> voices {};
     float decayPerSample = 0.0f;
+    // Reused by getStateInformation, which runs off the audio thread.
+    std::vector<std::int32_t> stateWords;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpikeProcessor)
 };

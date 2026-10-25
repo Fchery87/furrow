@@ -21,6 +21,11 @@ include(FetchContent)
 add_library(furrow_engine INTERFACE)
 target_include_directories(furrow_engine INTERFACE engine/include)
 target_compile_features(furrow_engine INTERFACE cxx_std_20)
+# The engine must round like SeqCore to the last bit. Fusing a multiply and an add into one
+# instruction skips a rounding step, so it is turned off. MSVC does not fuse by default.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(furrow_engine INTERFACE -ffp-contract=off)
+endif()
 
 if(FURROW_BUILD_PLUGIN)
     # JUCE 9.0.4 (tag commit 3fb5cbc0340758596dac39f7c8de47d562b4896e), used under AGPLv3.
@@ -82,8 +87,9 @@ if(FURROW_BUILD_TESTS)
     FetchContent_MakeAvailable(Catch2)
 
     add_executable(furrow_engine_tests
-        tests/BlockClockTests.cpp
-        tests/SpikePatternTests.cpp)
+        tests/EngineTests.cpp
+        tests/GoldenTests.cpp
+        tests/ReaperCaptureTests.cpp)
     target_link_libraries(furrow_engine_tests PRIVATE furrow_engine Catch2::Catch2WithMain)
     target_compile_definitions(furrow_engine_tests PRIVATE FURROW_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
