@@ -1,0 +1,1410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Furrow prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700&family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&display=swap" rel="stylesheet">
+<style>
+/* A throwaway design prototype for the plugin UI. See plugin/docs/plugin-spec.md. */
+:root {
+  --peat: #241F1B;
+  --furrow: #1A1613;
+  --ridge: #3B342D;
+  --ridge-alt: #322C26;
+  --panel: #2A241F;
+  --line: #3E362F;
+  --chaff: #DCD0BA;
+  --chaff-dim: #A0947F;
+  --chaff-faint: #6F655A;
+  --focus: #F4E9D2;
+  --head: 236px;
+  --inspector: 284px;
+  --gap: 3px;
+  --group: 6px;
+  --ui: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --display: "Bricolage Grotesque", var(--ui);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--peat); color: var(--chaff); font: 14px/1.4 var(--ui); }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.plugin { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100vh; min-height: 600px; min-width: 900px; }
+
+/* Top bar */
+.topbar { display: flex; align-items: center; gap: 28px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+.wordmark { font: 750 27px/1 var(--display); font-variation-settings: "wdth" 76, "opsz" 48; letter-spacing: -0.01em; color: var(--chaff); }
+.pattern { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.pattern-name { background: none; border: 0; padding: 4px 6px; margin: 0 -6px; border-radius: 6px; font: 600 22px/1.1 var(--display); font-variation-settings: "wdth" 88, "opsz" 32; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.pattern-name:hover { background: var(--ridge-alt); }
+.pattern-name svg { width: 12px; height: 12px; fill: var(--chaff-dim); }
+.queued { color: var(--chaff-dim); font-size: 13px; white-space: nowrap; }
+.transport { display: flex; align-items: center; gap: 18px; margin-left: auto; }
+.play { width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--chaff); display: grid; place-items: center; }
+.play svg { width: 16px; height: 16px; fill: var(--peat); }
+.play[aria-pressed="true"] { background: var(--focus); box-shadow: 0 0 0 4px rgba(244, 233, 210, 0.14); }
+.bpm { display: flex; align-items: baseline; gap: 6px; color: var(--chaff-dim); font-size: 13px; }
+.bpm input { width: 58px; background: var(--furrow); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: 600 19px/1.1 var(--display); font-variant-numeric: tabular-nums; text-align: right; color: var(--chaff); }
+.seed { background: var(--ridge-alt); border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px; font-size: 13px; color: var(--chaff); }
+.seed span { color: var(--chaff-dim); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.actions { display: flex; gap: 8px; }
+.button { background: var(--ridge-alt); border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px; font-size: 13px; }
+.button:hover, .seed:hover { background: var(--ridge); }
+
+/* Main area */
+.main { display: grid; grid-template-columns: minmax(0, 1fr) var(--inspector); grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
+.rack { grid-column: 1; grid-row: 1; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 14px 8px 14px 20px; display: flex; flex-direction: column; gap: 6px; }
+.row { display: grid; grid-template-columns: var(--head) minmax(0, 1fr); align-items: center; }
+.head { display: flex; align-items: center; gap: 8px; padding-right: 14px; min-width: 0; }
+.chip { width: 5px; height: 30px; border-radius: 3px; background: var(--lane); flex: none; }
+.name { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 6px 8px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.name:hover { background: var(--ridge-alt); }
+.row.selected .name { background: var(--ridge); color: var(--focus); }
+.badge { font-size: 12px; color: var(--chaff-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ms { width: 26px; height: 26px; flex: none; border-radius: 6px; border: 1px solid var(--line); background: var(--ridge-alt); font-size: 12px; font-weight: 700; color: var(--chaff-dim); padding: 0; }
+.ms.m[aria-pressed="true"] { background: var(--chaff-dim); color: var(--peat); border-color: var(--chaff-dim); }
+.ms.s[aria-pressed="true"] { background: var(--focus); color: var(--peat); border-color: var(--focus); }
+
+/* The furrow: a carved channel that holds a lane's steps */
+.steps, .bars { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); column-gap: var(--gap); background: var(--furrow); padding: 5px; border-radius: 10px; box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.03); }
+.group { margin-left: var(--group); }
+.row.muted .steps { opacity: 0.38; }
+.row.silenced .steps { opacity: 0.55; }
+.row.muted .name, .row.silenced .name { color: var(--chaff-faint); }
+
+.cell { position: relative; height: 38px; border: 0; padding: 0; border-radius: 5px; background: var(--ridge); overflow: hidden; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 1px 0 rgba(0, 0, 0, 0.4); touch-action: none; }
+.cell.alt { background: var(--ridge-alt); }
+.cell:hover { box-shadow: inset 0 0 0 1px rgba(244, 233, 210, 0.25); }
+.cell.beyond { visibility: hidden; }
+.fill { position: absolute; inset: auto 0 0 0; height: calc(var(--vel, 0.8) * 100%); min-height: 5px; background: var(--lane); opacity: var(--prob, 1); display: none; }
+.cell.on .fill { display: block; }
+.cell.chance .fill { background-image: repeating-linear-gradient(135deg, transparent 0 3px, rgba(26, 22, 19, 0.5) 3px 5px); }
+.cell.ratchet .fill::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(100% / var(--rat) - 2px), var(--furrow) calc(100% / var(--rat) - 2px), var(--furrow) calc(100% / var(--rat))); }
+.cell.now::before { content: ""; position: absolute; inset: 0; z-index: 1; background: rgba(244, 233, 210, 0.13); box-shadow: inset 0 3px 0 var(--focus); }
+.cell.hit .fill { animation: hit 220ms ease-out; }
+@keyframes hit { from { filter: brightness(1.55) saturate(1.2); } to { filter: none; } }
+
+.drop { margin-left: var(--head); min-height: 50px; border: 1.5px dashed var(--line); border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--chaff-dim); font-size: 13px; }
+.drop.over, .plugin.dragging .drop { border-color: var(--chaff); color: var(--chaff); background: rgba(244, 233, 210, 0.04); }
+.link { background: none; border: 0; padding: 0; color: var(--chaff); text-decoration: underline; text-underline-offset: 3px; }
+
+/* Step lane editor */
+.editor { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: var(--head) minmax(0, 1fr); padding: 12px 8px 14px 20px; border-top: 1px solid var(--line); background: #211C18; }
+.editor .bars-wrap { overflow-y: hidden; scrollbar-gutter: stable; }
+.tabs { display: flex; flex-direction: column; gap: 1px; padding-right: 14px; }
+.tab { text-align: left; background: none; border: 0; padding: 3px 10px; border-radius: 6px; color: var(--chaff-dim); font-size: 13px; border-left: 3px solid transparent; }
+.tab:hover { color: var(--chaff); }
+.tab[aria-selected="true"] { color: var(--focus); background: var(--ridge-alt); border-left-color: var(--lane); }
+.field-help { margin: 6px 10px 0; font-size: 12px; color: var(--chaff-faint); line-height: 1.45; }
+.bars { height: 108px; touch-action: none; cursor: ns-resize; }
+.bar { position: relative; border-radius: 4px; background: var(--ridge-alt); }
+.bar .v { position: absolute; left: 0; right: 0; background: var(--lane); border-radius: 3px; }
+.bar.off .v { opacity: 0.3; }
+.bar.beyond { visibility: hidden; }
+.bar.mid::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--line); }
+
+/* Inspector */
+.inspector { grid-column: 2; grid-row: 1 / 3; background: var(--panel); border-left: 1px solid var(--line); padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+.lane-title { display: flex; align-items: center; gap: 10px; }
+.lane-title .chip { height: 26px; }
+.lane-title input { flex: 1; min-width: 0; background: none; border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; margin-left: -6px; font: 650 21px/1.15 var(--display); font-variation-settings: "wdth" 88, "opsz" 28; }
+.lane-title input:hover, .lane-title input:focus { border-color: var(--line); background: var(--furrow); }
+.field { display: flex; flex-direction: column; gap: 7px; }
+.field > .label { font-size: 12px; color: var(--chaff-dim); }
+.segmented { display: flex; background: var(--furrow); border-radius: 8px; padding: 3px; gap: 3px; }
+.segmented button { flex: 1; border: 0; background: none; border-radius: 6px; padding: 6px 4px; font-size: 13px; color: var(--chaff-dim); }
+.segmented button[aria-checked="true"] { background: var(--ridge); color: var(--focus); }
+.wave { width: 100%; height: 64px; display: block; background: var(--furrow); border-radius: 8px; }
+.caption { font-size: 12px; color: var(--chaff-faint); line-height: 1.45; }
+.knobs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 6px; }
+.knob { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.knob .dial { width: 46px; height: 46px; border-radius: 50%; touch-action: none; cursor: ns-resize; }
+.knob svg { width: 46px; height: 46px; display: block; }
+.knob .k-label { font-size: 12px; color: var(--chaff-dim); }
+.knob output { font-size: 12px; color: var(--chaff); font-variant-numeric: tabular-nums; }
+.knob.small { flex-direction: row; gap: 8px; }
+.knob.small .dial, .knob.small svg { width: 34px; height: 34px; }
+.knob.small .k-text { display: flex; flex-direction: column; line-height: 1.2; }
+.stepper { display: flex; align-items: center; gap: 6px; }
+.stepper button { width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--line); background: var(--ridge-alt); padding: 0; }
+.stepper output { min-width: 62px; text-align: center; font-variant-numeric: tabular-nums; }
+.swatches { display: flex; gap: 8px; }
+.swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; background: var(--c); padding: 0; }
+.swatch[aria-checked="true"] { border-color: var(--focus); box-shadow: 0 0 0 2px var(--panel) inset; }
+
+/* Hint bar */
+.hint { display: flex; justify-content: space-between; gap: 20px; padding: 7px 20px; border-top: 1px solid var(--line); font-size: 12px; color: var(--chaff-dim); min-height: 32px; }
+.hint .note { color: var(--chaff-faint); white-space: nowrap; }
+
+/* Menus */
+.menu { position: fixed; z-index: 20; min-width: 196px; background: #332C26; border: 1px solid #4A4038; border-radius: 9px; padding: 4px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5); }
+.menu button { display: flex; justify-content: space-between; gap: 16px; width: 100%; text-align: left; background: none; border: 0; padding: 7px 10px; border-radius: 6px; font-size: 13px; }
+.menu button:hover, .menu button:focus { background: #463C34; outline: none; }
+.menu button[aria-checked="true"]::after { content: "✓"; color: var(--chaff-dim); }
+.menu hr { border: 0; border-top: 1px solid #4A4038; margin: 4px 6px; }
+.menu .danger { color: #E8A091; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cell.hit .fill { animation: none; }
+}
+</style>
+</head>
+<body>
+<div class="plugin" id="plugin">
+  <header class="topbar">
+    <div class="wordmark">furrow</div>
+    <div class="pattern">
+      <button class="pattern-name" id="patternBtn" aria-haspopup="menu" data-hint="Choose, add or clone a pattern. While playing, the switch waits for the next bar."><span id="patternName"></span><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4l4 4 4-4z"/></svg></button>
+      <span class="queued" id="queued" hidden></span>
+    </div>
+    <div class="transport">
+      <button class="play" id="play" aria-pressed="false" aria-label="Play" data-hint="Play or stop. Space does the same."></button>
+      <label class="bpm" data-hint="Tempo in beats per minute. In the plugin, this follows the host."><input id="bpm" name="bpm" type="number" min="40" max="240" step="1" aria-label="Tempo"><span>BPM</span></label>
+      <div id="swingSlot"></div>
+      <button class="seed" id="seed" data-hint="Reroll the seed. Steps under 100% probability play a new way, and the result repeats until you reroll.">Reroll<span id="seedVal"></span></button>
+    </div>
+    <div class="actions">
+      <button class="button" id="addFiles" data-hint="Add one sample lane for each audio file you choose.">Add samples</button>
+      <button class="button" id="panic" data-hint="Stop every sound that is playing now.">Panic</button>
+    </div>
+    <input type="file" id="fileInput" accept="audio/*" multiple hidden>
+  </header>
+  <div class="main">
+    <section class="rack" id="rack" aria-label="Lanes and steps"></section>
+    <section class="editor" id="editor" aria-label="Step lane editor"></section>
+    <aside class="inspector" id="inspector" aria-label="Selected lane"></aside>
+  </div>
+  <footer class="hint"><span id="hintText"></span><span class="note">Prototype. Sounds are simple stand-ins for the plugin's sampler.</span></footer>
+</div>
+<script>
+"use strict";
+
+const MAX_STEPS = 32;
+const MAX_LANES = 64;
+const COLORS = { wheat: "#E2B24A", flax: "#8DB3D6", clover: "#C987AE", barley: "#A3BE6E", rust: "#D2814F", linseed: "#A89BE0" };
+const COLOR_ORDER = Object.keys(COLORS);
+const FIELDS = {
+  vel: { label: "Velocity", min: 1, max: 127, step: 1, fmt: (v) => String(v), help: "How hard each step plays, from 1 to 127. Drag across the bars to draw." },
+  prob: { label: "Probability", min: 0, max: 100, step: 1, fmt: (v) => v + "%", help: "The chance each step plays. The seed makes the result repeat until you reroll." },
+  pitch: { label: "Pitch", min: -24, max: 24, step: 1, bipolar: true, fmt: (v) => (v > 0 ? "+" : "") + v + " st", help: "Semitones above or below the lane's pitch." },
+  gate: { label: "Gate", min: 0.05, max: 4, step: 0.05, fmt: (v) => v.toFixed(2) + " steps", help: "How long each note holds, in steps." },
+  ratchet: { label: "Ratchet", min: 1, max: 8, step: 1, fmt: (v) => "×" + v, help: "Repeats the hit inside the step's gate." },
+};
+const FIELD_ORDER = ["vel", "prob", "pitch", "gate", "ratchet"];
+const PROB_CYCLE = [100, 75, 50, 25];
+const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const HINTS = {
+  default: "Click a step to turn it on. Drag to paint, right-drag to erase, Shift-drag to set velocity, Alt-click to change probability.",
+  cell: "Click to turn a step on or off. Drag to paint, right-drag to erase. Shift-drag sets velocity. Alt-click changes probability.",
+  name: "Click to select. Double-click to hear it. Right-click for lane tools.",
+  mute: "Mute this lane.",
+  solo: "Solo this lane. Lanes that are not soloed go quiet.",
+  knob: "Drag up or down. Hold Shift for fine control. Double-click to reset.",
+};
+
+// The shared probability hash from Furrow-Spec-and-Architecture.md. Matches the spec's test vectors.
+const HM = 67108859, HA = 40503817, HB = 60251237, HC = 9301841;
+function roll(seed, patternKey, laneKey, step) {
+  let h = 0;
+  for (const x of [seed, patternKey, laneKey, step % HM]) {
+    h = (h + x + 1) % HM;
+    h = (h * HA) % HM;
+    h = (h * h + HC) % HM;
+    h = (h * HB) % HM;
+  }
+  return (h * h + HC) % HM;
+}
+function plays(prob, seed, patternKey, laneKey, step) {
+  if (prob >= 100) return true;
+  if (prob <= 0) return false;
+  return roll(seed, patternKey, laneKey, step) * 100 < prob * HM;
+}
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const snap = (v, step) => Math.round(v / step) * step;
+const randKey = () => Math.floor(Math.random() * 16777216);
+let nextId = 1;
+const uid = (prefix) => prefix + nextId++;
+const noteName = (n) => NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1);
+
+function h(tag, props, ...children) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(props || {})) {
+    if (value === undefined || value === null) continue;
+    // ARIA states need the literal strings "true" and "false"; other booleans are presence flags.
+    if (key.startsWith("aria-") && typeof value === "boolean") el.setAttribute(key, String(value));
+    else if (value === false) continue;
+    else if (key === "class") el.className = value;
+    else if (key === "style") el.style.cssText = value;
+    else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
+    else el.setAttribute(key, value === true ? "" : value);
+  }
+  for (const child of children.flat()) if (child !== null && child !== undefined && child !== false) el.append(child);
+  return el;
+}
+
+// ---------- State ----------
+
+const state = {
+  lanes: [],
+  patterns: [],
+  current: 0,
+  queued: null,
+  selected: null,
+  tab: "vel",
+  bpm: 96,
+  swing: 0.35,
+  seed: randKey(),
+  playing: false,
+};
+const buffers = new Map(); // lane id -> decoded AudioBuffer, kept out of undo snapshots
+
+const newStep = () => ({ on: false, vel: 100, prob: 100, pitch: 0, gate: 0.5, ratchet: 1 });
+
+function makeLane(props) {
+  return Object.assign({
+    id: uid("lane"), name: "Lane", color: "wheat", target: "sample", voice: "kick",
+    note: 36, channel: 1, mute: false, solo: false, vol: 0.8, pan: 0, swing: 1,
+    pitch: 0, decay: 0.5, choke: 0, probKey: randKey(),
+  }, props);
+}
+function makePattern(name) {
+  return { id: uid("pat"), name, lengths: {}, steps: {} };
+}
+function ensureLane(pattern, lane, length = 16) {
+  if (!pattern.steps[lane.id]) {
+    pattern.steps[lane.id] = Array.from({ length: MAX_STEPS }, newStep);
+    pattern.lengths[lane.id] = length;
+  }
+}
+const pattern = () => state.patterns[state.current];
+const laneById = (id) => state.lanes.find((l) => l.id === id);
+const selectedLane = () => laneById(state.selected);
+const stepsOf = (lane) => pattern().steps[lane.id];
+const lengthOf = (lane) => pattern().lengths[lane.id];
+
+function seedDemo() {
+  const kick = makeLane({ name: "Kick", color: "wheat", voice: "kick", decay: 0.5 });
+  const snare = makeLane({ name: "Snare", color: "clover", voice: "snare", decay: 0.2 });
+  const hat = makeLane({ name: "Closed hat", color: "flax", voice: "hat", decay: 0.05, choke: 1, vol: 0.62 });
+  const ohat = makeLane({ name: "Open hat", color: "linseed", voice: "ohat", decay: 0.42, choke: 1, vol: 0.55 });
+  const clap = makeLane({ name: "Clap", color: "rust", voice: "clap", decay: 0.28, vol: 0.7 });
+  const bass = makeLane({ name: "Bass", color: "barley", target: "midi", voice: "synth", channel: 2, note: 36, decay: 0.22, vol: 0.7 });
+  state.lanes = [kick, snare, hat, ohat, clap, bass];
+
+  const hits = (pat, lane, list) => {
+    for (const item of list) {
+      const [i, mods] = Array.isArray(item) ? item : [item, {}];
+      Object.assign(pat.steps[lane.id][i], { on: true }, mods);
+    }
+  };
+  const main = makePattern("Main groove");
+  const fill = makePattern("Fill");
+  const breakdown = makePattern("Breakdown");
+  for (const pat of [main, fill, breakdown]) for (const lane of state.lanes) ensureLane(pat, lane);
+
+  main.lengths[ohat.id] = 12;
+  hits(main, kick, [0, [6, { vel: 92 }], 8, [11, { vel: 84, prob: 50 }]]);
+  hits(main, snare, [4, 12, [15, { vel: 48, prob: 40 }]]);
+  hits(main, hat, Array.from({ length: 16 }, (_, i) => [i, { vel: i % 2 ? 54 : 98, prob: i === 7 || i === 15 ? 70 : 100, ratchet: i === 14 ? 2 : 1 }]));
+  hits(main, ohat, [[2, { vel: 82 }], [8, { vel: 70 }]]);
+  hits(main, clap, [12, [14, { vel: 62, ratchet: 3, prob: 50, gate: 0.75 }]]);
+  hits(main, bass, [[0, { gate: 1.5 }], [3, { gate: 0.5, vel: 88 }], [6, { pitch: 3, gate: 0.8 }], [8, { gate: 1 }], [10, { pitch: 7, gate: 0.5 }], [11, { pitch: 5, gate: 0.5, vel: 84 }], [14, { pitch: -2, gate: 1 }]]);
+
+  hits(fill, kick, [0, 8]);
+  hits(fill, snare, Array.from({ length: 16 }, (_, i) => [i, { vel: Math.round(40 + i * 5.8), ratchet: i >= 12 ? 2 : 1 }]));
+  hits(fill, clap, [[15, { ratchet: 4, gate: 1 }]]);
+  hits(fill, bass, [[0, { gate: 2 }], [8, { pitch: -2, gate: 2 }]]);
+
+  hits(breakdown, kick, [0]);
+  hits(breakdown, hat, [0, 2, 4, 6, 8, 10, 12, 14].map((i) => [i, { vel: 50, prob: 80 }]));
+  breakdown.lengths[ohat.id] = 12;
+  hits(breakdown, ohat, [[6, { vel: 64 }]]);
+  hits(breakdown, bass, [[0, { gate: 4 }], [8, { pitch: -2, gate: 4 }]]);
+
+  state.patterns = [main, fill, breakdown];
+  state.selected = kick.id;
+}
+
+// ---------- Undo ----------
+
+const undoStack = [];
+const redoStack = [];
+const snapshot = () => JSON.stringify({ lanes: state.lanes, patterns: state.patterns, current: state.current, selected: state.selected });
+function pushUndo() {
+  undoStack.push(snapshot());
+  if (undoStack.length > 200) undoStack.shift();
+  redoStack.length = 0;
+}
+function restore(from, to) {
+  if (!from.length) return;
+  to.push(snapshot());
+  const data = JSON.parse(from.pop());
+  state.lanes = data.lanes;
+  state.patterns = data.patterns;
+  state.current = data.current;
+  state.selected = laneById(data.selected) ? data.selected : state.lanes[0]?.id ?? null;
+  renderAll();
+}
+
+// ---------- Audio ----------
+
+let ctx = null;
+let master = null;
+const laneNodes = new Map(); // lane id -> { gain, pan, voice }
+const noiseCache = new WeakMap();
+
+function ensureAudio() {
+  if (!ctx) {
+    ctx = new AudioContext();
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -12;
+    comp.ratio.value = 4;
+    master = ctx.createGain();
+    master.gain.value = 0.8;
+    master.connect(comp).connect(ctx.destination);
+  }
+  if (ctx.state === "suspended") ctx.resume();
+  return ctx;
+}
+function noiseSource(c) {
+  let buffer = noiseCache.get(c);
+  if (!buffer) {
+    buffer = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    noiseCache.set(c, buffer);
+  }
+  const src = c.createBufferSource();
+  src.buffer = buffer;
+  return src;
+}
+const volumeGain = (v) => v * v * 1.25;
+function laneOut(lane) {
+  let node = laneNodes.get(lane.id);
+  if (!node) {
+    const gain = ctx.createGain();
+    const pan = ctx.createStereoPanner();
+    gain.connect(pan).connect(master);
+    node = { gain, pan, voice: null };
+    laneNodes.set(lane.id, node);
+  }
+  node.gain.gain.value = volumeGain(lane.vol);
+  node.pan.pan.value = lane.pan;
+  return node;
+}
+
+// Builds one hit on context c. Works on an OfflineAudioContext too, which draws the waveform.
+function voice(c, dest, lane, t, vel, pitch, dur) {
+  const amp = vel / 127;
+  const choke = c.createGain();
+  choke.connect(dest);
+  const sources = [];
+  const run = (src, until) => { src.start(t); src.stop(until); sources.push(src); };
+  const env = (peak, decay, attack = 0.002) => {
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+    g.connect(choke);
+    return g;
+  };
+  const rate = Math.pow(2, (lane.pitch + pitch) / 12);
+  const kind = lane.target === "midi" ? "synth" : lane.voice;
+  if (kind === "kick") {
+    const osc = c.createOscillator();
+    osc.frequency.setValueAtTime(160 * rate, t);
+    osc.frequency.exponentialRampToValueAtTime(42 * rate, t + 0.13);
+    osc.connect(env(amp, lane.decay));
+    run(osc, t + lane.decay + 0.05);
+  } else if (kind === "snare") {
+    const n = noiseSource(c);
+    const hp = c.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 1100 * rate;
+    n.connect(hp).connect(env(amp * 0.8, lane.decay));
+    run(n, t + lane.decay + 0.05);
+    const osc = c.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(200 * rate, t);
+    osc.frequency.exponentialRampToValueAtTime(150 * rate, t + 0.08);
+    osc.connect(env(amp * 0.6, 0.09));
+    run(osc, t + 0.15);
+  } else if (kind === "hat" || kind === "ohat") {
+    const n = noiseSource(c);
+    const hp = c.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 7200 * rate;
+    const shine = c.createBiquadFilter();
+    shine.type = "peaking";
+    shine.frequency.value = 10000;
+    shine.gain.value = 6;
+    n.connect(hp).connect(shine).connect(env(amp * 0.55, lane.decay));
+    run(n, t + lane.decay + 0.05);
+  } else if (kind === "clap") {
+    const n = noiseSource(c);
+    const bp = c.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = 1500 * rate;
+    bp.Q.value = 0.9;
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    for (const d of [0, 0.011, 0.022]) {
+      g.gain.setValueAtTime(amp, t + d);
+      g.gain.exponentialRampToValueAtTime(amp * 0.2, t + d + 0.009);
+    }
+    g.gain.setValueAtTime(amp, t + 0.033);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.033 + lane.decay);
+    g.connect(choke);
+    n.connect(bp).connect(g);
+    run(n, t + 0.04 + lane.decay);
+  } else if (kind === "synth") {
+    const hold = Math.max(dur, 0.012);
+    const osc = c.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.value = 440 * Math.pow(2, (lane.note + lane.pitch + pitch - 69) / 12);
+    const lp = c.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.Q.value = 7;
+    lp.frequency.setValueAtTime(2400, t);
+    lp.frequency.exponentialRampToValueAtTime(320, t + Math.max(0.05, lane.decay));
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(amp * 0.5, t + 0.005);
+    g.gain.setValueAtTime(amp * 0.5, t + hold);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + hold + 0.06);
+    osc.connect(lp).connect(g).connect(choke);
+    run(osc, t + hold + 0.08);
+  } else if (kind === "sample") {
+    const buffer = buffers.get(lane.id);
+    if (buffer) {
+      const src = c.createBufferSource();
+      src.buffer = buffer;
+      src.playbackRate.value = rate;
+      const len = Math.min(buffer.duration / rate, lane.decay);
+      const g = c.createGain();
+      g.gain.setValueAtTime(amp, t);
+      g.gain.setValueAtTime(amp, t + Math.max(0, len - 0.03));
+      g.gain.linearRampToValueAtTime(0, t + len);
+      src.connect(g).connect(choke);
+      run(src, t + len + 0.01);
+    }
+  }
+  return {
+    stop(at) {
+      choke.gain.setValueAtTime(1, at);
+      choke.gain.linearRampToValueAtTime(0, at + 0.006);
+      for (const src of sources) {
+        try { src.stop(at + 0.01); } catch (e) { /* already ended */ }
+      }
+    },
+  };
+}
+
+// One held note per lane, as the shared spec requires, plus choke groups.
+function hit(lane, t, vel, pitch, dur) {
+  const out = laneOut(lane);
+  if (out.voice) out.voice.stop(t);
+  if (lane.choke) {
+    for (const other of state.lanes) {
+      if (other === lane || other.choke !== lane.choke) continue;
+      const node = laneNodes.get(other.id);
+      if (node && node.voice) { node.voice.stop(t); node.voice = null; }
+    }
+  }
+  out.voice = voice(ctx, out.gain, lane, t, vel, pitch, dur);
+}
+function audition(lane) {
+  ensureAudio();
+  hit(lane, ctx.currentTime + 0.005, 104, 0, 0.3);
+}
+function panic() {
+  if (!ctx) return;
+  for (const node of laneNodes.values()) {
+    if (node.voice) { node.voice.stop(ctx.currentTime); node.voice = null; }
+  }
+}
+
+// ---------- Scheduler ----------
+// A lookahead scheduler stands in for the engine. Phase counts from the pattern origin,
+// so lanes of different lengths drift against each other as they would in Furrow.
+
+let timer = null;
+let nextTime = 0;
+let stepIndex = 0;
+let origin = 0;
+const visual = [];
+const stepSeconds = () => 60 / state.bpm / 4;
+
+function start() {
+  ensureAudio();
+  state.playing = true;
+  stepIndex = 0;
+  origin = 0;
+  nextTime = ctx.currentTime + 0.06;
+  tick();
+  timer = setInterval(tick, 25);
+  renderTop();
+}
+function stop() {
+  state.playing = false;
+  clearInterval(timer);
+  panic();
+  visual.length = 0;
+  clearPlayhead();
+  if (state.queued !== null) {
+    state.current = state.queued;
+    state.queued = null;
+    renderAll();
+  }
+  renderTop();
+}
+function tick() {
+  const sd = stepSeconds();
+  while (nextTime < ctx.currentTime + 0.12) {
+    scheduleStep(stepIndex, nextTime, sd);
+    nextTime += sd;
+    stepIndex++;
+  }
+}
+function scheduleStep(n, t, sd) {
+  if (n % 16 === 0 && state.queued !== null) {
+    state.current = state.queued;
+    state.queued = null;
+    origin = n;
+    visual.push({ time: t, switched: true });
+  }
+  const pat = pattern();
+  const anySolo = state.lanes.some((l) => l.solo && !l.mute);
+  const logical = n - origin;
+  const positions = {};
+  const fired = [];
+  for (const lane of state.lanes) {
+    const pos = logical % pat.lengths[lane.id];
+    positions[lane.id] = pos;
+    if (lane.mute || (anySolo && !lane.solo)) continue;
+    const st = pat.steps[lane.id][pos];
+    if (!st.on || !plays(st.prob, state.seed, state.current, lane.probKey, n)) continue;
+    const swung = logical % 2 === 1 ? state.swing * lane.swing * sd / 3 : 0;
+    const each = st.gate * sd / st.ratchet;
+    for (let k = 0; k < st.ratchet; k++) hit(lane, t + swung + k * each, st.vel, st.pitch, each);
+    fired.push(lane.id);
+  }
+  visual.push({ time: t, positions, fired });
+}
+
+// ---------- Rendering ----------
+
+const $ = (id) => document.getElementById(id);
+const rackEl = $("rack");
+const editorEl = $("editor");
+const inspectorEl = $("inspector");
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+let cells = {}; // lane id -> array of cell buttons
+let nowCells = [];
+let focus = { lane: null, step: 0 };
+
+function gridColumns() {
+  const longest = Math.max(16, ...state.lanes.map((l) => lengthOf(l)));
+  return Math.min(MAX_STEPS, Math.ceil(longest / 4) * 4);
+}
+function laneStyle(lane) {
+  return `--lane:${COLORS[lane.color]}`;
+}
+
+function renderAll() {
+  renderTop();
+  renderRack();
+  renderInspector();
+  renderEditor();
+}
+
+function renderTop() {
+  $("patternName").textContent = pattern().name;
+  const queued = $("queued");
+  queued.hidden = state.queued === null;
+  if (state.queued !== null) queued.textContent = `Switches to ${state.patterns[state.queued].name} at the next bar`;
+  const play = $("play");
+  play.setAttribute("aria-pressed", state.playing);
+  play.setAttribute("aria-label", state.playing ? "Stop" : "Play");
+  play.innerHTML = state.playing
+    ? '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1.5"/></svg>'
+    : '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9.5-5.5z"/></svg>';
+  if (document.activeElement !== $("bpm")) $("bpm").value = state.bpm;
+  $("seedVal").textContent = state.seed;
+}
+
+// The rack is rebuilt on structural changes. This finds the focused control again afterwards,
+// so keyboard users keep their place through undo, mute and solo.
+function focusedRackControl() {
+  const active = document.activeElement;
+  if (!active || !rackEl.contains(active)) return null;
+  const lane = active.closest("[data-lane]")?.dataset.lane;
+  if (active.classList.contains("cell")) return `.row[data-lane="${lane}"] .cell[data-step="${active.dataset.step}"]`;
+  for (const kind of ["name", "m", "s"]) {
+    if (active.classList.contains(kind)) return `.row[data-lane="${lane}"] .${kind}`;
+  }
+  return null;
+}
+
+function renderRack() {
+  const refocus = focusedRackControl();
+  const cols = gridColumns();
+  document.documentElement.style.setProperty("--cols", cols);
+  const anySolo = state.lanes.some((l) => l.solo && !l.mute);
+  cells = {};
+  nowCells = [];
+  if (!laneById(focus.lane)) focus = { lane: state.lanes[0]?.id ?? null, step: 0 };
+  const rows = state.lanes.map((lane) => {
+    const len = lengthOf(lane);
+    const laneCells = [];
+    for (let i = 0; i < cols; i++) {
+      const cell = h("button", {
+        class: "cell" + (Math.floor(i / 4) % 2 ? " alt" : "") + (i && i % 4 === 0 ? " group" : ""),
+        "data-lane": lane.id, "data-step": i, "data-hint": HINTS.cell,
+        tabindex: focus.lane === lane.id && focus.step === i ? 0 : -1,
+      }, h("span", { class: "fill" }));
+      paintCell(cell, lane, i, len);
+      laneCells.push(cell);
+    }
+    cells[lane.id] = laneCells;
+    const badge = [];
+    if (len !== 16) badge.push(`${len}`);
+    return h("div", {
+      class: "row" + (lane.id === state.selected ? " selected" : "") + (lane.mute ? " muted" : "") + (!lane.mute && anySolo && !lane.solo ? " silenced" : ""),
+      style: laneStyle(lane), "data-lane": lane.id,
+    },
+      h("div", { class: "head" },
+        h("span", { class: "chip" }),
+        h("button", { class: "name", "data-hint": HINTS.name, title: lane.name }, lane.name),
+        lane.target === "midi" ? h("span", { class: "badge", title: `MIDI out on channel ${lane.channel}` }, `MIDI ${lane.channel}`) : null,
+        len !== 16 ? h("span", { class: "badge", title: `${len} steps` }, `${len} st`) : null,
+        h("button", { class: "ms m", "aria-pressed": lane.mute, "aria-label": `Mute ${lane.name}`, "data-hint": HINTS.mute }, "M"),
+        h("button", { class: "ms s", "aria-pressed": lane.solo, "aria-label": `Solo ${lane.name}`, "data-hint": HINTS.solo }, "S"),
+      ),
+      h("div", { class: "steps", role: "group", "aria-label": `${lane.name} steps` }, laneCells),
+    );
+  });
+  const drop = h("div", { class: "drop", id: "drop" },
+    "Drop audio files here to add sample lanes, or",
+    h("button", { class: "link", onclick: () => $("fileInput").click() }, "choose files"));
+  rackEl.replaceChildren(...rows, drop);
+  if (refocus) rackEl.querySelector(refocus)?.focus();
+}
+
+function paintCell(cell, lane, i, len = lengthOf(lane)) {
+  const st = stepsOf(lane)[i];
+  cell.classList.toggle("beyond", i >= len);
+  cell.classList.toggle("on", st.on);
+  cell.classList.toggle("chance", st.on && st.prob < 100);
+  cell.classList.toggle("ratchet", st.on && st.ratchet > 1);
+  cell.style.setProperty("--vel", (st.vel / 127).toFixed(3));
+  cell.style.setProperty("--prob", (0.35 + 0.65 * st.prob / 100).toFixed(3));
+  cell.style.setProperty("--rat", st.ratchet);
+  cell.setAttribute("aria-pressed", st.on);
+  const extra = st.on ? `, velocity ${st.vel}` + (st.prob < 100 ? `, ${st.prob}% chance` : "") + (st.ratchet > 1 ? `, ratchet ${st.ratchet}` : "") : "";
+  cell.setAttribute("aria-label", `${lane.name} step ${i + 1}${extra}`);
+}
+function refreshCell(lane, i) {
+  const cell = cells[lane.id]?.[i];
+  if (cell) paintCell(cell, lane, i);
+}
+
+function clearPlayhead() {
+  for (const cell of nowCells) cell.classList.remove("now");
+  nowCells = [];
+}
+function showVisual(v) {
+  if (v.switched) { renderAll(); return; }
+  clearPlayhead();
+  for (const [id, pos] of Object.entries(v.positions)) {
+    const cell = cells[id]?.[pos];
+    if (cell) { cell.classList.add("now"); nowCells.push(cell); }
+  }
+  if (reducedMotion.matches) return;
+  for (const id of v.fired) {
+    const cell = cells[id]?.[v.positions[id]];
+    if (!cell) continue;
+    cell.classList.remove("hit");
+    void cell.offsetWidth;
+    cell.classList.add("hit");
+  }
+}
+function frame() {
+  if (ctx && state.playing) {
+    while (visual.length && visual[0].time <= ctx.currentTime) showVisual(visual.shift());
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------- Step lane editor ----------
+
+function renderEditor() {
+  const lane = selectedLane();
+  const field = FIELDS[state.tab];
+  const tabs = h("div", { class: "tabs", role: "tablist", "aria-orientation": "vertical", "aria-label": "Step lanes" },
+    FIELD_ORDER.map((key) => h("button", {
+      class: "tab", role: "tab", "aria-selected": key === state.tab, tabindex: key === state.tab ? 0 : -1,
+      onclick: () => { state.tab = key; renderEditor(); editorEl.querySelector('[aria-selected="true"]').focus(); },
+      onkeydown: (e) => {
+        const dir = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+        if (!dir) return;
+        e.preventDefault();
+        state.tab = FIELD_ORDER[(FIELD_ORDER.indexOf(state.tab) + dir + FIELD_ORDER.length) % FIELD_ORDER.length];
+        renderEditor();
+        editorEl.querySelector('[aria-selected="true"]').focus();
+      },
+    }, FIELDS[key].label)),
+    h("p", { class: "field-help" }, field.help));
+  if (!lane) {
+    editorEl.replaceChildren(tabs, h("div", { class: "caption" }, "Add a lane to edit its steps."));
+    return;
+  }
+  const cols = gridColumns();
+  const len = lengthOf(lane);
+  const bars = [];
+  for (let i = 0; i < cols; i++) {
+    const bar = h("div", {
+      class: "bar" + (field.bipolar ? " mid" : "") + (i && i % 4 === 0 ? " group" : "") + (i >= len ? " beyond" : ""),
+      "data-step": i,
+    }, h("span", { class: "v" }));
+    bars.push(bar);
+    paintBar(bar, lane, i);
+  }
+  const barsEl = h("div", { class: "bars", style: laneStyle(lane), role: "group", "aria-label": `${field.label} for ${lane.name}`, "data-hint": field.help }, bars);
+  editorEl.replaceChildren(tabs, h("div", { class: "bars-wrap" }, barsEl));
+  editorEl.style.cssText = laneStyle(lane);
+  barsEl.addEventListener("pointerdown", (e) => {
+    pushUndo();
+    barsEl.setPointerCapture(e.pointerId);
+    drawBar(e, lane, barsEl);
+    const move = (ev) => drawBar(ev, lane, barsEl);
+    const up = () => { barsEl.removeEventListener("pointermove", move); barsEl.removeEventListener("pointerup", up); barsEl.removeEventListener("pointercancel", up); };
+    barsEl.addEventListener("pointermove", move);
+    barsEl.addEventListener("pointerup", up);
+    barsEl.addEventListener("pointercancel", up);
+  });
+}
+function paintBar(bar, lane, i) {
+  const field = FIELDS[state.tab];
+  const st = stepsOf(lane)[i];
+  const value = st[state.tab];
+  const v = bar.firstChild;
+  bar.classList.toggle("off", !st.on);
+  if (field.bipolar) {
+    const f = Math.abs(value) / field.max;
+    v.style.height = `${f * 50}%`;
+    v.style.bottom = value >= 0 ? "50%" : "auto";
+    v.style.top = value >= 0 ? "auto" : "50%";
+  } else {
+    const f = (value - field.min) / (field.max - field.min);
+    v.style.height = `${Math.max(3, f * 100)}%`;
+    v.style.bottom = "0";
+    v.style.top = "auto";
+  }
+  bar.title = `Step ${i + 1}: ${field.fmt(value)}`;
+}
+function drawBar(e, lane, barsEl) {
+  const bars = barsEl.children;
+  const len = lengthOf(lane);
+  let index = -1;
+  for (let i = 0; i < Math.min(bars.length, len); i++) {
+    const r = bars[i].getBoundingClientRect();
+    if (e.clientX >= r.left - 2 && e.clientX <= r.right + 2) { index = i; break; }
+  }
+  if (index < 0) return;
+  const field = FIELDS[state.tab];
+  const r = bars[index].getBoundingClientRect();
+  const f = clamp(1 - (e.clientY - r.top) / r.height, 0, 1);
+  const value = +clamp(snap(field.min + f * (field.max - field.min), field.step), field.min, field.max).toFixed(2);
+  stepsOf(lane)[index][state.tab] = value;
+  paintBar(bars[index], lane, index);
+  refreshCell(lane, index);
+  setHint(`Step ${index + 1}: ${field.label.toLowerCase()} ${field.fmt(value)}`);
+}
+
+// ---------- Knobs ----------
+
+function knob(o) {
+  const size = o.small ? 34 : 46;
+  const c = size / 2;
+  const r = c - 4;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
+  svg.setAttribute("aria-hidden", "true");
+  const path = (stroke, width) => {
+    const p = document.createElementNS(ns, "path");
+    p.setAttribute("fill", "none");
+    p.setAttribute("stroke", stroke);
+    p.setAttribute("stroke-width", width);
+    p.setAttribute("stroke-linecap", "round");
+    svg.append(p);
+    return p;
+  };
+  const point = (deg, radius) => {
+    const a = deg * Math.PI / 180;
+    return [c + radius * Math.sin(a), c - radius * Math.cos(a)];
+  };
+  const arc = (a0, a1) => {
+    if (a1 < a0) [a0, a1] = [a1, a0];
+    if (a1 - a0 < 0.5) return "";
+    const [x0, y0] = point(a0, r);
+    const [x1, y1] = point(a1, r);
+    return `M${x0} ${y0} A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1} ${y1}`;
+  };
+  path("var(--ridge)", 4).setAttribute("d", arc(-135, 135));
+  const valueArc = path(o.color || "var(--lane)", 4);
+  const cap = document.createElementNS(ns, "circle");
+  cap.setAttribute("cx", c);
+  cap.setAttribute("cy", c);
+  cap.setAttribute("r", r - 6);
+  cap.setAttribute("fill", "#2F2924");
+  svg.append(cap);
+  const needle = path("var(--chaff)", 2);
+
+  const dial = h("div", { class: "dial", role: "slider", tabindex: 0, "aria-label": o.label, "aria-valuemin": o.min, "aria-valuemax": o.max, "data-hint": HINTS.knob });
+  dial.append(svg);
+  const out = h("output", {});
+  let value = o.value;
+  const draw = () => {
+    const f = (value - o.min) / (o.max - o.min);
+    const angle = -135 + 270 * f;
+    valueArc.setAttribute("d", arc(o.bipolar ? 0 : -135, angle));
+    const [x0, y0] = point(angle, r - 13 > 2 ? r - 13 : 2);
+    const [x1, y1] = point(angle, r - 6);
+    needle.setAttribute("d", `M${x0} ${y0} L${x1} ${y1}`);
+    out.textContent = o.fmt(value);
+    dial.setAttribute("aria-valuenow", value);
+    dial.setAttribute("aria-valuetext", o.fmt(value));
+  };
+  const set = (v) => {
+    v = +clamp(snap(v, o.step), o.min, o.max).toFixed(4);
+    if (v === value) return;
+    value = v;
+    draw();
+    o.onChange(value);
+  };
+  dial.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    dial.focus();
+    pushUndo();
+    dial.setPointerCapture(e.pointerId);
+    let lastY = e.clientY;
+    let exact = value;
+    const move = (ev) => {
+      exact += (lastY - ev.clientY) / (ev.shiftKey ? 600 : 150) * (o.max - o.min);
+      exact = clamp(exact, o.min, o.max);
+      lastY = ev.clientY;
+      set(exact);
+    };
+    const up = () => { dial.removeEventListener("pointermove", move); dial.removeEventListener("pointerup", up); };
+    dial.addEventListener("pointermove", move);
+    dial.addEventListener("pointerup", up);
+  });
+  dial.addEventListener("dblclick", () => { pushUndo(); set(o.def); });
+  dial.addEventListener("keydown", (e) => {
+    const big = (o.max - o.min) / 10;
+    const delta = { ArrowUp: o.step, ArrowRight: o.step, ArrowDown: -o.step, ArrowLeft: -o.step, PageUp: big, PageDown: -big }[e.key];
+    if (delta === undefined) return;
+    e.preventDefault();
+    pushUndo();
+    set(value + delta);
+  });
+  draw();
+  const label = h("span", { class: "k-label" }, o.label);
+  return o.small
+    ? h("div", { class: "knob small" }, dial, h("div", { class: "k-text" }, label, out))
+    : h("div", { class: "knob" }, dial, label, out);
+}
+
+// ---------- Inspector ----------
+
+const waveCache = new Map();
+function drawWave(canvas, lane) {
+  const key = lane.target === "midi" ? `midi:${lane.note}:${lane.pitch}:${lane.decay}` : `${lane.voice}:${lane.id}:${lane.pitch}:${lane.decay}`;
+  const paint = (buffer) => {
+    const ratio = devicePixelRatio || 1;
+    const w = canvas.clientWidth * ratio;
+    const ht = canvas.clientHeight * ratio;
+    canvas.width = w;
+    canvas.height = ht;
+    const g = canvas.getContext("2d");
+    g.clearRect(0, 0, w, ht);
+    g.fillStyle = COLORS[lane.color];
+    g.globalAlpha = 0.9;
+    const data = buffer.getChannelData(0);
+    const per = Math.max(1, Math.floor(data.length / w));
+    let peak = 0;
+    for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i]));
+    const scale = peak > 0 ? 1 / peak : 1;
+    for (let x = 0; x < w; x++) {
+      let m = 0;
+      for (let j = x * per; j < Math.min(data.length, (x + 1) * per); j++) m = Math.max(m, Math.abs(data[j]));
+      const bar = Math.max(ratio, m * scale * (ht / 2 - 4 * ratio));
+      g.fillRect(x, ht / 2 - bar, 1, bar * 2);
+    }
+  };
+  if (lane.voice === "sample" && lane.target === "sample") {
+    const buffer = buffers.get(lane.id);
+    if (buffer) paint(buffer);
+    return;
+  }
+  if (waveCache.has(key)) { paint(waveCache.get(key)); return; }
+  const rate = 22050;
+  const seconds = Math.min(1.2, (lane.target === "midi" ? 0.35 : lane.decay) + 0.12);
+  const off = new OfflineAudioContext(1, Math.ceil(rate * seconds), rate);
+  voice(off, off.destination, lane, 0, 110, 0, 0.25);
+  off.startRendering().then((buffer) => {
+    waveCache.set(key, buffer);
+    if (canvas.isConnected) paint(buffer);
+  });
+}
+
+function segmented(label, options, value, onPick) {
+  const group = h("div", { class: "segmented", role: "radiogroup", "aria-label": label },
+    options.map(([v, text]) => h("button", {
+      role: "radio", "aria-checked": v === value, tabindex: v === value ? 0 : -1,
+      onclick: () => onPick(v),
+      onkeydown: (e) => {
+        const dir = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+        if (!dir) return;
+        e.preventDefault();
+        const i = options.findIndex(([x]) => x === value);
+        onPick(options[(i + dir + options.length) % options.length][0]);
+      },
+    }, text)));
+  return h("div", { class: "field" }, h("span", { class: "label" }, label), group);
+}
+function stepper(label, text, onMinus, onPlus) {
+  return h("div", { class: "field" }, h("span", { class: "label" }, label),
+    h("div", { class: "stepper" },
+      h("button", { "aria-label": `Decrease ${label.toLowerCase()}`, onclick: onMinus }, "−"),
+      h("output", { "aria-live": "polite" }, text),
+      h("button", { "aria-label": `Increase ${label.toLowerCase()}`, onclick: onPlus }, "+")));
+}
+
+function renderInspector() {
+  const lane = selectedLane();
+  if (!lane) {
+    inspectorEl.replaceChildren(h("p", { class: "caption" }, "Drop audio files on the rack to add your first lane."));
+    return;
+  }
+  inspectorEl.style.cssText = laneStyle(lane);
+  const edit = (fn, rerender = "inspector") => {
+    pushUndo();
+    fn();
+    if (rerender === "all") renderAll();
+    else { renderInspector(); if (rerender === "rack") renderRack(); }
+  };
+  const nameInput = h("input", { name: "lane-name", value: lane.name, "aria-label": "Lane name", maxlength: 40 });
+  nameInput.addEventListener("change", () => edit(() => { lane.name = nameInput.value.trim() || lane.name; }, "all"));
+  nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") nameInput.blur(); });
+
+  const parts = [h("div", { class: "lane-title" }, h("span", { class: "chip" }), nameInput)];
+  parts.push(segmented("Plays", [["sample", "Sample"], ["midi", "MIDI out"]], lane.target, (v) => edit(() => {
+    lane.target = v;
+    if (v === "sample" && lane.voice === "synth") lane.voice = "kick";
+  }, "all")));
+
+  if (lane.target === "sample") {
+    const canvas = h("canvas", { class: "wave", role: "img", "aria-label": `Waveform of ${lane.name}` });
+    const source = lane.voice === "sample" ? lane.file : `Built-in ${lane.voice === "ohat" ? "open hat" : lane.voice === "hat" ? "closed hat" : lane.voice} sound`;
+    parts.push(h("div", { class: "field" }, canvas, h("span", { class: "caption" }, source)));
+    requestAnimationFrame(() => drawWave(canvas, lane));
+  } else {
+    parts.push(stepper("MIDI channel", String(lane.channel),
+      () => edit(() => { lane.channel = clamp(lane.channel - 1, 1, 16); }, "rack"),
+      () => edit(() => { lane.channel = clamp(lane.channel + 1, 1, 16); }, "rack")));
+    parts.push(stepper("Note", noteName(lane.note),
+      () => edit(() => { lane.note = clamp(lane.note - 1, 0, 127); }),
+      () => edit(() => { lane.note = clamp(lane.note + 1, 0, 127); })));
+    parts.push(h("p", { class: "caption" }, `In the plugin, this lane sends MIDI on channel ${lane.channel}, and your host routes it to an instrument. The prototype plays a simple synth instead.`));
+  }
+
+  const out = () => { if (ctx) laneOut(lane); };
+  const knobs = [
+    knob({ label: "Volume", min: 0, max: 1, step: 0.01, def: 0.8, value: lane.vol, fmt: (v) => v <= 0 ? "−∞ dB" : `${(20 * Math.log10(volumeGain(v))).toFixed(1)} dB`, onChange: (v) => { lane.vol = v; out(); } }),
+    knob({ label: "Pan", min: -1, max: 1, step: 0.02, def: 0, value: lane.pan, bipolar: true, fmt: (v) => Math.abs(v) < 0.01 ? "Centre" : `${Math.round(Math.abs(v) * 100)} ${v < 0 ? "L" : "R"}`, onChange: (v) => { lane.pan = v; out(); } }),
+    knob({ label: "Swing", min: 0, max: 1, step: 0.01, def: 1, value: lane.swing, fmt: (v) => `${Math.round(v * 100)}%`, onChange: (v) => { lane.swing = v; } }),
+    knob({ label: "Pitch", min: -24, max: 24, step: 1, def: 0, value: lane.pitch, bipolar: true, fmt: (v) => (v > 0 ? "+" : "") + v + " st", onChange: (v) => { lane.pitch = v; } }),
+    knob({ label: lane.voice === "sample" ? "Length" : "Decay", min: 0.03, max: 2, step: 0.01, def: 0.4, value: lane.decay, fmt: (v) => v < 1 ? `${Math.round(v * 1000)} ms` : `${v.toFixed(2)} s`, onChange: (v) => { lane.decay = v; } }),
+  ];
+  parts.push(h("div", { class: "knobs" }, knobs));
+
+  const len = lengthOf(lane);
+  const setLength = (n) => edit(() => { pattern().lengths[lane.id] = clamp(n, 1, MAX_STEPS); }, "all");
+  parts.push(stepper("Steps in this pattern", `${len} steps`, () => setLength(len - 1), () => setLength(len + 1)));
+
+  if (lane.target === "sample") {
+    parts.push(segmented("Choke group", [[0, "None"], [1, "1"], [2, "2"], [3, "3"]], lane.choke, (v) => edit(() => { lane.choke = v; })));
+  }
+  parts.push(h("div", { class: "field" }, h("span", { class: "label" }, "Colour"),
+    h("div", { class: "swatches", role: "radiogroup", "aria-label": "Lane colour" },
+      COLOR_ORDER.map((name) => h("button", {
+        class: "swatch", role: "radio", "aria-checked": lane.color === name, "aria-label": name, style: `--c:${COLORS[name]}`,
+        onclick: () => edit(() => { lane.color = name; }, "all"),
+      })))));
+  inspectorEl.replaceChildren(...parts);
+}
+
+// ---------- Lanes, patterns and tools ----------
+
+function selectLane(id) {
+  if (state.selected === id) return;
+  state.selected = id;
+  for (const row of rackEl.querySelectorAll(".row")) row.classList.toggle("selected", row.dataset.lane === id);
+  renderInspector();
+  renderEditor();
+}
+
+function laneTool(lane, fn) {
+  pushUndo();
+  const steps = stepsOf(lane);
+  const len = lengthOf(lane);
+  fn(steps, len);
+  renderRack();
+  renderEditor();
+}
+function laneMenu(lane, x, y) {
+  const fill = (every) => () => laneTool(lane, (steps, len) => { for (let i = 0; i < len; i++) steps[i].on = i % every === 0; });
+  const rotate = (dir) => () => laneTool(lane, (steps, len) => {
+    const part = steps.slice(0, len);
+    const moved = dir > 0 ? [part[len - 1], ...part.slice(0, len - 1)] : [...part.slice(1), part[0]];
+    moved.forEach((s, i) => { steps[i] = s; });
+  });
+  showMenu(x, y, [
+    { label: "Hear it", action: () => audition(lane) },
+    "-",
+    { label: "Fill every 2 steps", action: fill(2) },
+    { label: "Fill every 4 steps", action: fill(4) },
+    { label: "Fill every 8 steps", action: fill(8) },
+    { label: "Rotate left", action: rotate(-1) },
+    { label: "Rotate right", action: rotate(1) },
+    { label: "Invert", action: () => laneTool(lane, (steps, len) => { for (let i = 0; i < len; i++) steps[i].on = !steps[i].on; }) },
+    { label: "Clear lane", action: () => laneTool(lane, (steps) => { steps.forEach((s, i) => { steps[i] = newStep(); }); }) },
+    "-",
+    { label: "Delete lane", danger: true, action: () => deleteLane(lane) },
+  ]);
+}
+function deleteLane(lane) {
+  pushUndo();
+  const index = state.lanes.indexOf(lane);
+  state.lanes.splice(index, 1);
+  const node = laneNodes.get(lane.id);
+  if (node) { node.gain.disconnect(); laneNodes.delete(lane.id); }
+  if (state.selected === lane.id) state.selected = state.lanes[Math.min(index, state.lanes.length - 1)]?.id ?? null;
+  renderAll();
+  flash(`Deleted ${lane.name}. Press Ctrl+Z to bring it back.`);
+}
+
+function patternMenu() {
+  const r = $("patternBtn").getBoundingClientRect();
+  const choose = (i) => () => {
+    if (state.playing) {
+      state.queued = i === state.current ? null : i;
+      renderTop();
+    } else {
+      state.current = i;
+      renderAll();
+    }
+  };
+  const addPattern = (copyFrom) => () => {
+    pushUndo();
+    const pat = makePattern(copyFrom ? `${copyFrom.name} copy` : `Pattern ${state.patterns.length + 1}`);
+    for (const lane of state.lanes) {
+      ensureLane(pat, lane);
+      if (copyFrom) {
+        pat.steps[lane.id] = copyFrom.steps[lane.id].map((s) => ({ ...s }));
+        pat.lengths[lane.id] = copyFrom.lengths[lane.id];
+      }
+    }
+    state.patterns.push(pat);
+    choose(state.patterns.length - 1)();
+  };
+  showMenu(r.left, r.bottom + 6, [
+    ...state.patterns.map((p, i) => ({ label: p.name, checked: i === state.current, action: choose(i) })),
+    "-",
+    { label: "New pattern", action: addPattern(null) },
+    { label: "Clone pattern", action: addPattern(pattern()) },
+    { label: "Clear pattern", action: () => {
+      pushUndo();
+      for (const lane of state.lanes) pattern().steps[lane.id] = Array.from({ length: MAX_STEPS }, newStep);
+      renderAll();
+    } },
+  ]);
+}
+
+let openMenu = null;
+function closeMenu() {
+  if (!openMenu) return;
+  openMenu.el.remove();
+  openMenu.returnFocus?.focus();
+  openMenu = null;
+}
+function showMenu(x, y, items) {
+  closeMenu();
+  const returnFocus = document.activeElement;
+  const el = h("div", { class: "menu", role: "menu" }, items.map((item) => item === "-"
+    ? h("hr", {})
+    : h("button", {
+      role: item.checked !== undefined ? "menuitemradio" : "menuitem",
+      "aria-checked": item.checked, class: item.danger ? "danger" : null,
+      onclick: () => { closeMenu(); item.action(); },
+    }, item.label)));
+  document.body.append(el);
+  const r = el.getBoundingClientRect();
+  el.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
+  el.style.top = `${Math.min(y, innerHeight - r.height - 8)}px`;
+  el.addEventListener("keydown", (e) => {
+    const buttons = [...el.querySelectorAll("button")];
+    const i = buttons.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") { e.preventDefault(); buttons[(i + 1) % buttons.length].focus(); }
+    if (e.key === "ArrowUp") { e.preventDefault(); buttons[(i - 1 + buttons.length) % buttons.length].focus(); }
+    if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
+  });
+  openMenu = { el, returnFocus };
+  el.querySelector("button").focus();
+}
+
+async function addFiles(files) {
+  ensureAudio();
+  const audio = [...files].filter((f) => f.type.startsWith("audio/") || /\.(wav|aiff?|flac|mp3|ogg)$/i.test(f.name));
+  if (!audio.length) { flash("Those files aren't audio. Drop WAV, AIFF, FLAC or MP3 files."); return; }
+  pushUndo();
+  let added = 0;
+  for (const file of audio) {
+    if (state.lanes.length >= MAX_LANES) { flash(`A rack holds up to ${MAX_LANES} lanes.`); break; }
+    try {
+      const buffer = await ctx.decodeAudioData(await file.arrayBuffer());
+      const lane = makeLane({
+        name: file.name.replace(/\.[^.]+$/, ""), file: file.name, voice: "sample",
+        color: COLOR_ORDER[state.lanes.length % COLOR_ORDER.length], decay: Math.min(2, Math.max(0.03, buffer.duration)),
+      });
+      buffers.set(lane.id, buffer);
+      state.lanes.push(lane);
+      for (const pat of state.patterns) ensureLane(pat, lane);
+      state.selected = lane.id;
+      added++;
+    } catch (e) {
+      flash(`Couldn't read ${file.name}. Use a WAV, AIFF, FLAC or MP3 file.`);
+    }
+  }
+  if (added) {
+    renderAll();
+    flash(added === 1 ? "Added 1 sample lane." : `Added ${added} sample lanes.`);
+  }
+}
+
+// ---------- Hint bar ----------
+
+let flashUntil = 0;
+function setHint(text) {
+  if (Date.now() < flashUntil) return;
+  $("hintText").textContent = text;
+}
+function flash(text) {
+  flashUntil = Date.now() + 4000;
+  $("hintText").textContent = text;
+}
+document.addEventListener("pointerover", (e) => {
+  const target = e.target.closest("[data-hint]");
+  setHint(target ? target.dataset.hint : HINTS.default);
+});
+
+// ---------- Rack input ----------
+
+let gesture = null;
+function applyPaint(lane, i, on) {
+  const st = stepsOf(lane)[i];
+  if (st.on === on) return;
+  st.on = on;
+  refreshCell(lane, i);
+}
+rackEl.addEventListener("pointerdown", (e) => {
+  const cell = e.target.closest(".cell");
+  if (!cell || cell.classList.contains("beyond")) return;
+  e.preventDefault();
+  cell.focus();
+  const lane = laneById(cell.dataset.lane);
+  const i = +cell.dataset.step;
+  setFocus(lane.id, i);
+  selectLane(lane.id);
+  const st = stepsOf(lane)[i];
+  pushUndo();
+  if (e.altKey) {
+    st.on = true;
+    st.prob = PROB_CYCLE[(PROB_CYCLE.indexOf(st.prob) + 1) % PROB_CYCLE.length];
+    refreshCell(lane, i);
+    renderEditor();
+    flash(`Step ${i + 1} plays ${st.prob}% of the time.`);
+    return;
+  }
+  if (e.shiftKey) {
+    st.on = true;
+    gesture = { mode: "velocity", lane, i, y: e.clientY, start: st.vel };
+  } else {
+    gesture = { mode: "paint", lane, value: e.button === 2 ? false : !st.on, last: i };
+    applyPaint(lane, i, gesture.value);
+  }
+  refreshCell(lane, i);
+  rackEl.setPointerCapture(e.pointerId);
+});
+rackEl.addEventListener("pointermove", (e) => {
+  if (!gesture) return;
+  if (gesture.mode === "velocity") {
+    const st = stepsOf(gesture.lane)[gesture.i];
+    st.vel = Math.round(clamp(gesture.start + (gesture.y - e.clientY) * 1.2, 1, 127));
+    refreshCell(gesture.lane, gesture.i);
+    setHint(`Velocity ${st.vel}`);
+    return;
+  }
+  const cell = document.elementFromPoint(e.clientX, e.clientY)?.closest(".cell");
+  if (!cell || cell.dataset.lane !== gesture.lane.id || cell.classList.contains("beyond")) return;
+  const i = +cell.dataset.step;
+  const [a, b] = i < gesture.last ? [i, gesture.last] : [gesture.last, i];
+  for (let k = a; k <= b; k++) applyPaint(gesture.lane, k, gesture.value);
+  gesture.last = i;
+});
+const endGesture = () => {
+  if (!gesture) return;
+  gesture = null;
+  renderEditor();
+};
+rackEl.addEventListener("pointerup", endGesture);
+rackEl.addEventListener("pointercancel", endGesture);
+rackEl.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  const name = e.target.closest(".name");
+  if (name) {
+    const lane = laneById(name.closest(".row").dataset.lane);
+    selectLane(lane.id);
+    laneMenu(lane, e.clientX, e.clientY);
+  }
+});
+rackEl.addEventListener("click", (e) => {
+  const row = e.target.closest(".row");
+  if (!row) return;
+  const lane = laneById(row.dataset.lane);
+  if (e.target.closest(".name")) {
+    selectLane(lane.id);
+    if (e.altKey) audition(lane);
+  } else if (e.target.closest(".ms")) {
+    pushUndo();
+    const key = e.target.classList.contains("m") ? "mute" : "solo";
+    lane[key] = !lane[key];
+    renderRack();
+  }
+});
+rackEl.addEventListener("dblclick", (e) => {
+  const name = e.target.closest(".name");
+  if (name) audition(laneById(name.closest(".row").dataset.lane));
+});
+
+function setFocus(laneId, step) {
+  const old = cells[focus.lane]?.[focus.step];
+  if (old) old.tabIndex = -1;
+  focus = { lane: laneId, step };
+  const cell = cells[laneId]?.[step];
+  if (cell) cell.tabIndex = 0;
+  return cell;
+}
+rackEl.addEventListener("keydown", (e) => {
+  const cell = e.target.closest(".cell");
+  if (!cell) return;
+  const lane = laneById(cell.dataset.lane);
+  const i = +cell.dataset.step;
+  const len = lengthOf(lane);
+  const li = state.lanes.indexOf(lane);
+  const st = stepsOf(lane)[i];
+  let target = null;
+  if (e.key === "Enter") {
+    e.preventDefault();
+    pushUndo();
+    st.on = !st.on;
+    refreshCell(lane, i);
+    renderEditor();
+  } else if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    e.preventDefault();
+    pushUndo();
+    st.on = true;
+    st.vel = clamp(st.vel + (e.key === "ArrowUp" ? 8 : -8), 1, 127);
+    refreshCell(lane, i);
+    renderEditor();
+    flash(`Velocity ${st.vel}`);
+  } else if (e.key === "ArrowRight") target = [lane, (i + 1) % len];
+  else if (e.key === "ArrowLeft") target = [lane, (i - 1 + len) % len];
+  else if (e.key === "ArrowDown" && li < state.lanes.length - 1) target = [state.lanes[li + 1], i];
+  else if (e.key === "ArrowUp" && li > 0) target = [state.lanes[li - 1], i];
+  if (target) {
+    e.preventDefault();
+    const [toLane, step] = target;
+    const next = setFocus(toLane.id, Math.min(step, lengthOf(toLane) - 1));
+    selectLane(toLane.id);
+    next?.focus();
+  }
+});
+
+// ---------- Global controls ----------
+
+$("play").addEventListener("click", () => (state.playing ? stop() : start()));
+$("patternBtn").addEventListener("click", patternMenu);
+$("bpm").addEventListener("change", (e) => {
+  state.bpm = clamp(Math.round(+e.target.value || 96), 40, 240);
+  e.target.value = state.bpm;
+});
+$("seed").addEventListener("click", () => {
+  state.seed = randKey();
+  renderTop();
+  flash("New seed. Steps under 100% probability now play a different way.");
+});
+$("addFiles").addEventListener("click", () => $("fileInput").click());
+$("fileInput").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
+$("panic").addEventListener("click", () => { panic(); flash("Stopped every sound."); });
+$("swingSlot").replaceWith(knob({
+  label: "Swing", small: true, min: 0, max: 1, step: 0.01, def: 0, value: state.swing, color: "var(--chaff)",
+  fmt: (v) => `${Math.round(v * 100)}%`, onChange: (v) => { state.swing = v; },
+}));
+
+document.addEventListener("keydown", (e) => {
+  const typing = e.target.closest("input, textarea");
+  if (e.key === " " && !typing && !e.target.closest(".menu")) {
+    e.preventDefault();
+    state.playing ? stop() : start();
+  } else if ((e.ctrlKey || e.metaKey) && !typing && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    e.shiftKey ? restore(redoStack, undoStack) : restore(undoStack, redoStack);
+  } else if ((e.ctrlKey || e.metaKey) && !typing && e.key.toLowerCase() === "y") {
+    e.preventDefault();
+    restore(redoStack, undoStack);
+  }
+});
+document.addEventListener("pointerdown", (e) => {
+  if (openMenu && !openMenu.el.contains(e.target)) closeMenu();
+});
+
+const pluginEl = $("plugin");
+let dragDepth = 0;
+pluginEl.addEventListener("dragenter", (e) => { if (e.dataTransfer.types.includes("Files")) { dragDepth++; pluginEl.classList.add("dragging"); } });
+pluginEl.addEventListener("dragleave", () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) pluginEl.classList.remove("dragging"); });
+pluginEl.addEventListener("dragover", (e) => e.preventDefault());
+pluginEl.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  pluginEl.classList.remove("dragging");
+  if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+});
+
+seedDemo();
+renderAll();
+setHint(HINTS.default);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
