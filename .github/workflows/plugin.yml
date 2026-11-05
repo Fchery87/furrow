@@ -4,8 +4,9 @@
 #   compiler has them.
 # - Golden traces: regenerates the traces from SeqCore and fails if they differ from the committed
 #   ones, so a SeqCore change cannot leave the engine testing against old behaviour.
-# - Plugin: builds the plugin, runs pluginval, Steinberg's VST3 validator and clap-validator on it,
-#   and uploads the built plugin so it can be tried in hosts this repository cannot run.
+# - Plugin: builds the plugin, runs its processor tests, pluginval, Steinberg's VST3 validator and
+#   clap-validator on it, and uploads the built plugin so it can be tried in hosts this repository
+#   cannot run.
 #
 # Downloaded tools are pinned to a version and checked against their SHA-256, and actions are
 # pinned to a commit.
@@ -164,10 +165,13 @@ jobs:
             libxrandr-dev libxrender-dev libxi-dev xvfb
 
       - name: Configure
-        run: cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release -DFURROW_BUILD_TESTS=OFF ${{ matrix.cmake_args }}
+        run: cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
 
       - name: Build
         run: cmake --build build --config Release --parallel
+
+      - name: Processor tests
+        run: ${{ matrix.run_prefix }} ctest --test-dir build -C Release --output-on-failure -R furrow_plugin_tests
 
       - name: Get the validators
         run: |
@@ -209,7 +213,10 @@ jobs:
       - name: clap-validator
         run: |
           validator=$(find "$TOOLS/clap-validator" -type f \( -name clap-validator -o -name clap-validator.exe \) | head -n 1)
-          "$validator" validate "$ARTEFACTS/CLAP/Furrow Spike.clap"
+          # param-conversions divides by the parameter count, and the plugin has no parameters
+          # until the interface adds them, so clap-validator 0.4.1 crashes there ("a bug in the
+          # validator"). Drop this exclusion once the plugin has parameters.
+          "$validator" validate --exclude '^param-conversions$' "$ARTEFACTS/CLAP/Furrow Spike.clap"
 
       - name: Package
         # A tarball keeps the macOS bundle's symlinks and the executable bits that a plain

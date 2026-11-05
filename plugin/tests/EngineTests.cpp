@@ -1,16 +1,14 @@
 #include "furrow/Engine.h"
 #include "furrow/StateBytes.h"
+#include "support/AllocationCounter.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <bit>
 #include <cstdint>
-#include <cstdlib>
 #include <limits>
-#include <new>
 #include <vector>
 
 // Engine behaviour the golden traces cannot reach: the hash's published vectors, byte
@@ -18,40 +16,6 @@
 // only in the plugin, and the real-time rule that playback never allocates.
 
 using namespace furrow;
-
-// Counts heap allocations made while `counting` is set on this thread.
-namespace
-{
-std::atomic<long> allocations { 0 };
-thread_local bool counting = false;
-} // namespace
-
-// The whole scalar family is replaced, so memory from one replaced form is never released by a
-// form left to the runtime. The array forms call these.
-void* operator new (std::size_t size)
-{
-    if (counting)
-        ++allocations;
-    if (void* p = std::malloc (size == 0 ? 1 : size))
-        return p;
-    throw std::bad_alloc();
-}
-
-void* operator new (std::size_t size, const std::nothrow_t&) noexcept
-{
-    if (counting)
-        ++allocations;
-    return std::malloc (size == 0 ? 1 : size);
-}
-
-void* operator new[] (std::size_t size) { return operator new (size); }
-void* operator new[] (std::size_t size, const std::nothrow_t& tag) noexcept { return operator new (size, tag); }
-void operator delete (void* p) noexcept { std::free (p); }
-void operator delete (void* p, std::size_t) noexcept { std::free (p); }
-void operator delete (void* p, const std::nothrow_t&) noexcept { std::free (p); }
-void operator delete[] (void* p) noexcept { std::free (p); }
-void operator delete[] (void* p, std::size_t) noexcept { std::free (p); }
-void operator delete[] (void* p, const std::nothrow_t&) noexcept { std::free (p); }
 
 namespace
 {
@@ -355,26 +319,26 @@ TEST_CASE ("Playback, edits, audition and panic never allocate")
         ++sent;
     };
 
-    allocations = 0;
-    counting = true;
     double beat = 0.0;
-    for (int block = 0; block < 4000; ++block)
     {
-        const int frames = 1 + (block * 37) % 1024;
-        if (block == 100)
-            engine.apply (edits, emit);
-        if (block == 900)
-            engine.apply (undo, emit);
-        if (block == 2000)
-            engine.panic (emit);
-        const bool playing = block < 3000;
-        engine.process ({ playing, beat, 133.0, 44100, frames }, emit);
-        if (playing)
-            beat += 133.0 / 60.0 * frames / 44100;
-        if (block == 3100)
-            engine.audition (3, 100, emit);
+        test::CountAllocations count;
+        for (int block = 0; block < 4000; ++block)
+        {
+            const int frames = 1 + (block * 37) % 1024;
+            if (block == 100)
+                engine.apply (edits, emit);
+            if (block == 900)
+                engine.apply (undo, emit);
+            if (block == 2000)
+                engine.panic (emit);
+            const bool playing = block < 3000;
+            engine.process ({ playing, beat, 133.0, 44100, frames }, emit);
+            if (playing)
+                beat += 133.0 / 60.0 * frames / 44100;
+            if (block == 3100)
+                engine.audition (3, 100, emit);
+        }
     }
-    counting = false;
-    CHECK (allocations == 0);
+    CHECK (test::allocations == 0);
     CHECK (sent > 1000);
 }

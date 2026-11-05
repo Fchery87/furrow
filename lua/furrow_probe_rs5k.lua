@@ -103,15 +103,16 @@ local function measure(seconds)
 end
 
 -- A voice still sounding from an earlier note adds to the next measurement at an unknown phase.
-local function play(velocity)
+local function play(velocity, note)
+  note = note or NOTE
   local before = measure(0.1)
   if before.left > SILENCE or before.right > SILENCE then
     fail("silent before the note-on", string.format("left %.6f, right %.6f", before.left, before.right))
   end
-  send(0x90, NOTE, velocity)
+  send(0x90, note, velocity)
   wait(0.1)
   local held = measure(0.4)
-  send(0x80, NOTE, 0)
+  send(0x80, note, 0)
   wait(0.1)
   held.after_off = measure(0.25)
   wait(0.3)
@@ -181,6 +182,28 @@ local function link(track, fx, param, cc, active)
     back[#back + 1] = "offset " .. set_config(track, fx, prefix .. "offset", 0)
   end
   return table.concat(back, ", ")
+end
+
+-- The normalized value of the minimum-velocity gain that formats as target dB or louder, as
+-- lua/furrow/host.lua searches for it.
+local function min_gain_position(track, fx, param, target)
+  local function db_at(normalized)
+    local _, text = reaper.TrackFX_FormatParamValueNormalized(track, fx, param, normalized, "")
+    if text:lower():find("inf", 1, true) then
+      return -math.huge
+    end
+    return tonumber(text:match("[-+]?%d+%.?%d*")) or -math.huge
+  end
+  local lo, hi = 0, 0.5
+  for _ = 1, 30 do
+    local mid = (lo + hi) / 2
+    if db_at(mid) < target then
+      lo = mid
+    else
+      hi = mid
+    end
+  end
+  return hi
 end
 
 local function learn(track, fx, param, cc, active)
@@ -312,6 +335,28 @@ local function main()
   controller_cases("learned", track, fx, volume, pan, baseline)
   learn(track, fx, volume, 7, false)
   learn(track, fx, pan, 10, false)
+
+  -- The curves the plugin's sampler copies, with RS5K set up as Furrow sets it up.
+  log("== curves with Furrow's settings")
+  reaper.TrackFX_SetParamNormalized(track, fx, min_gain, min_gain_position(track, fx, min_gain, -30))
+  local _, floor_text = reaper.TrackFX_GetFormattedParamValue(track, fx, min_gain, "")
+  result("Gain for minimum velocity", floor_text)
+  for _, velocity in ipairs({ 1, 2, 16, 32, 64, 96, 126, 127 }) do
+    result("-30 dB floor, velocity " .. velocity .. ", level change dB", db(play(velocity).left / baseline.left))
+  end
+  reaper.TrackFX_SetParamNormalized(track, fx, min_gain, 0.5)
+  link(track, fx, pan, 10, true)
+  for _, cc in ipairs({ 0, 1, 16, 32, 48, 63, 64, 65, 80, 96, 112, 126, 127 }) do
+    send(0xB0, 10, cc)
+    local panned = play(127)
+    result("linked CC 10 = " .. cc .. ", left and right dB", string.format("%.4f %.4f", db(panned.left / baseline.left), db(panned.right / baseline.left)))
+  end
+  link(track, fx, pan, 10, false)
+  reaper.TrackFX_SetParamNormalized(track, fx, pan, 0.5)
+  reset_controllers()
+  for _, note in ipairs({ 36, 48, 59, 61, 72, 84 }) do
+    result("note " .. note .. ", pitch change semitones", 12 * math.log(play(127, note).hz / baseline.hz, 2))
+  end
 end
 
 local function output_path()

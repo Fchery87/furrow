@@ -2,7 +2,7 @@
 
 The VST3 and CLAP edition of Furrow. The REAPER edition lives in the repository root and stays supported.
 
-It is in development. The sequencer engine is done: it plays SeqCore's V1 rules and matches the REAPER edition event for event. The plugin has no interface or sampler yet. A new instance plays a fixed four-lane pattern as MIDI out and as simple tones, and saves the rack with the host project.
+It is in development. The sequencer engine plays SeqCore's V1 rules and matches the REAPER edition event for event. The sampler plays sample lanes inside the plugin with the REAPER edition's RS5K curves, on up to 16 stereo outputs, and MIDI lanes go out on their own channels. The plugin has no interface yet. A new instance plays a fixed four-lane pattern on a built-in drum kit, and saves the rack and its sample references with the host project.
 
 - [Plugin spec and plan](docs/plugin-spec.md) covers scope, architecture, licence, the build order and the engine's deliberate differences from SeqCore.
 - [UI prototype](ui/prototype/index.html) is a clickable design prototype. Open the file in a Chromium-based browser or Firefox. It needs no build step, and it plays sound through the browser, so click Play or press Space. Its sounds are stand-ins, and its code will not ship in the plugin.
@@ -12,8 +12,9 @@ It is in development. The sequencer engine is done: it plays SeqCore's V1 rules 
 | Folder | Holds |
 | --- | --- |
 | `engine/` | The sequencer engine: header-only C++20 with no JUCE or platform code |
+| `sampler/` | The sampler, the built-in kit and the plugin's state format, also with no JUCE code |
 | `src/` | The JUCE plugin around the engine |
-| `tests/` | Engine tests, and `golden/`, the SeqCore traces they replay |
+| `tests/` | Engine and sampler tests, `golden/` with the SeqCore traces they replay, and `plugin/` with tests that drive the built plugin |
 
 ## Build and test
 
@@ -27,11 +28,12 @@ cmake --build plugin/build-tests
 plugin/build-tests/furrow_engine_tests
 ```
 
-The plugin, as VST3 and CLAP:
+The plugin, as VST3 and CLAP, with its processor tests:
 
 ```sh
 cmake -S plugin -B plugin/build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build plugin/build
+plugin/build/furrow_plugin_tests
 ```
 
 The bundles land in `plugin/build/FurrowSpike_artefacts/Release/`.
@@ -42,7 +44,7 @@ The bundles land in `plugin/build/FurrowSpike_artefacts/Release/`.
 
 - the engine tests on Linux (GCC and Clang), macOS and Windows, with address and undefined-behaviour sanitizers except on Windows;
 - a check that the golden traces still match SeqCore;
-- a release build of the plugin on each platform, checked with pluginval at strictness 10, Steinberg's VST3 validator and clap-validator.
+- a release build of the plugin on each platform, checked with its processor tests, pluginval at strictness 10, Steinberg's VST3 validator and clap-validator.
 
 To try a build in a host, open the run on the repository's Actions tab and download `furrow-spike-Windows`, `furrow-spike-macOS` or `furrow-spike-Linux` from its Artifacts list. Each holds a `VST3` and a `CLAP` folder. Copy the plugin into the host's plugin folder, for example `C:\Program Files\Common Files\VST3` on Windows or `~/Library/Audio/Plug-Ins/VST3` on macOS. The builds are not signed yet, so macOS blocks them until you clear the download flag:
 

@@ -78,6 +78,8 @@ TEST_CASE ("The engine replays every SeqCore golden trace exactly")
     int mismatches = 0;
     int blocks = 0;
     int events = 0;
+    int blockFrames = 0;
+    int disordered = 0;
 
     auto toPending = [&] (const MidiEvent& e) { pending.push_back (wireOf (e)); };
     auto toGot = [&] (const MidiEvent& e) { got.push_back (wireOf (e)); };
@@ -88,6 +90,15 @@ TEST_CASE ("The engine replays every SeqCore golden trace exactly")
         inBlock = false;
         ++blocks;
         events += static_cast<int> (want.size());
+        // The plugin renders samples up to each event as the engine emits it, so a block's events
+        // must come in time order and inside the block.
+        for (std::size_t i = 0; i < got.size(); ++i)
+        {
+            const int offset = std::get<0> (got[i]);
+            const bool inside = offset >= 0 && (offset < blockFrames || offset == 0);
+            if ((! inside || (i > 0 && offset < std::get<0> (got[i - 1]))) && ++disordered <= 3)
+                FAIL_CHECK ("block at line " << blockLine << " sent an event out of order or outside the block\n" << show (got));
+        }
         bool same = got == want;
         if (same && expected.seen)
         {
@@ -187,6 +198,7 @@ TEST_CASE ("The engine replays every SeqCore golden trace exactly")
             pending.clear();
             want.clear();
             engine.process (BlockInfo { playing != 0, beat, tempo, sampleRate, frames }, toGot);
+            blockFrames = frames;
             inBlock = true;
             blockLine = lineNo;
         }

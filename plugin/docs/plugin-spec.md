@@ -130,8 +130,8 @@ Each MIDI lane sends on its own MIDI channel from the plugin's single MIDI outpu
 
 | Data | Saved where | How |
 | --- | --- | --- |
-| Lanes, patterns, steps, settings | Host plugin state | The tag `FRWS`, a container version, the Tones switch, then SeqCore's state format 1: sparse records, each word a 32-bit little-endian float. That payload is byte for byte what the REAPER edition saves. |
-| Sample references | Host plugin state | Absolute path, path relative to the project when the host provides one, and a content hash so a moved file can be found again |
+| Lanes, patterns, steps, settings | Host plugin state | The tag `FRWS`, the container version 2, the engine state's length, the engine state, then the lane setups. The engine state is SeqCore's state format 1: sparse records, each word a 32-bit little-endian float, byte for byte what the REAPER edition saves. Version 1 states from the development builds still load, as MIDI lanes. See `furrow/PluginState.h`. |
+| Lane setups and sample references | Host plugin state, after the engine state | Per lane: its slot and id, target, MIDI channel, output, start, end, tune, attack, decay, release, choke group, and its sample: none, a built-in sound, or a file's absolute path and SHA-256 so a moved file can be found again. A path relative to the project waits until a host provides one. See `furrow/sampler/LaneSetup.h`. |
 | Kits | `.furrowkit` files | Lane settings and sample references, chosen by the user |
 | Exported patterns | `.mid` files | Standard MIDI file, type 1, one track per lane |
 
@@ -168,8 +168,9 @@ The interface has to make the grid the first thing a person reads and the fastes
 
 - **Engine unit tests** for each rule: swing, shift, ratchets, gate, probability, pattern switch, seek, loop wrap and lane length.
 - **Golden tests against the REAPER edition.** `plugin/tests/golden/make_golden.py` runs SeqCore in ysfx through scenarios covering every V1 rule and records each block's transport input, every MIDI event, every transaction result, the playheads and the final saved words. The engine replays the same input and must match exactly: same events, same samples, same saved words. The probability hash test vectors, the 27 fresh REAPER 7.82 captures and `probes/expected/constant-120.txt` are checked too. When SeqCore changes, regenerate the traces; the tests then fail until the engine agrees. CI regenerates the traces on every change and fails if they differ from the committed ones, so a SeqCore change cannot go untested.
-- **Mutation checks.** A deliberate bug in each rule (swing, shift, ratchets, truncation, release order, pattern-switch boundary, seek and ramp detection, controller rest, probability step rounding, audition length, save order, load checks) must make a test fail. Milestone 2 ran 17 such mutations.
-- **Real-time safety.** A test build fails if the audio callback allocates memory. Address and undefined-behaviour sanitizer builds run in CI.
+- **Mutation checks.** A deliberate bug in each rule (swing, shift, ratchets, truncation, release order, pattern-switch boundary, seek and ramp detection, controller rest, probability step rounding, audition length, save order, load checks) must make a test fail. Milestone 2 ran 17 such mutations on the engine, and milestone 3 ran 20 on the sampler (curves, envelope, choke, voice limit, pitch, interpolation, routing and the sample handover).
+- **Processor tests.** `plugin/tests/plugin/` drives the built plugin as a host does: the default rack's hits on their exact samples, MIDI lanes, file loading and its saved hash, a missing file, per-lane outputs and version 1 states.
+- **Real-time safety.** A test build fails if the audio callback allocates memory, in the engine or the sampler. Address and undefined-behaviour sanitizer builds run in CI.
 - **Host validation.** `pluginval` at its strictest level in CI on Windows, macOS and Linux, plus the Steinberg VST3 validator and `clap-validator`. `.github/workflows/plugin.yml` runs them on every change to the plugin and keeps each platform's build as a downloadable artifact for 30 days.
 - **Host checks.** Recorded evidence per host and platform for transport sync, MIDI out, state save and reload, and MIDI drag and drop. The REAPER bridge in `tools/reaper_bridge/` can drive the REAPER checks.
 
@@ -186,6 +187,24 @@ Milestone 2 ported SeqCore's V1 rules to `plugin/engine/`. The engine matches Se
 - **Threading, for now.** The engine belongs to the audio thread. Until milestone 4 adds a message-thread copy of the rack and a lock-free handover, saving and loading hold JUCE's callback lock, so the audio thread waits for them.
 
 Carried over as SeqCore has it, to revisit with the REAPER edition: a waiting hit or release at a negative beat counts as none, so a pattern whose origin is before beat 0 drops hits there. Origins before beat 0 need a stopped switch with the cursor before the project start.
+
+## Sampler decisions
+
+Milestone 3 added the sampler in `plugin/sampler/`. Like the engine it has no JUCE code. It plays a sample lane from the engine's own messages for that lane, as RS5K plays a REAPER edition lane, so a rack sounds the same in both editions. The curves come from RS5K 7.82 set up as the REAPER edition sets it up, measured in `probes/results/reaper-7.82-linux/rs5k-v3-results.txt`, and the tests check them against those measurements.
+
+- **A lane is a sample lane or a MIDI lane.** A sample lane's messages go to the sampler and none go out as MIDI. A MIDI lane sends its messages on its own channel. A lane with no saved setup is a MIDI lane on channel n mod 16 + 1, which is how version 1 states load.
+- **Velocity.** Level runs in a straight line from -30 dB at velocity 1 to full level at 127. RS5K does this with Gain for minimum velocity at -30 dB, the REAPER edition's setting. Velocity 64 is -5.75 dB.
+- **Volume and pan.** CC 7 sets the lane's gain from silence at 0 to +6.02 dB at 127, so the default lane volume of 5,000, sent as CC 64, is +0.07 dB. CC 10 is a balance control: both sides are at full level in the centre, and moving away lowers only the far side. Both act on the whole lane, so a held voice follows them, as on a MIDI channel.
+- **Pitch.** Each semitone between the note and the lane's own note moves the sample a semitone, plus the lane's tune in cents, plus pitch bend over the lane's bend range. The lane's note plays the sample at its own pitch, so a drum lane keeps its General MIDI note and still plays the sample unpitched. The REAPER edition differs here: RS5K's default mode ignores the note, so its step Pitch lane does nothing on sample lanes (third RS5K run). That is a REAPER edition bug to fix there.
+- **Envelope.** Attack rises in a straight line, decay and release fall to -60 dB, all in milliseconds. The defaults, a 1 ms attack and release with no decay, are RS5K's. As in the REAPER edition, a note-off ends the note, so the step gate sets how long a sample plays. With the default half-step gate, a long sample is cut after half a step.
+- **Voices.** Up to 8 per lane, as RS5K's default Max voices, and 256 in all. A ninth voice on a lane fades the lane's oldest over 5 ms. When all 256 are busy, a new note takes the quietest.
+- **Choke groups.** 16 groups. A hit fades the group's other lanes over 5 ms. A lane's own earlier hit is left to its release, because the engine has already sent it a note-off.
+- **Outputs.** The main stereo output plus 15 more, off until the host turns them on. A lane on an output that is off plays on the main output. A mono output gets the average of left and right.
+- **Interpolation.** A Catmull-Rom cubic between frames, which also converts the sample's rate to the host's. It does not filter before pitching up, so a sample pitched far up can alias.
+- **Samples.** WAV, AIFF and FLAC, read on a background thread, up to ten minutes at 192 kHz, using the first two channels. A file that cannot be read leaves its lane silent and keeps the reference, so saving does not lose it.
+- **Built-in kit.** Kick, snare, closed hat and open hat, synthesised in code from fixed formulas, so a new instance makes sound without shipping sample files or a sample licence. The default rack plays them, with the two hats in choke group 1.
+- **Handover.** Settings and samples reach the audio thread through a bounded lock-free queue. A replaced sample goes back the same way once no voice plays it, and a background thread frees it. The plugin keeps a message-side copy of every lane's setup, which is what it saves; a change the queue cannot take yet waits there and is retried every 50 ms.
+- **Not yet.** Mod A and Mod B have no sampler target. Release velocity is ignored, as RS5K ignores it. Changing a lane's target with a note held comes with the interface, which is the first place it can change.
 
 ## Build plan
 

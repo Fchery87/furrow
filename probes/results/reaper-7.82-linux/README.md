@@ -182,6 +182,14 @@ Each result holds both stopped and playing. With the lua mark, one native undo r
 
 **Readbacks.** Every `plink` and `learn` key read back the value written. MIDI learn failed on both runs. The cause is not known.
 
+**Third run.** `rs5k-v3-results.txt` repeats the second run, which it matches within the pitch reading's noise, and adds the curves the plugin's sampler copies, with RS5K set up as the REAPER edition sets it up. It has 66 results and no failures.
+
+| Case | Result |
+| --- | --- |
+| Velocity with Gain for minimum velocity at -30 dB (it read -30.05) | 1: -30.05 dB, 2: -28.15, 16: -16.67, 32: -11.38, 64: -5.75, 96: -2.36, 126: -0.07, 127: 0.00. Inferred, amplitude runs in a straight line from the floor at velocity 1 to full level at 127 |
+| CC 10 linked to Pan, left and right dB | 1: 0.00 and -36.05. 32: 0.00 and -5.95. 63: 0.00 and -0.07. 64: -0.07 and 0.00. 96: -6.23 and 0.00. 126: -36.05 and 0.00. A balance law: the centre is full level on both sides, and each side falls in a straight line toward its far end |
+| Notes 36, 48, 59, 61, 72 and 84 | Pitch change within 0.02 semitones of none. RS5K's default mode plays the sample at its own pitch for every note, so the REAPER edition's step Pitch lane does not change a sample lane's pitch |
+
 **Pitch bend precision.** The zero-crossing count over 0.4 s resolves about 0.005 semitones, inferred. The -1.98 reading is 0.02 semitones short of -2. The cause is not known, and it does not affect a lane.
 
 **What this means for the spec.**

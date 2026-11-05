@@ -1,0 +1,107 @@
+== RS5K parameters
+RESULT RS5K name = furrow-rs5k-sine-1k (RS5K)
+PARAM 0 Volume = 0.5000 (+0.0)
+PARAM 1 Pan = 0.5000 (0.50)
+PARAM 2 Gain for minimum velocity = 0.5000 (+0.0)
+PARAM 3 Note range start = 0.0000 (0)
+PARAM 4 Note range end = 1.0000 (127)
+PARAM 5 Pitch for start note = 0.0688 (-69)
+PARAM 6 Pitch for end note = 0.8687 (59)
+PARAM 7 MIDI channel = 0.0000 (0)
+PARAM 8 Max voices = 0.1111 (8)
+PARAM 9 Attack = 0.0005 (1.00)
+PARAM 10 Release = 0.0005 (1)
+PARAM 11 Obey note-offs = 0.0000 (0)
+PARAM 12 Loop (requires note-offs) = 0.0000 (0)
+PARAM 13 Sample start offset = 0.0000 (0.000)
+PARAM 14 Sample end offset = 1.0000 (1.000)
+PARAM 15 Pitch adjust = 0.5000 (0.00)
+PARAM 16 Pitchbend range = 0.1667 (2.0)
+PARAM 17 Minimum velocity = 0.0079 (1)
+PARAM 18 Maximum velocity = 1.0000 (127)
+PARAM 19 Probability of hitting = 1.0000 (100)
+PARAM 20 Round-robin mode = 0.0000 (0)
+PARAM 21 Filter played notes = 0.0000 (0)
+PARAM 22 Crossfade loop length = 0.0000 (0.00)
+PARAM 23 Loop start offset = 0.0000 (0.00)
+PARAM 24 Decay = 0.0160 (250)
+PARAM 25 Sustain = 0.5000 (+0.0)
+PARAM 26 Release (note-off) = 0.0003 (1)
+PARAM 27 Use note-off release override = 0.0000 (0)
+PARAM 28 Legacy voice re-use mode = 0.0000 (0)
+PARAM 29 Portamento = 0.0000 (0)
+PARAM 30 Bypass = 0.0000 (normal)
+PARAM 31 Wet = 1.0000 (100)
+PARAM 32 Delta = 0.0000 (normal)
+== note-off, default settings
+RESULT note-off, default settings, level change dB = 0.0023
+RESULT note-off after Obey note-offs is turned on, level = 0.0000
+== Obey note-offs on
+RESULT baseline held level, left = 0.3535
+RESULT baseline held level, right = 0.3535
+RESULT baseline pitch Hz = 1000.7273
+RESULT note-off with Obey note-offs, level change dB = -309.9984
+RESULT velocity 64, level change dB = 0.0009
+RESULT velocity 1, level change dB = 0.0008
+RESULT Gain for minimum velocity, default and lowest = +0.0 and -inf
+RESULT lowest minimum-velocity gain, velocity 64, level change dB = -6.0203
+RESULT lowest minimum-velocity gain, velocity 1, level change dB = -309.9984
+== raw MIDI
+RESULT raw CC 7 = 0, level change dB = 0.0015
+RESULT raw CC 7 = 0, Volume parameter reads = 0.5000
+RESULT raw CC 7 = 127, level change dB = 0.0007
+RESULT raw CC 10 = 0, right minus left dB = 0.0000
+RESULT raw CC 10 = 0, Pan parameter reads = 0.5000
+RESULT raw CC 10 = 127, right minus left dB = 0.0000
+RESULT pitch bend maximum, pitch change semitones = 1.9821
+RESULT pitch bend minimum, pitch change semitones = -2.0146
+== parameter links, CC 7 to Volume and CC 10 to Pan
+RESULT Volume link settings read back = mod.active 1, plink.active 1, effect -100, midi_bus 0, midi_chan 0, midi_msg 176, midi_msg2 7, scale 1, offset 0
+RESULT Pan link settings read back = mod.active 1, plink.active 1, effect -100, midi_bus 0, midi_chan 0, midi_msg 176, midi_msg2 10, scale 1, offset 0
+RESULT linked CC 7 = 0, level change dB = -309.9984
+RESULT linked CC 7 = 0, Volume parameter reads = 0.0000
+RESULT linked CC 7 = 127, level change dB = 6.0206
+RESULT linked CC 10 = 0, right minus left dB = -313.9442
+RESULT linked CC 10 = 0, Pan parameter reads = 0.0000
+RESULT linked CC 10 = 127, right minus left dB = 313.9430
+RESULT Volume parameter after the link is removed = 0.7874
+RESULT Pan parameter after the link is removed = 0.5039
+== MIDI learn, CC 7 to Volume and CC 10 to Pan
+RESULT Volume learn settings read back = midi1 176, midi2 7
+RESULT Pan learn settings read back = midi1 176, midi2 10
+RESULT learned CC 7 = 0, level change dB = 0.0012
+RESULT learned CC 7 = 0, Volume parameter reads = 0.5000
+RESULT learned CC 7 = 127, level change dB = 0.0014
+RESULT learned CC 10 = 0, right minus left dB = 0.0000
+RESULT learned CC 10 = 0, Pan parameter reads = 0.5000
+RESULT learned CC 10 = 127, right minus left dB = 0.0000
+== curves with Furrow's settings
+RESULT Gain for minimum velocity = -30.0
+RESULT -30 dB floor, velocity 1, level change dB = -30.0497
+RESULT -30 dB floor, velocity 2, level change dB = -28.1487
+RESULT -30 dB floor, velocity 16, level change dB = -16.6683
+RESULT -30 dB floor, velocity 32, level change dB = -11.3809
+RESULT -30 dB floor, velocity 64, level change dB = -5.7508
+RESULT -30 dB floor, velocity 96, level change dB = -2.3636
+RESULT -30 dB floor, velocity 126, level change dB = -0.0661
+RESULT -30 dB floor, velocity 127, level change dB = 0.0014
+RESULT linked CC 10 = 0, left and right dB = 0.0003 -309.9984
+RESULT linked CC 10 = 1, left and right dB = 0.0012 -36.0542
+RESULT linked CC 10 = 16, left and right dB = 0.0014 -11.9717
+RESULT linked CC 10 = 32, left and right dB = 0.0014 -5.9511
+RESULT linked CC 10 = 48, left and right dB = 0.0013 -2.4294
+RESULT linked CC 10 = 63, left and right dB = 0.0015 -0.0672
+RESULT linked CC 10 = 64, left and right dB = -0.0677 0.0009
+RESULT linked CC 10 = 65, left and right dB = -0.2068 0.0008
+RESULT linked CC 10 = 80, left and right dB = -2.6120 0.0015
+RESULT linked CC 10 = 96, left and right dB = -6.2280 0.0003
+RESULT linked CC 10 = 112, left and right dB = -12.5324 0.0013
+RESULT linked CC 10 = 126, left and right dB = -36.0542 0.0012
+RESULT linked CC 10 = 127, left and right dB = -309.9984 0.0016
+RESULT note 36, pitch change semitones = -0.0109
+RESULT note 48, pitch change semitones = -0.0109
+RESULT note 59, pitch change semitones = 0.0000
+RESULT note 61, pitch change semitones = -0.0109
+RESULT note 72, pitch change semitones = -0.0196
+RESULT note 84, pitch change semitones = -0.0135
+66 results, 0 failures
