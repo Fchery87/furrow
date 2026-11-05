@@ -1,0 +1,42 @@
+Start testing: Nov 05 00:28 EST
+----------------------------------------------------------
+1/2 Testing: furrow_engine_tests
+1/2 Test: furrow_engine_tests
+Command: "/home/nochaserz/Documents/Coding Projects/furrow/plugin/build/furrow_engine_tests"
+Directory: /home/nochaserz/Documents/Coding Projects/furrow/plugin/build
+"furrow_engine_tests" start time: Nov 05 00:28 EST
+Output:
+----------------------------------------------------------
+Randomness seeded to: 3975581414
+===============================================================================
+All tests passed (6494 assertions in 50 test cases)
+
+<end of output>
+Test time = 147.27 sec
+----------------------------------------------------------
+Test Passed.
+"furrow_engine_tests" end time: Nov 05 00:30 EST
+"furrow_engine_tests" time elapsed: 00:02:27
+----------------------------------------------------------
+
+2/2 Testing: furrow_plugin_tests
+2/2 Test: furrow_plugin_tests
+Command: "/home/nochaserz/Documents/Coding Projects/furrow/plugin/build/furrow_plugin_tests"
+Directory: /home/nochaserz/Documents/Coding Projects/furrow/plugin/build
+"furrow_plugin_tests" start time: Nov 05 00:30 EST
+Output:
+----------------------------------------------------------
+JUCE v9.0.4
+Randomness seeded to: 665660802
+===============================================================================
+All tests passed (2986 assertions in 21 test cases)
+
+<end of output>
+Test time =  33.09 sec
+----------------------------------------------------------
+Test Passed.
+"furrow_plugin_tests" end time: Nov 05 00:31 EST
+"furrow_plugin_tests" time elapsed: 00:00:33
+----------------------------------------------------------
+
+End testing: Nov 05 00:31 EST
