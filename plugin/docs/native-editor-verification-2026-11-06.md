@@ -11,3 +11,5 @@ Evidence images:
 - `verification-2026-11-06/native-editor-save-dialog.png`: `Save kit` opened the native GTK `Choose file` dialog.
 
 This directly verifies rendered WebView content, supported step interaction, lane creation and native save-dialog routing. It does not verify drag/drop, audio output, MIDI routing in a host, persistence after closing, or the WebKit critical diagnostics emitted by pluginval subprocesses. The GDB lifecycle log is retained in `verification-2026-11-06/standalone-gdb-lifecycle.log`; the bounded debugger run did not produce a WebKit critical stack trace.
+
+A second batch-mode GDB run wrapped pluginval strictness 10 with `G_DEBUG=fatal-criticals` and followed the WebKit child process. The pluginval editor test still completed normally and emitted the same `WEBKIT_IS_WEB_VIEW` critical, but no fatal signal or stack trace was captured. This narrows the issue to a non-fatal subprocess lifecycle diagnostic, not a reproduced crash. The raw run is `verification-2026-11-06/pluginval-webkit-gdb.log`.

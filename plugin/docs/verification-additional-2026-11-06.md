@@ -21,7 +21,7 @@ The first two-job Release build hit the 600-second cap. This is not an environme
 
 The optimized VST3 passed GUI-inclusive pluginval strictness 10, exit 0, seed `0x8ab7a`, in 27.58 seconds, with three of the same WebKit critical messages. See `verification-2026-11-06/pluginval-release.log`. Full optimized CLAP validation reproduced 28 passed, 1 failed, 1 warning and 14 skipped out of 44, exit 1. See `verification-2026-11-06/clap-release.log`. Optimized Standalone remained alive for 20 seconds before intentional timeout, exit 124, with no other logged output. This is startup smoke only, not audio or rendered-control acceptance.
 
-Direct window-scoped X11 verification went further than startup smoke. The Debug Standalone editor rendered at 728x454. Clear steps removed Kick hits, a grid click restored one, Add lane created Lane 5, and Save kit opened the native GTK file chooser. Screenshots and the exact scope are documented in `plugin/docs/native-editor-verification-2026-11-06.md`. Drag/drop, audio/host routing and persistence after close remain unverified.
+Direct window-scoped X11 verification went further than startup smoke. The Debug Standalone editor rendered at 728x454. Clear steps removed Kick hits, a grid click restored one, Add lane created Lane 5, and Save kit opened the native GTK file chooser. Screenshots and the exact scope are documented in `plugin/docs/native-editor-verification-2026-11-06.md`. A GDB-wrapped pluginval run reproduced the non-fatal WebKit critical but no crash stack. Drag/drop, audio/host routing and persistence after close remain unverified.
 
 Paths below are relative to `plugin/build-release/FurrowSpike_artefacts/Release/`:
 

@@ -1,0 +1,182 @@
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+[New Thread 0x7ffff79826c0 (LWP 391341)]
+Started validating: /home/nochaserz/Documents/Coding Projects/furrow/plugin/build-webview/FurrowSpike_artefacts/Debug/VST3/Furrow Spike.vst3
+[New Thread 0x7ffff71816c0 (LWP 391342)]
+Random seed: 0x7d0216
+Validation started
+Strictness level: 10
+-----------------------------------------------------------------
+Starting tests in: pluginval / Scan for plugins located in: /home/nochaserz/Documents/Coding Projects/furrow/plugin/build-webview/FurrowSpike_artefacts/Debug/VST3/Furrow Spike.vst3...
+Num plugins found: 1
+
+Testing plugin: VST3-Furrow Spike-38cc921a-12e528bb
+No Chaserz: Furrow Spike v0.0.1
+Completed tests in pluginval / Scan for plugins located in: /home/nochaserz/Documents/Coding Projects/furrow/plugin/build-webview/FurrowSpike_artefacts/Debug/VST3/Furrow Spike.vst3
+-----------------------------------------------------------------
+Starting tests in: pluginval / Open plugin (cold)...
+JUCE v9.0.4
+[New Thread 0x7ffff4fff6c0 (LWP 391346)]
+[Thread 0x7ffff4fff6c0 (LWP 391346) exited]
+[New Thread 0x7ffff4fff6c0 (LWP 391347)]
+[New Thread 0x7fffe6ffe6c0 (LWP 391348)]
+[Thread 0x7ffff4fff6c0 (LWP 391347) exited]
+[Thread 0x7fffe6ffe6c0 (LWP 391348) exited]
+[New Thread 0x7fffe6ffe6c0 (LWP 391349)]
+[Thread 0x7fffe6ffe6c0 (LWP 391349) exited]
+Completed tests in pluginval / Open plugin (cold)
+-----------------------------------------------------------------
+Starting tests in: pluginval / Open plugin (warm)...
+[New Thread 0x7fffe6ffe6c0 (LWP 391351)]
+[Thread 0x7fffe6ffe6c0 (LWP 391351) exited]
+[New Thread 0x7fffe6ffe6c0 (LWP 391352)]
+[New Thread 0x7ffff4fff6c0 (LWP 391353)]
+Running tests 1 times
+Completed tests in pluginval / Open plugin (warm)
+-----------------------------------------------------------------
+Starting tests in: pluginval / Plugin info...
+
+Plugin name: Furrow Spike
+Alternative names: Furrow Spike
+SupportsDoublePrecision: no
+Reported latency: 0
+Reported taillength: 0.01
+Completed tests in pluginval / Plugin info
+-----------------------------------------------------------------
+Starting tests in: pluginval / Plugin programs...
+Num programs: 0
+All program names checked
+Completed tests in pluginval / Plugin programs
+-----------------------------------------------------------------
+Starting tests in: pluginval / Editor...
+[Attaching after Thread 0x7ffff7c16c00 (LWP 391337) fork to child process 391355]
+[New inferior 2 (process 391355)]
+[Detaching after fork from parent process 391337]
+[Inferior 1 (process 391337) detached]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+process 391355 is executing new program: /home/nochaserz/.jcode/scratch/temp_d02b1607_juce_linux_subprocess
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+JUCE v9.0.4
+[New Thread 0x7fffe93ff6c0 (LWP 391374)]
+[New Thread 0x7fffe8bfe6c0 (LWP 391375)]
+[New Thread 0x7fffe3fff6c0 (LWP 391376)]
+[New Thread 0x7fffe37fe6c0 (LWP 391377)]
+[New Thread 0x7fffe0dff6c0 (LWP 391383)]
+[New Thread 0x7fff829ff6c0 (LWP 391384)]
+[New Thread 0x7fff821fe6c0 (LWP 391385)]
+[Thread 0x7fff821fe6c0 (LWP 391385) exited]
+[Thread 0x7fff829ff6c0 (LWP 391384) exited]
+[New Thread 0x7fff829ff6c0 (LWP 391386)]
+[New Thread 0x7fff821fe6c0 (LWP 391387)]
+[Thread 0x7fff821fe6c0 (LWP 391387) exited]
+[New Thread 0x7fff821fe6c0 (LWP 391388)]
+[New Thread 0x7fff819fd6c0 (LWP 391389)]
+[New Thread 0x7fff811fc6c0 (LWP 391390)]
+[New Thread 0x7fff809fb6c0 (LWP 391391)]
+[Thread 0x7fff809fb6c0 (LWP 391391) exited]
+[Attaching after Thread 0x7ffff7fa1740 (LWP 391355) vfork to child process 391392]
+[New inferior 3 (process 391392)]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+[Detaching vfork parent process 391355 after child exec]
+[Inferior 2 (process 391355) detached]
+process 391392 is executing new program: /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess
+JUCE v9.0.4
+JUCE v9.0.4
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+[New Thread 0x7fffe2dff6c0 (LWP 391460)]
+[New Thread 0x7fff9e3fd6c0 (LWP 391461)]
+[New Thread 0x7fff9dbfc6c0 (LWP 391462)]
+[New Thread 0x7fff9d3fb6c0 (LWP 391463)]
+[New Thread 0x7fff9cbfa6c0 (LWP 391464)]
+[New Thread 0x7fff8ffff6c0 (LWP 391465)]
+[Thread 0x7fff8ffff6c0 (LWP 391465) exited]
+[Thread 0x7fff9cbfa6c0 (LWP 391464) exited]
+[Thread 0x7fff9dbfc6c0 (LWP 391462) exited]
+[Thread 0x7fff9e3fd6c0 (LWP 391461) exited]
+[Thread 0x7fffe2dff6c0 (LWP 391460) exited]
+[Thread 0x7fffeafc6b80 (LWP 391392) exited]
+[Thread 0x7fff9d3fb6c0 (LWP 391463) exited]
+[New process 391392]
+[Inferior 3 (process 391392) exited normally]
+JUCE v9.0.4
+
+** (temp_5d7f17bb_juce_linux_subprocess:391519): CRITICAL **: 21:43:08.829: void webkit_web_view_load_request(WebKitWebView *, WebKitURIRequest *): assertion 'WEBKIT_IS_WEB_VIEW(webView)' failed
+JUCE v9.0.4
+Completed tests in pluginval / Editor
+-----------------------------------------------------------------
+Starting tests in: pluginval / Open editor whilst processing...
+JUCE v9.0.4
+
+** (temp_f4b34f75_juce_linux_subprocess:392134): CRITICAL **: 21:44:31.631: void webkit_web_view_load_request(WebKitWebView *, WebKitURIRequest *): assertion 'WEBKIT_IS_WEB_VIEW(webView)' failed
+JUCE v9.0.4
+JUCE v9.0.4
+Completed tests in pluginval / Open editor whilst processing
+-----------------------------------------------------------------
+Starting tests in: pluginval / Audio processing...
+Testing with sample rate [44100] and block size [64]
+Testing with sample rate [44100] and block size [128]
+Testing with sample rate [44100] and block size [256]
+Testing with sample rate [44100] and block size [512]
+Testing with sample rate [44100] and block size [1024]
+Testing with sample rate [48000] and block size [64]
+Testing with sample rate [48000] and block size [128]
+Testing with sample rate [48000] and block size [256]
+Testing with sample rate [48000] and block size [512]
+Testing with sample rate [48000] and block size [1024]
+Testing with sample rate [96000] and block size [64]
+Testing with sample rate [96000] and block size [128]
+Testing with sample rate [96000] and block size [256]
+Testing with sample rate [96000] and block size [512]
+Testing with sample rate [96000] and block size [1024]
+Completed tests in pluginval / Audio processing
+-----------------------------------------------------------------
+Starting tests in: pluginval / Non-releasing audio processing...
+Testing with sample rate [44100] and block size [64]
+Testing with sample rate [44100] and block size [128]
+Testing with sample rate [44100] and block size [256]
+Testing with sample rate [44100] and block size [512]
+Testing with sample rate [44100] and block size [1024]
+Testing with sample rate [48000] and block size [64]
+Testing with sample rate [48000] and block size [128]
+Testing with sample rate [48000] and block size [256]
+Testing with sample rate [48000] and block size [512]
+Testing with sample rate [48000] and block size [1024]
+Testing with sample rate [96000] and block size [64]
+Testing with sample rate [96000] and block size [128]
+Testing with sample rate [96000] and block size [256]
+Testing with sample rate [96000] and block size [512]
+Testing with sample rate [96000] and block size [1024]
+Completed tests in pluginval / Non-releasing audio processing
+-----------------------------------------------------------------
+Starting tests in: pluginval / Plugin state...
+Completed tests in pluginval / Plugin state
+-----------------------------------------------------------------
+Starting tests in: pluginval / Plugin state restoration...
+Completed tests in pluginval / Plugin state restoration
+-----------------------------------------------------------------
+Starting tests in: pluginval / Automation...
+Testing with sample rate [44100] and block size [64] and sub-block size [32]
+Testing with sample rate [44100] and block size [128] and sub-block size [32]
+Testing with sample rate [44100] and block size [256] and sub-block size [32]
+Testing with sample rate [44100] and block size [512] and sub-block size [32]
+Testing with sample rate [44100] and block size [1024] and sub-block size [32]
+Testing with sample rate [48000] and block size [64] and sub-block size [32]
+Testing with sample rate [48000] and block size [128] and sub-block size [32]
+Testing with sample rate [48000] and block size [256] and sub-block size [32]
+Testing with sample rate [48000] and block size [512] and sub-block size [32]
+Testing with sample rate [48000] and block size [1024] and sub-block size [32]
+Testing with sample rate [96000] and block size [64] and sub-block size [32]
+Testing with sample rate [96000] and block size [128] and sub-block size [32]
+Testing with sample rate [96000] and block size [256] and sub-block size [32]
+Testing with sample rate [96000] and block size [512] and sub-block size [32]
+Testing with sample rate [96000] and block size [1024] and sub-block size [32]
+Completed tests in pluginval / Automation
+-----------------------------------------------------------------
+Starting tests in: pluginval / Editor Automation...
+JUCE v9.0.4
+
+** (temp_bf9e37b2_juce_linux_subprocess:392559): CRITICAL **: 21:45:23.415: void webkit_web_view_load_request(WebKitWebView *, WebKitURIRequest *): assertion 'WEBKIT_IS_WEB_VIEW(webView)' failed
