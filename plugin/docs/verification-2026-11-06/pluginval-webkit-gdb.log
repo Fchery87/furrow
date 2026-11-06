@@ -180,3 +180,36 @@ Starting tests in: pluginval / Editor Automation...
 JUCE v9.0.4
 
 ** (temp_bf9e37b2_juce_linux_subprocess:392559): CRITICAL **: 21:45:23.415: void webkit_web_view_load_request(WebKitWebView *, WebKitURIRequest *): assertion 'WEBKIT_IS_WEB_VIEW(webView)' failed
+JUCE v9.0.4
+Completed tests in pluginval / Editor Automation
+-----------------------------------------------------------------
+Starting tests in: pluginval / Automatable Parameters...
+Completed tests in pluginval / Automatable Parameters
+-----------------------------------------------------------------
+Starting tests in: pluginval / Parameters...
+Completed tests in pluginval / Parameters
+-----------------------------------------------------------------
+Starting tests in: pluginval / Background thread state...
+JUCE v9.0.4
+
+** (temp_fafd34a1_juce_linux_subprocess:393103): CRITICAL **: 21:46:27.233: void webkit_web_view_load_request(WebKitWebView *, WebKitURIRequest *): assertion 'WEBKIT_IS_WEB_VIEW(webView)' failed
+JUCE v9.0.4
+Completed tests in pluginval / Background thread state
+-----------------------------------------------------------------
+Starting tests in: pluginval / Parameter thread safety...
+Completed tests in pluginval / Parameter thread safety
+-----------------------------------------------------------------
+Starting tests in: pluginval / auval...
+Completed tests in pluginval / auval
+-----------------------------------------------------------------
+Starting tests in: pluginval / vst3 validator...
+INFO: Skipping vst3 validator as validator path hasn't been set
+Completed tests in pluginval / vst3 validator
+-----------------------------------------------------------------
+Starting tests in: pluginval / Basic bus...
+Completed tests in pluginval / Basic bus
+-----------------------------------------------------------------
+Starting tests in: pluginval / Listing available buses...
+Inputs:
+	Named layouts: None
+	Discrete layouts: None
