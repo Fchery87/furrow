@@ -21,7 +21,7 @@ The headless test configuration is Linux x86-64, `CMAKE_BUILD_TYPE=Debug`, `FURR
 | Processor/bridge/loader/MIDI suite | Refreshed CTest run: 28 cases, 3,218 assertions | Passed |
 | UI bridge suite | Node behavior regression registered in CTest: 1 test | Passed |
 | Missing sample persistence | Focused regression: 16 assertions, legacy and current-format sections | Passed |
-| pluginval 1.0.4 on final WebView artifact | Strictness 10, seed `0x487a723`, GUI tests enabled, `SUCCESS`, exit 0 | Passed, including editor lifecycle tests |
+| pluginval 1.0.4 on final WebView artifact | Strictness 10, seed `0x487a723`, GUI tests enabled, `SUCCESS`, exit 0, but four WebKit subprocess critical messages | Validator passed; clean WebView runtime not established |
 | clap-validator 0.4.1 on WebView artifact, full | 44 tests: 28 passed, 1 failed, 1 warning, 14 skipped, exit 1 | **Not passed** |
 | clap-validator on WebView artifact, filtered | Excludes exactly `^param-conversions$`: 43 tests, 28 passed, 0 failed, 1 warning, 14 skipped, exit 0 | Partial evidence only |
 
@@ -85,6 +85,6 @@ Historical headless logs are in [verification-2026-11-05/](verification-2026-11-
 2. **Steinberg validator:** not run. pluginval explicitly skipped this integration because no validator path was supplied.
 3. **WebView/editor:** The earlier missing-`xvfb-run` blocker was incorrect. `DISPLAY=:0` and Xorg are available. GUI-inclusive pluginval now passes Editor, Open editor whilst processing, Editor Automation and Background thread state checks. Node tests cover command payloads with a stub DOM, not real browser interactions. File dialogs, native state delivery, rendered controls and drag/drop still need interactive verification. The installed `orca-ide` automation wrapper cannot start because its configured AppImage is missing.
 4. **DAW acceptance:** not run against these artifacts. No REAPER application process was running and no `reaper` executable was found on PATH or the checked standard locations. A bridge folder exists but is not evidence of an active host. Use an isolated scratch project to verify audio, MIDI routing, transport/loop behavior, sample recovery and project reload. Older RS5K/engine captures do not prove these plugin binaries work in a DAW.
-5. **Release/platforms:** build and validate optimized Release artifacts. Windows/macOS builds, installers, signing, notarization and other hosts remain unverified here. Debug tests without sanitizers do not establish sanitizer coverage.
+5. **Release/platforms:** optimized Linux WebView artifacts now build and all three Release CTest suites pass. Release pluginval exits 0 with WebKit criticals, and full Release CLAP validation still exits 1. See [additional verification](verification-additional-2026-11-06.md) for exact hashes and logs. Windows/macOS builds, installers, signing, notarization and other hosts remain unverified here. Tests without sanitizers do not establish sanitizer coverage.
 
 Do not label the release complete on the basis of this report.
