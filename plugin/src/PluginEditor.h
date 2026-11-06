@@ -23,12 +23,18 @@ private:
     void sendEdit (const juce::var&);
     void chooseSample();
     void chooseFile (const juce::String& action, const juce::String& wildcard);
+    class LocalBrowser final : public juce::WebBrowserComponent
+    {
+    public:
+        using juce::WebBrowserComponent::WebBrowserComponent;
+        bool pageAboutToLoad (const juce::String& url) override;
+    };
 
     SpikeProcessor& processor;
-    juce::WebBrowserComponent browser;
+    LocalBrowser browser;
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::String pendingFileAction;
-    bool choosingSave = false;
+    int selectedLane = 0;
+    bool choosingFile = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

@@ -138,6 +138,11 @@ if(FURROW_BUILD_TESTS)
 
     enable_testing()
     add_test(NAME furrow_engine_tests COMMAND furrow_engine_tests)
+    find_program(FURROW_NODE_EXECUTABLE NAMES node nodejs)
+    if(FURROW_NODE_EXECUTABLE)
+        add_test(NAME furrow_ui_bridge_tests
+            COMMAND "${FURROW_NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui_bridge_test.cjs")
+    endif()
 
     # The plugin as a host drives it. Like JUCE's own format wrappers, it links the plugin's
     # shared code and borrows its include directories.

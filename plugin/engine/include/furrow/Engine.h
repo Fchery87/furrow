@@ -48,6 +48,9 @@ enum class Op : int
     SetLength = 7,      // a pattern, b lane, c length from 1 to 512
     QueuePattern = 10,  // a pattern, beat: the project beat where it starts
     ClearPattern = 11,  // a pattern
+    // Plugin-only operation. Keep it outside SeqCore's wire opcode range so golden traces that
+    // intentionally reject opcode 12 continue to exercise the same validation boundary.
+    ClearPatternLane = 1000, // a pattern, b lane
 };
 
 struct Command
@@ -700,6 +703,10 @@ private:
                     if (! inRange (a, 0, patterns - 1))
                         return Result::Invalid;
                     break;
+                case Op::ClearPatternLane:
+                    if (! inRange (a, 0, patterns - 1) || ! inRange (b, 0, lanes - 1) || ! sim[at (b)])
+                        return Result::Invalid;
+                    break;
                 default:
                     return Result::Invalid;
             }
@@ -781,6 +788,9 @@ private:
                     break;
                 case Op::ClearPattern:
                     store_.clearPattern (a);
+                    break;
+                case Op::ClearPatternLane:
+                    store_.clearPatternLane (a, b);
                     break;
             }
         }

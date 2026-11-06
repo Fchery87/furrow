@@ -279,7 +279,6 @@ void SpikeProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         audioEngine->panic ([&] (const auto& e) { route (e, output); });
         sampler.reset();
     }
-    selectedPattern = audioEngine->pattern();
     for (int s = 0; s < furrow::lanes; ++s) playheads[static_cast<std::size_t> (s)] = audioEngine->playhead (s);
     deliverMidi (slot, midi);
 }
@@ -418,6 +417,7 @@ void SpikeProcessor::setStateInformation (const void* data, int size)
     auto audio = std::make_unique<furrow::Engine>();
     audio->loadState (state.words);
     modelEngine = std::move (replacement);
+    selectedPattern = modelEngine->pattern();
     if (state.version >= furrow::pluginMetadataVersion)
     {
         for (std::size_t i = 0; i < laneNames.size(); ++i)
@@ -480,6 +480,10 @@ juce::Result SpikeProcessor::applyLocked (std::span<const furrow::Command> comma
     if (! queued) return juce::Result::fail ("The edit queue is full.");
     batch.release();
     ++outstandingEdits;
+    selectedPattern = modelEngine->pattern();
+    if (std::any_of (commands.begin(), commands.end(), [] (const auto& command) {
+        return command.op == furrow::Op::AddLane || command.op == furrow::Op::RemoveLane;
+    })) applySetups (laneSetups(), laneIds());
     updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
     return juce::Result::ok();
 }

@@ -26,8 +26,10 @@ PluginEditor::PluginEditor (SpikeProcessor& p)
     addAndMakeVisible (browser);
     setOpaque (true);
     setResizable (true, true);
-    setSize (1200, 760);
-    startTimerHz (20);
+    setResizeLimits (720, 420, 4096, 2160);
+    const auto state = processor.editorState();
+    setSize (int (state["width"]), int (state["height"]));
+    startTimerHz (10);
     browser.goToURL (juce::WebBrowserComponent::getResourceProviderRoot());
 }
 
@@ -36,21 +38,30 @@ void PluginEditor::paint (juce::Graphics& g) { g.fillAll (bg); }
 void PluginEditor::resized()
 {
     browser.setBounds (getLocalBounds());
-    juce::DynamicObject::Ptr o (new juce::DynamicObject);
-    o->setProperty ("action", "resize");
-    o->setProperty ("width", getWidth());
-    o->setProperty ("height", getHeight());
-    sendEdit (juce::var (o));
+    const auto state = processor.editorState();
+    if (int (state["width"]) != getWidth() || int (state["height"]) != getHeight())
+    {
+        juce::DynamicObject::Ptr size (new juce::DynamicObject);
+        size->setProperty ("action", "resize");
+        size->setProperty ("width", getWidth());
+        size->setProperty ("height", getHeight());
+        processor.edit (juce::var (size));
+    }
 }
-bool PluginEditor::isInterestedInFileDrag (const juce::StringArray& files) { return files.size() > 0; }
+bool PluginEditor::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    return files.size() == 1 && juce::StringArray { ".wav", ".aif", ".aiff", ".flac", ".mid", ".midi" }
+        .contains (juce::File (files[0]).getFileExtension().toLowerCase());
+}
 void PluginEditor::filesDropped (const juce::StringArray& files, int, int)
 {
-    if (files.size() > 0)
+    if (isInterestedInFileDrag (files))
     {
         juce::DynamicObject::Ptr o (new juce::DynamicObject);
         const auto isMidi = files[0].endsWithIgnoreCase (".mid") || files[0].endsWithIgnoreCase (".midi");
-        o->setProperty ("action", isMidi ? "dragMidi" : "loadSample");
+        o->setProperty ("action", isMidi ? "midiPreview" : "loadSample");
         o->setProperty ("path", files[0]);
+        o->setProperty ("lane", selectedLane);
         sendEdit (juce::var (o));
     }
 }
@@ -60,23 +71,27 @@ void PluginEditor::chooseSample()
 }
 void PluginEditor::chooseFile (const juce::String& action, const juce::String& wildcard)
 {
-    pendingFileAction = action;
-    choosingSave = action == "kitSave" || action == "midiExport";
+    if (choosingFile) return;
+    choosingFile = true;
+    const bool choosingSave = action == "kitSave" || action == "midiExport";
     chooser = std::make_unique<juce::FileChooser> ("Choose file", juce::File {}, wildcard);
     auto chooserFlags = juce::FileBrowserComponent::canSelectFiles
-               | (choosingSave ? juce::FileBrowserComponent::saveMode
+               | (choosingSave ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting
                                : juce::FileBrowserComponent::openMode);
     juce::Component::SafePointer<PluginEditor> safeThis (this);
-    chooser->launchAsync (chooserFlags, [safeThis] (const juce::FileChooser& c)
+    chooser->launchAsync (chooserFlags, [safeThis, action, lane = selectedLane, choosingSave] (const juce::FileChooser& c)
                          {
                              if (safeThis == nullptr)
                                  return;
-                             if (safeThis->choosingSave || c.getResult().existsAsFile())
+                             safeThis->choosingFile = false;
+                             const auto file = c.getResult();
+                             if (file != juce::File {} && (choosingSave || file.existsAsFile()))
                              {
                                  juce::DynamicObject::Ptr o (new juce::DynamicObject);
-                                 o->setProperty ("action", safeThis->pendingFileAction);
-                                 o->setProperty ("path", c.getResult().getFullPathName());
-                                 safeThis->sendEdit (juce::var (o));
+                                 o->setProperty ("action", action);
+                                 o->setProperty ("path", file.getFullPathName());
+                                 o->setProperty ("lane", lane);
+                                 safeThis->processor.edit (juce::var (o));
                              }
                          });
 }
@@ -85,15 +100,25 @@ void PluginEditor::sendEdit (const juce::var& v)
     if (const auto* object = v.getDynamicObject())
     {
         const auto action = object->getProperty ("action").toString();
+        if (object->hasProperty ("lane")) selectedLane = int (object->getProperty ("lane"));
+        if (action == "selectLane") return;
         if (action == "chooseSample") { chooseSample(); return; }
-        if (action == "kitSave") { chooseFile (action, "*.furrow"); return; }
-        if (action == "kitLoad") { chooseFile (action, "*.furrow"); return; }
-        if (action == "midiExport") { chooseFile (action, "*.mid"); return; }
-        if (action == "midiPreview") { processor.edit (v); return; }
+        if (! object->hasProperty ("path"))
+        {
+            if (action == "kitSave" || action == "kitLoad") { chooseFile (action, "*.furrow"); return; }
+            if (action == "midiExport" || action == "midiPreview") { chooseFile (action, "*.mid;*.midi"); return; }
+        }
     }
     processor.edit (v);
 }
+bool PluginEditor::LocalBrowser::pageAboutToLoad (const juce::String& url)
+{
+    return url.startsWith (juce::WebBrowserComponent::getResourceProviderRoot());
+}
 void PluginEditor::timerCallback()
 {
-    browser.emitEventIfBrowserIsVisible ("state", processor.editorState());
+    const auto state = processor.editorState();
+    if (int (state["width"]) != getWidth() || int (state["height"]) != getHeight())
+        setSize (int (state["width"]), int (state["height"]));
+    browser.emitEventIfBrowserIsVisible ("state", state);
 }

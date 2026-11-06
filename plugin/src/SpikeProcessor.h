@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SampleLoader.h"
+#include "PatternMidi.h"
 #include "furrow/Engine.h"
 #include "furrow/sampler/LaneSetup.h"
 #include "furrow/sampler/Sampler.h"
@@ -95,6 +96,11 @@ private:
     void remember();
     juce::Result restoreHistory (bool redo);
     juce::Result editFile (const juce::var& command);
+    juce::Result editValidated (const juce::var& command);
+    furrow::plugin::PatternMidiImportPreview midiPreview;
+    juce::var midiPreviewState;
+    std::vector<int> midiPreviewSlots;
+    std::vector<LaneSetup> midiPreviewSetups;
 
     std::unique_ptr<furrow::Engine> modelEngine;
     furrow::Engine* audioEngine = nullptr;
