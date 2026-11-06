@@ -1,10 +1,10 @@
-# Linux Debug verification, 2026-11-05
+# Linux Debug verification, updated 2026-11-06
 
 ## Status
 
-**Integrated implementation and Linux Debug verification passed. Release acceptance is incomplete.**
+**Linux Debug builds and regression suites passed. Full product and release acceptance is incomplete.**
 
-This report applies to the local working tree, which includes pre-existing uncommitted implementation work. It is not evidence that the committed baseline alone builds or that all planned features are finished.
+The updated implementation is committed at `2f39627`, following the WebView CMake correction at `186400b`. Tests and artifact checks below do not establish that all planned features are finished.
 
 The headless test configuration is Linux x86-64, `CMAKE_BUILD_TYPE=Debug`, `FURROW_ENABLE_WEBVIEW=OFF`, `FURROW_SANITIZE=OFF`. A separate WebView configuration was built with `FURROW_ENABLE_WEBVIEW=ON` and GTK/WebKitGTK. Artifacts are unstripped and unsigned. JUCE reports 9.0.4.
 
@@ -15,17 +15,17 @@ The headless test configuration is Linux x86-64, `CMAKE_BUILD_TYPE=Debug`, `FURR
 | Shared code | `FurrowSpike` linked after adding Standalone audio utility/device dependencies | Passed |
 | VST3 | `FurrowSpike_VST3` linked, moduleinfo generated, `GetPluginFactory` exported | Passed |
 | CLAP | `FurrowSpike_CLAP` linked, `clap_entry` exported | Passed |
-| Standalone | `FurrowSpike_Standalone` linked | Build only, not interactive/audio acceptance |
+| Standalone | WebView executable survived a 20-second launch on `DISPLAY=:0`, then was deliberately terminated by `timeout` (124) | Startup smoke only, not interactive/audio acceptance |
 | Dynamic dependencies | `ldd` on all three artifacts reported no missing libraries | Passed |
 | Engine/sampler/state suite | Refreshed CTest run: 50 cases, 6,494 assertions | Passed |
 | Processor/bridge/loader/MIDI suite | Refreshed CTest run: 28 cases, 3,218 assertions | Passed |
 | UI bridge suite | Node behavior regression registered in CTest: 1 test | Passed |
 | Missing sample persistence | Focused regression: 16 assertions, legacy and current-format sections | Passed |
-| pluginval 1.0.4 on WebView artifact | Strictness 10, GUI tests skipped, `SUCCESS`, exit 0 | Passed within stated scope |
+| pluginval 1.0.4 on final WebView artifact | Strictness 10, seed `0x487a723`, GUI tests enabled, `SUCCESS`, exit 0 | Passed, including editor lifecycle tests |
 | clap-validator 0.4.1 on WebView artifact, full | 44 tests: 28 passed, 1 failed, 1 warning, 14 skipped, exit 1 | **Not passed** |
 | clap-validator on WebView artifact, filtered | Excludes exactly `^param-conversions$`: 43 tests, 28 passed, 0 failed, 1 warning, 14 skipped, exit 0 | Partial evidence only |
 
-Assertion totals above come from the final `plugin/build/Testing/Temporary/LastTest.log`, not an earlier binary or configuration. CTest passed both registered suites. Earlier runs reported different assertion totals and are not substituted for this run.
+Both C++ executables were explicitly rebuilt after the final opcode change. Direct runs reported the assertion totals above, and CTest passed all three registered suites. Earlier stale-executable passes are not acceptance evidence.
 
 ## Diagnoses and changes
 
@@ -41,7 +41,7 @@ Assertion totals above come from the final `plugin/build/Testing/Temporary/LastT
 
 ## Exact artifacts
 
-Paths below are relative to `plugin/build/FurrowSpike_artefacts/Debug/`.
+Paths below are relative to `plugin/build-webview/FurrowSpike_artefacts/Debug/`.
 
 | Artifact | SHA-256 |
 | --- | --- |
@@ -61,26 +61,29 @@ cmake --build plugin/build --parallel 2 --target FurrowSpike_Standalone
 cmake --build plugin/build --parallel 2 --target furrow_engine_tests furrow_plugin_tests
 ctest --test-dir plugin/build --output-on-failure
 
-"$PLUGINVAL" --strictness-level 10 --timeout-ms 240000 --skip-gui-tests \
-  --validate "$PWD/plugin/build/FurrowSpike_artefacts/Debug/VST3/Furrow Spike.vst3"
+cmake --build plugin/build-webview --parallel 2 --target FurrowSpike_VST3 FurrowSpike_CLAP FurrowSpike_Standalone
+
+# Run on an available X display. No virtual display is required when DISPLAY already works.
+"$PLUGINVAL" --strictness-level 10 --timeout-ms 240000 \
+  --validate "$PWD/plugin/build-webview/FurrowSpike_artefacts/Debug/VST3/Furrow Spike.vst3"
 
 "$CLAP_VALIDATOR" validate --jobs 1 \
-  "$PWD/plugin/build/FurrowSpike_artefacts/Debug/CLAP/Furrow Spike.clap"
+  "$PWD/plugin/build-webview/FurrowSpike_artefacts/Debug/CLAP/Furrow Spike.clap"
 
 # Diagnostic only, not a full acceptance pass:
 "$CLAP_VALIDATOR" validate --jobs 1 --exclude '^param-conversions$' \
-  "$PWD/plugin/build/FurrowSpike_artefacts/Debug/CLAP/Furrow Spike.clap"
+  "$PWD/plugin/build-webview/FurrowSpike_artefacts/Debug/CLAP/Furrow Spike.clap"
 ```
 
 On this machine the validator executables are under `$JCODE_SCRATCH_DIR/furrow-validators/pluginval/pluginval` and `$JCODE_SCRATCH_DIR/furrow-validators/clap-validator/clap-validator`. Their reported versions above take precedence over old archive names.
 
-Preserved logs are in [verification-2026-11-05/](verification-2026-11-05/).
+Historical headless logs are in [verification-2026-11-05/](verification-2026-11-05/). Final-hash GUI-inclusive pluginval, full CLAP and Standalone startup logs are in [verification-2026-11-06/](verification-2026-11-06/). The filtered CLAP result above preceded the final UI-only resource rebuild and is diagnostic evidence, not acceptance of the final hash.
 
 ## Remaining acceptance gates
 
 1. **Full CLAP run:** resolve the validator's zero-parameter crash and rerun without exclusions. Review the invalid-state warning and dependency assertions.
 2. **Steinberg validator:** not run. pluginval explicitly skipped this integration because no validator path was supplied.
-3. **WebView/editor:** WebView-enabled VST3, CLAP and Standalone artifacts now build, and bridge behavior is covered by a Node regression. Native window launch and real drag/drop remain unverified because `xvfb-run` is unavailable in this environment. The WebKitGTK dependency is present in the compile command.
+3. **WebView/editor:** The earlier missing-`xvfb-run` blocker was incorrect. `DISPLAY=:0` and Xorg are available. GUI-inclusive pluginval now passes Editor, Open editor whilst processing, Editor Automation and Background thread state checks. Node tests cover command payloads with a stub DOM, not real browser interactions. File dialogs, native state delivery, rendered controls and drag/drop still need interactive verification. The installed `orca-ide` automation wrapper cannot start because its configured AppImage is missing.
 4. **DAW acceptance:** not run against these artifacts. No REAPER application process was running and no `reaper` executable was found on PATH or the checked standard locations. A bridge folder exists but is not evidence of an active host. Use an isolated scratch project to verify audio, MIDI routing, transport/loop behavior, sample recovery and project reload. Older RS5K/engine captures do not prove these plugin binaries work in a DAW.
 5. **Release/platforms:** build and validate optimized Release artifacts. Windows/macOS builds, installers, signing, notarization and other hosts remain unverified here. Debug tests without sanitizers do not establish sanitizer coverage.
 
