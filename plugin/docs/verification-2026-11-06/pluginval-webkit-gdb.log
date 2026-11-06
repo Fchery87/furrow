@@ -213,3 +213,24 @@ Starting tests in: pluginval / Listing available buses...
 Inputs:
 	Named layouts: None
 	Discrete layouts: None
+Outputs:
+	Named layouts: Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo, Mono, Stereo
+	Discrete layouts: Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1, Discrete #1
+Main bus num input channels: 0
+Main bus num output channels: 2
+Completed tests in pluginval / Listing available buses
+-----------------------------------------------------------------
+Starting tests in: pluginval / Enabling all buses...
+Completed tests in pluginval / Enabling all buses
+-----------------------------------------------------------------
+Starting tests in: pluginval / Disabling non-main busses...
+Completed tests in pluginval / Disabling non-main busses
+-----------------------------------------------------------------
+Starting tests in: pluginval / Restoring default layout...
+Main bus num input channels: 0
+Main bus num output channels: 2
+Completed tests in pluginval / Restoring default layout
+-----------------------------------------------------------------
+Starting tests in: pluginval / Fuzz parameters...
+Completed tests in pluginval / Fuzz parameters
+SUCCESS
