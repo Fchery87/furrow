@@ -55,6 +55,7 @@ if(FURROW_BUILD_PLUGIN)
         PLUGIN_CODE Fspk
         FORMATS VST3 Standalone
         PRODUCT_NAME "Furrow Spike"
+        NEEDS_WEB_BROWSER ${FURROW_ENABLE_WEBVIEW}
         NEEDS_WEBVIEW2 TRUE
         IS_SYNTH TRUE
         NEEDS_MIDI_INPUT FALSE
@@ -76,8 +77,7 @@ if(FURROW_BUILD_PLUGIN)
     target_compile_definitions(FurrowSpike
         PUBLIC
             JUCE_USE_CURL=0
-            JUCE_VST3_CAN_REPLACE_VST2=0
-            FURROW_ENABLE_WEBVIEW=0)
+            JUCE_VST3_CAN_REPLACE_VST2=0)
 
     target_link_libraries(FurrowSpike
         PRIVATE
@@ -94,7 +94,7 @@ if(FURROW_BUILD_PLUGIN)
     if(FURROW_ENABLE_WEBVIEW)
         juce_add_binary_data(FurrowUIResources SOURCES ui/app/index.html)
         target_sources(FurrowSpike PRIVATE src/PluginEditor.cpp)
-        target_compile_definitions(FurrowSpike PUBLIC FURROW_ENABLE_WEBVIEW=1 JUCE_WEB_BROWSER=1 JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1)
+        target_compile_definitions(FurrowSpike PUBLIC FURROW_ENABLE_WEBVIEW=1 JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1)
         target_link_libraries(FurrowSpike PRIVATE FurrowUIResources juce::juce_audio_utils juce::juce_gui_extra)
         if(WIN32)
             set_property(TARGET FurrowSpike PROPERTY JUCE_NEEDS_WEBVIEW2 TRUE)
