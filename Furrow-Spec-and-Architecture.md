@@ -48,7 +48,8 @@ Version 1 provides a Channel Rack workflow and per-step probability. MIDI channe
 | Patterns | V1 | Up to 256 patterns per rack. Switch, clone, clear, rename. |
 | Fill and rotate tools | V1 | Fill every 2, 3, 4 or 8. Rotate left and right. Invert. Clear. |
 | Commit to item | V1 | Bake the current pattern at the edit cursor, one item per lane track, preserve source metadata, then switch the rack to Items mode. |
-| Capture from item | V1 | Restore an unedited Furrow commit from metadata, or preview conversion of edited or unrelated MIDI into a new pattern. |
+| Capture from item | V1 | Restore an unedited Furrow commit from its source snapshot into a new pattern. |
+| Convert MIDI | V1.x | Preview conversion of edited or unrelated MIDI into a new pattern. Moved out of V1 by decision. |
 | Probability | V1 | 0 to 100% per step. Uses a seed so playback is repeatable until re-rolled. |
 | Conditional trigs | V2 | Play on loop A of B (1:2, 3:4 and so on), on fill, not on fill, if previous step played, first loop only. |
 | Per-lane rate | V2 | 1/32, 1/16, 1/8, 1/4 and triplet versions. |
@@ -359,7 +360,7 @@ On REAPER 7.82 for Linux, item extension data kept payloads of 1 KiB to 8 MiB ex
 ### Capture
 
 - Reading an item. `host.read_item` returns the item's metadata text, position, length, take offset and events, with each event's beat counted from the item start in quarter notes. The fingerprint sorts events by beat and then by their bytes, so events that share a tick give the same fingerprint whatever order REAPER returns them in. Items written before this change may read as edited if their stored event order differs from the new sort order, and then fall back to conversion only. Messages the commit never writes, such as program change, always read as edited.
-- An unedited Furrow item with valid metadata can restore the full source snapshot into a new pattern. Compare the fingerprint first. Track destinations are reconciled by stable IDs and GUIDs; never overwrite unrelated tracks or silently apply controller settings to them.
+- An unedited Furrow item with valid metadata can restore the full source snapshot into a new pattern. Compare the fingerprint first. Restore matches each source lane to a rack lane by its stable lane id, and it never overwrites unrelated tracks or silently applies controller settings to them. Track GUIDs are not needed for restore, because the steps belong to the lane id. GUIDs are needed where a track is created or placed, which is conversion and item placement (V1.x). The probability key of the source pattern is restored with it (ADR 0001).
 - If MIDI or relevant item/take properties changed, show two choices: restore the original embedded source, or convert the current MIDI. Do not silently discard the user's MIDI edits. Missing or invalid metadata permits conversion only.
 - V1 conversion uses the selected item/take's effective project timing, pitches, velocities and note lengths. Preview channel-to-lane mapping and the resulting grid. Existing compatible lanes can be selected, and new lanes can be created as part of the same undo operation.
 - Use a 1/16 grid relative to the item start. Place a note in the preceding grid cell and preserve its positive remainder as shift when representable. Set probability to 100%, condition to none and ratchet to 1. Require compatible lane settings, with swing zero, so capture does not apply timing offsets twice.
