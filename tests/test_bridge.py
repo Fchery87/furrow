@@ -157,7 +157,13 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual((track["name"], track["fx"][0]["name"], track["items"][0]["notes"]), ("Kick", "JS: Furrow SeqCore", 3))
         self.assertEqual(track["items"][0]["furrow"], "1 group 5")
         self.assertEqual(state["undo_next"], "Furrow: paint steps")
+        self.assertEqual(state["project_path"], "/tmp/project")
         self.assertEqual(self.call("eval", code="return reaper.GetAppVersion(), 7"), ["stub 1.0", 7])
+
+    def test_the_project_path_is_read_when_reaper_returns_only_the_path(self):
+        self.stub.GetProjectPath = lambda buf: "/tmp/saved project"
+        self.reaper = self.stub.table(self.lua)
+        self.assertEqual(self.call("state")["project_path"], "/tmp/saved project")
 
     def test_a_failing_request_answers_with_an_error_and_the_bridge_goes_on(self):
         with self.assertRaisesRegex(BridgeError, "compile error"):

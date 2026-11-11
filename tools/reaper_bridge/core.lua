@@ -60,7 +60,9 @@ function core.state(reaper)
       furrow_links = ext(reaper, track, "P_EXT:Furrow"), furrow_items = ext(reaper, track, "P_EXT:FurrowItems"),
     }
   end
-  local _, path = reaper.GetProjectPath("")
+  -- REAPER returns the path alone. The test stub returns a flag first.
+  local first, second = reaper.GetProjectPath("")
+  local path = type(first) == "string" and first or second
   return {
     reaper = reaper.GetAppVersion(),
     play_state = reaper.GetPlayState(),
