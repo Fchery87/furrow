@@ -1,6 +1,7 @@
-#include "SpikeProcessor.h"
+#include "FurrowProcessor.h"
 #include "furrow/PluginState.h"
 #include "furrow/sampler/Curves.h"
+#include "support/AllocationCounter.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -153,7 +154,7 @@ void writeWav (const juce::File& file, const std::vector<float>& frames)
 TEST_CASE ("A new instance plays the built-in kit, starting each hit on its sample")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     prepare (p);
     const auto run = play (p, 2 * static_cast<int> (rate));
 
@@ -173,7 +174,7 @@ TEST_CASE ("A new instance plays the built-in kit, starting each hit on its samp
 TEST_CASE ("A MIDI lane sends its notes on its channel instead of playing a sample")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     auto state = saved (p);
     REQUIRE (state.setups.size() == 4);
     state.setups[0].settings.target = Target::Midi;
@@ -197,7 +198,7 @@ TEST_CASE ("A MIDI lane sends its notes on its channel instead of playing a samp
 TEST_CASE ("Saving and reloading restores the rack byte for byte")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor a;
+    FurrowProcessor a;
     auto state = saved (a);
     state.setups[1].settings.tune = 300;
     state.setups[1].settings.output = 4;
@@ -205,7 +206,7 @@ TEST_CASE ("Saving and reloading restores the rack byte for byte")
     load (a, encode (state));
     const auto bytes = save (a);
 
-    SpikeProcessor b;
+    FurrowProcessor b;
     load (b, bytes);
     CHECK (save (b) == bytes);
 }
@@ -219,7 +220,7 @@ TEST_CASE ("A sample file loads in the background and plays from its first frame
         frames[i] = 0.5f * static_cast<float> (i % 100) / 100.0f;
     writeWav (wav.file, frames);
 
-    SpikeProcessor p;
+    FurrowProcessor p;
     auto state = saved (p);
     auto& kick = state.setups[0];
     kick.sample.kind = SampleRef::Kind::File;
@@ -255,15 +256,17 @@ TEST_CASE ("A sample file loads in the background and plays from its first frame
 TEST_CASE ("A missing sample file keeps its lane and its reference")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     auto state = saved (p);
     state.setups[0].sample.kind = SampleRef::Kind::File;
     state.setups[0].sample.path = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("furrow-no-such-file.wav").getFullPathName().toStdString();
     state.setups[0].sample.hash.fill (7);
     state.setups[2].settings.target = Target::Midi;
     std::vector<std::uint8_t> bytes;
+    bool legacy = false;
     SECTION ("legacy state migrates without losing the missing reference")
     {
+        legacy = true;
         bytes = encode (state);
     }
     SECTION ("current state round-trips without losing the missing reference")
@@ -276,10 +279,13 @@ TEST_CASE ("A missing sample file keeps its lane and its reference")
     CHECK (restored.version == pluginMetadataVersion);
     CHECK (restored.words == state.words);
     CHECK (restored.setups == state.setups);
-    CHECK (restored.metadata == state.metadata);
-    std::vector<std::uint8_t> currentBytes;
-    encodePluginState (state.words, state.setups, state.metadata, currentBytes);
-    CHECK (save (p) == currentBytes);
+    if (! legacy)
+    {
+        CHECK (restored.metadata == state.metadata);
+        std::vector<std::uint8_t> currentBytes;
+        encodePluginState (state.words, state.setups, state.metadata, currentBytes);
+        CHECK (save (p) == currentBytes);
+    }
 
     prepare (p);
     const auto run = play (p, block);
@@ -289,7 +295,7 @@ TEST_CASE ("A missing sample file keeps its lane and its reference")
 TEST_CASE ("A lane plays on its own output bus when the host turns that bus on")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     auto layout = p.getBusesLayout();
     REQUIRE (layout.outputBuses.size() == outputs);
     layout.outputBuses.getReference (1) = juce::AudioChannelSet::stereo();
@@ -313,7 +319,7 @@ TEST_CASE ("A lane plays on its own output bus when the host turns that bus on")
 TEST_CASE ("A version 1 state from the development builds loads with every lane as a MIDI lane")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     const auto words = saved (p).words;
     std::vector<std::uint8_t> engineBytes;
     state::toBytes (words, engineBytes);
@@ -334,7 +340,7 @@ TEST_CASE ("A version 1 state from the development builds loads with every lane 
 TEST_CASE ("Bypass releases a held MIDI note on its original channel")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     auto state = saved (p);
     state.setups[0].settings.target = Target::Midi;
     state.setups[0].settings.channel = 10;
@@ -362,7 +368,7 @@ TEST_CASE ("Bypass releases a held MIDI note on its original channel")
 TEST_CASE ("State replacement releases a held MIDI note through its old channel")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     auto state = saved (p);
     state.setups[0].settings.target = Target::Midi;
     state.setups[0].settings.channel = 10;
@@ -402,7 +408,7 @@ TEST_CASE ("State replacement releases a held MIDI note through its old channel"
 TEST_CASE ("An unreadable Furrow state is preserved and silences playback")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     auto rejected = save (p);
     rejected[4] = 99;
     load (p, rejected);
@@ -416,7 +422,7 @@ TEST_CASE ("An unreadable Furrow state is preserved and silences playback")
 TEST_CASE ("A good state recovers from an unreadable Furrow container")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     const auto good = save (p);
     for (const std::size_t length : { 4u, 5u, 8u })
     {
@@ -435,7 +441,7 @@ TEST_CASE ("A good state recovers from an unreadable Furrow container")
 TEST_CASE ("Unrelated state bytes do not erase a valid rack or its load error")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     const auto good = save (p);
     const std::vector<std::uint8_t> unrelated { 'N', 'O', 'P', 'E', 1, 2, 3 };
     load (p, unrelated);
@@ -450,7 +456,7 @@ TEST_CASE ("Unrelated state bytes do not erase a valid rack or its load error")
 TEST_CASE ("Changing a playing MIDI lane into a sample lane releases the MIDI route")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor p;
+    FurrowProcessor p;
     auto state = saved (p);
     state.setups[0].settings.target = Target::Midi;
     state.setups[0].settings.channel = 10;
@@ -470,4 +476,52 @@ TEST_CASE ("Changing a playing MIDI lane into a sample lane releases the MIDI ro
         return message.isNoteOff() && message.getNoteNumber() == 36 && message.getChannel() == 10;
     }));
     p.setPlayHead (nullptr);
+}
+
+TEST_CASE ("processBlock and processBlockBypassed perform zero audio-thread allocations")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor p;
+    auto state = saved (p);
+    state.setups[0].settings.target = Target::Midi;
+    state.setups[0].settings.channel = 10;
+    load (p, encode (state));
+    prepare (p);
+
+    Transport transport;
+    p.setPlayHead (&transport);
+    juce::AudioBuffer<float> audio (p.getTotalNumOutputChannels(), block);
+    // Warm up one block before counting so initial engine settle is out of the way.
+    {
+        juce::MidiBuffer warm;
+        p.processBlock (audio, warm);
+    }
+
+    {
+        const furrow::test::CountAllocations guard;
+        for (int i = 1; i <= 32; ++i)
+        {
+            juce::MidiBuffer freshHostMidi;
+            transport.ppq = (i * block) / rate * 2.0;
+            p.processBlock (audio, freshHostMidi);
+        }
+        juce::MidiBuffer bypassMidi;
+        p.processBlockBypassed (audio, bypassMidi);
+        CHECK (furrow::test::allocations.load() == 0);
+    }
+    p.setPlayHead (nullptr);
+}
+
+TEST_CASE ("Loading a legacy v2 state resets prior lane and pattern metadata")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor p;
+    auto* rename = new juce::DynamicObject();
+    rename->setProperty ("action", "renameLane");
+    rename->setProperty ("lane", 0);
+    rename->setProperty ("name", "Stale Name");
+    REQUIRE (p.edit (juce::var (rename)).wasOk());
+    const auto legacy = encode (saved (p));
+    load (p, legacy);
+    CHECK (p.editorState()["lanes"][0]["name"].toString() == "Lane 1");
 }

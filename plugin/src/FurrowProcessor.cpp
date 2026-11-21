@@ -1,4 +1,4 @@
-#include "SpikeProcessor.h"
+#include "FurrowProcessor.h"
 #if FURROW_ENABLE_WEBVIEW
 #include "PluginEditor.h"
 #endif
@@ -46,22 +46,21 @@ bool sameSample (const SampleRef& a, const SampleRef& b)
 }
 }
 
-SpikeProcessor::SpikeProcessor() : AudioProcessor (buses()), modelEngine (std::make_unique<furrow::Engine>())
+FurrowProcessor::FurrowProcessor() : AudioProcessor (buses()), modelEngine (std::make_unique<furrow::Engine>())
 {
+    addParameter (globalSwingParam = new juce::AudioParameterFloat (juce::ParameterID { "globalSwing", 1 }, "Global Swing", 0.0f, 1.0f, 0.0f));
+    addParameter (truncateParam = new juce::AudioParameterBool (juce::ParameterID { "truncateSwing", 1 }, "Truncate Swing", false));
+    addParameter (bypassParam = new juce::AudioParameterBool (juce::ParameterID { "bypass", 1 }, "Bypass", false));
     const auto words = defaultRack();
     modelEngine->loadState (words);
     audioRack = new PreparedRack {std::make_unique<furrow::Engine>(), 0};
     audioEngine = audioRack->engine.get();
     audioEngine->loadState (words);
+    resetMetadata();
     for (int s = 0; s < furrow::lanes; ++s)
-    {
         playheads[static_cast<std::size_t> (s)] = -1;
-        laneNames[static_cast<std::size_t> (s)] = "Lane " + juce::String (s + 1);
-        laneColors[static_cast<std::size_t> (s)] = "#c3b374";
-    }
-    for (int p = 0; p < furrow::patterns; ++p)
-        patternNames[static_cast<std::size_t> (p)] = "Pattern " + juce::String (p + 1);
     const char* names[] {"Kick", "Snare", "Closed hat", "Open hat"};
+    const char* colors[] {"#E2B24A", "#C987AE", "#8DB3D6", "#A89BE0"};
     std::vector<LaneSetup> setups;
     for (int s = 0; s < 4; ++s)
     {
@@ -71,21 +70,68 @@ SpikeProcessor::SpikeProcessor() : AudioProcessor (buses()), modelEngine (std::m
         setup.sample.kind = SampleRef::Kind::Builtin;
         setup.sample.builtin = static_cast<furrow::sampler::Builtin> (s);
         laneNames[static_cast<std::size_t> (s)] = names[s];
+        laneColors[static_cast<std::size_t> (s)] = colors[s];
         setups.push_back (setup);
     }
     applySetups (setups, laneIds());
     for (std::size_t i = 0; i < midiSlots; ++i)
-    {
         midiBuffers[i].ensureSize (midiBytes);
+    scratchMidiSlot = 0;
+    for (std::size_t i = 1; i < midiSlots; ++i)
         readyMidi.push (static_cast<int> (i));
-    }
     loader = std::make_unique<SampleLoader> ([this] (SampleLoader::Result&& r) { onLoaded (std::move (r)); }, [this] {
         const std::lock_guard lock (modelLock);
         collect();
         sync();
     });
 }
-SpikeProcessor::~SpikeProcessor()
+
+void FurrowProcessor::resetMetadata()
+{
+    const char* palette[] {"#E2B24A", "#8DB3D6", "#C987AE", "#A3BE6E", "#D2814F", "#A89BE0"};
+    for (int s = 0; s < furrow::lanes; ++s)
+    {
+        laneNames[static_cast<std::size_t> (s)] = "Lane " + juce::String (s + 1);
+        laneColors[static_cast<std::size_t> (s)] = palette[s % 6];
+    }
+    for (int p = 0; p < furrow::patterns; ++p)
+        patternNames[static_cast<std::size_t> (p)] = "Pattern " + juce::String (p + 1);
+    windowWidth = 1100;
+    windowHeight = 700;
+}
+
+void FurrowProcessor::syncParametersFromModelLocked()
+{
+    if (globalSwingParam != nullptr)
+    {
+        const float swingNorm = static_cast<float> (modelEngine->rackField (furrow::GlobalSwing)) / 10000.0f;
+        if (std::abs (globalSwingParam->get() - swingNorm) > 1e-5f)
+            globalSwingParam->setValueNotifyingHost (swingNorm);
+    }
+    if (truncateParam != nullptr)
+    {
+        const bool trunc = modelEngine->rackField (furrow::Truncate) != 0;
+        if (truncateParam->get() != trunc)
+            truncateParam->setValueNotifyingHost (trunc ? 1.0f : 0.0f);
+    }
+}
+
+void FurrowProcessor::syncAudioPatternLocked()
+{
+    const int pending = modelEngine->pendingPattern();
+    if (pending < 0)
+        return;
+    const int active = audioPattern.load (std::memory_order_acquire);
+    const int audioPending = audioPendingPattern.load (std::memory_order_acquire);
+    if (audioPending < 0 && active == pending)
+    {
+        const furrow::Command commit { furrow::Op::SetRack, furrow::CurrentPattern, active, 0, 0, 0 };
+        modelEngine->apply (std::span (&commit, 1), [] (const furrow::MidiEvent&) {});
+        selectedPattern.store (active, std::memory_order_release);
+        bumpRevision();
+    }
+}
+FurrowProcessor::~FurrowProcessor()
 {
     loader.reset();
     delete preparedEngine.exchange (nullptr);
@@ -96,7 +142,7 @@ SpikeProcessor::~SpikeProcessor()
     while (edits.pop (batch)) delete batch;
     while (retiredEdits.pop (batch)) delete batch;
 }
-juce::AudioProcessorEditor* SpikeProcessor::createEditor()
+juce::AudioProcessorEditor* FurrowProcessor::createEditor()
 {
 #if FURROW_ENABLE_WEBVIEW
     return new PluginEditor (*this);
@@ -104,7 +150,7 @@ juce::AudioProcessorEditor* SpikeProcessor::createEditor()
     return nullptr;
 #endif
 }
-bool SpikeProcessor::hasEditor() const
+bool FurrowProcessor::hasEditor() const
 {
 #if FURROW_ENABLE_WEBVIEW
     return true;
@@ -112,21 +158,21 @@ bool SpikeProcessor::hasEditor() const
     return false;
 #endif
 }
-juce::AudioProcessor::BusesProperties SpikeProcessor::buses()
+juce::AudioProcessor::BusesProperties FurrowProcessor::buses()
 {
     auto result = BusesProperties().withOutput ("Main", juce::AudioChannelSet::stereo(), true);
     for (int bus = 2; bus <= furrow::sampler::outputs; ++bus)
         result = result.withOutput ("Out " + juce::String (bus), juce::AudioChannelSet::stereo(), false);
     return result;
 }
-void SpikeProcessor::prepareToPlay (double rate, int)
+void FurrowProcessor::prepareToPlay (double rate, int)
 {
     audioEngine->prepare (rate);
     sampler.prepare (rate);
     resetRequested = true;
 }
-void SpikeProcessor::reset() { resetRequested.store (true, std::memory_order_release); }
-bool SpikeProcessor::isBusesLayoutSupported (const BusesLayout& layout) const
+void FurrowProcessor::reset() { resetRequested.store (true, std::memory_order_release); }
+bool FurrowProcessor::isBusesLayoutSupported (const BusesLayout& layout) const
 {
     const auto usable = [] (const juce::AudioChannelSet& set) {
         return set == juce::AudioChannelSet::stereo() || set == juce::AudioChannelSet::mono();
@@ -136,7 +182,7 @@ bool SpikeProcessor::isBusesLayoutSupported (const BusesLayout& layout) const
         if (! layout.outputBuses[b].isDisabled() && ! usable (layout.outputBuses[b])) return false;
     return true;
 }
-furrow::BlockInfo SpikeProcessor::readTransport (int samples)
+furrow::BlockInfo FurrowProcessor::readTransport (int samples)
 {
     furrow::BlockInfo info;
     info.numSamples = samples;
@@ -157,7 +203,7 @@ furrow::BlockInfo SpikeProcessor::readTransport (int samples)
     hostPlaying = info.playing;
     return info;
 }
-void SpikeProcessor::route (const furrow::MidiEvent& event, juce::MidiBuffer& midi)
+void FurrowProcessor::route (const furrow::MidiEvent& event, juce::MidiBuffer& midi)
 {
     const auto& lane = sampler.lane (event.lane);
     if (lane.target == Target::Sample)
@@ -174,7 +220,7 @@ void SpikeProcessor::route (const furrow::MidiEvent& event, juce::MidiBuffer& mi
     midi.addEvent (juce::MidiMessage (static_cast<int> (event.status) | (lane.channel - 1), event.data1, event.data2), event.offset);
     emittedBytes += 9;
 }
-void SpikeProcessor::beginBlock (juce::MidiBuffer& midi)
+void FurrowProcessor::beginBlock (juce::MidiBuffer& midi)
 {
     if (retiredCount.load (std::memory_order_acquire) < 63)
         if (auto* ready = preparedEngine.exchange (nullptr, std::memory_order_acq_rel))
@@ -206,59 +252,85 @@ void SpikeProcessor::beginBlock (juce::MidiBuffer& midi)
         }
         retiredEdits.push (batch);
     }
-}
-int SpikeProcessor::acquireMidi (juce::MidiBuffer& midi)
-{
-    if (lastMidiSlot >= 0)
+    if (! blocked.load (std::memory_order_acquire))
     {
-        midi.swapWith (midiBuffers[static_cast<std::size_t> (lastMidiSlot)]);
-        midiBuffers[static_cast<std::size_t> (lastMidiSlot)].clear();
-        return lastMidiSlot;
+        if (globalSwingParam != nullptr)
+        {
+            const int swingVal = std::clamp (static_cast<int> (std::lround (globalSwingParam->get() * 10000.0f)), 0, 10000);
+            if (swingVal != lastAudioSwing)
+            {
+                const furrow::Command cmd { furrow::Op::SetRack, furrow::GlobalSwing, swingVal, 0, 0, 0 };
+                audioEngine->apply (std::span (&cmd, 1), [&] (const auto& e) { route (e, midi); });
+                lastAudioSwing = swingVal;
+            }
+        }
+        if (truncateParam != nullptr)
+        {
+            const int truncVal = truncateParam->get() ? 1 : 0;
+            if (truncVal != lastAudioTruncate)
+            {
+                const furrow::Command cmd { furrow::Op::SetRack, furrow::Truncate, truncVal, 0, 0, 0 };
+                audioEngine->apply (std::span (&cmd, 1), [&] (const auto& e) { route (e, midi); });
+                lastAudioTruncate = truncVal;
+            }
+        }
     }
-    int slot;
-    if (readyMidi.pop (slot)) return slot;
-    midiOverflow = true;
-    resetRequested = true;
-    return -1;
 }
-void SpikeProcessor::deliverMidi (int slot, juce::MidiBuffer& midi)
+void FurrowProcessor::deliverMidi (juce::MidiBuffer& midi)
 {
-    auto& output = midiBuffers[static_cast<std::size_t> (slot)];
+    if (scratchMidiSlot < 0)
+        return;
+    auto& output = midiBuffers[static_cast<std::size_t> (scratchMidiSlot)];
+    if (output.isEmpty())
+        return;
+    int nextSlot = -1;
+    if (! readyMidi.pop (nextSlot))
+    {
+        midiOverflow = true;
+        resetRequested = true;
+        output.clear();
+        return;
+    }
     output.swapWith (midi);
-    lastMidiSlot = slot;
+    usedMidi.push (scratchMidiSlot);
+    scratchMidiSlot = nextSlot;
 }
-void SpikeProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+void FurrowProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     buffer.clear();
     midi.clear();
-    const int slot = acquireMidi (midi);
-    if (slot < 0) return;
-    auto& output = midiBuffers[static_cast<std::size_t> (slot)];
+    if (scratchMidiSlot < 0) return;
+    auto& output = midiBuffers[static_cast<std::size_t> (scratchMidiSlot)];
     output.clear();
     emittedBytes = 0;
     beginBlock (output);
     audioEngine->panic ([&] (const auto& e) { route (e, output); });
     sampler.reset();
     audioEngine->reset();
-    deliverMidi (slot, midi);
+    audioPattern.store (audioEngine->pattern(), std::memory_order_release);
+    audioPendingPattern.store (audioEngine->pendingPattern(), std::memory_order_release);
+    deliverMidi (midi);
 }
-void SpikeProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+void FurrowProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
+    if (bypassParam != nullptr && bypassParam->get())
+    {
+        processBlockBypassed (buffer, midi);
+        return;
+    }
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
     midi.clear();
-    if (buffer.getNumSamples() <= 0) return;
-    const int slot = acquireMidi (midi);
-    if (slot < 0) return;
-    auto& output = midiBuffers[static_cast<std::size_t> (slot)];
+    if (buffer.getNumSamples() <= 0 || scratchMidiSlot < 0) return;
+    auto& output = midiBuffers[static_cast<std::size_t> (scratchMidiSlot)];
     output.clear();
     emittedBytes = 0;
     beginBlock (output);
-    std::array<furrow::sampler::Bus, furrow::sampler::outputs> outputs {};
+    std::array<furrow::sampler::Bus, furrow::sampler::outputs> busOutputs {};
     for (int b = 0; b < std::min (getBusCount (false), furrow::sampler::outputs); ++b)
     {
         auto bus = getBusBuffer (buffer, false, b);
-        if (bus.getNumChannels() > 0) outputs[static_cast<std::size_t> (b)] = {bus.getWritePointer (0), bus.getNumChannels() > 1 ? bus.getWritePointer (1) : nullptr};
+        if (bus.getNumChannels() > 0) busOutputs[static_cast<std::size_t> (b)] = {bus.getWritePointer (0), bus.getNumChannels() > 1 ? bus.getWritePointer (1) : nullptr};
     }
     const auto transport = readTransport (buffer.getNumSamples());
     if (! blocked.load (std::memory_order_acquire))
@@ -267,23 +339,26 @@ void SpikeProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         audioEngine->process (transport, [&] (const furrow::MidiEvent& e) {
             if (sampler.lane (e.lane).target == Target::Sample && e.offset > rendered)
             {
-                sampler.render (outputs, rendered, e.offset);
+                sampler.render (busOutputs, rendered, e.offset);
                 rendered = e.offset;
             }
             route (e, output);
         });
-        sampler.render (outputs, rendered, buffer.getNumSamples());
+        sampler.render (busOutputs, rendered, buffer.getNumSamples());
     }
     else
     {
         audioEngine->panic ([&] (const auto& e) { route (e, output); });
         sampler.reset();
     }
-    for (int s = 0; s < furrow::lanes; ++s) playheads[static_cast<std::size_t> (s)] = audioEngine->playhead (s);
-    deliverMidi (slot, midi);
+    audioPattern.store (audioEngine->pattern(), std::memory_order_release);
+    audioPendingPattern.store (audioEngine->pendingPattern(), std::memory_order_release);
+    for (int s = 0; s < furrow::lanes; ++s) playheads[static_cast<std::size_t> (s)].store (audioEngine->playhead (s), std::memory_order_relaxed);
+    deliverMidi (midi);
 }
-void SpikeProcessor::collect()
+void FurrowProcessor::collect()
 {
+    syncAudioPatternLocked();
     PreparedRack* rack = nullptr;
     while (retiredEngines.pop (rack)) { delete rack; retiredCount.fetch_sub (1, std::memory_order_release); }
     EditBatch* batch = nullptr;
@@ -297,19 +372,19 @@ void SpikeProcessor::collect()
     }
     sampler.collect();
 }
-void SpikeProcessor::publishEngine (std::unique_ptr<furrow::Engine> replacement)
+void FurrowProcessor::publishEngine (std::unique_ptr<furrow::Engine> replacement)
 {
     auto* rack = new PreparedRack {std::move (replacement), ++generation};
     delete preparedEngine.exchange (rack, std::memory_order_acq_rel);
 }
-SpikeProcessor::LaneIds SpikeProcessor::laneIds() const
+FurrowProcessor::LaneIds FurrowProcessor::laneIds() const
 {
     LaneIds ids {};
     for (int s = 0; s < furrow::lanes; ++s)
         if (modelEngine->laneField (s, furrow::Active)) ids[static_cast<std::size_t> (s)] = modelEngine->laneField (s, furrow::Id);
     return ids;
 }
-void SpikeProcessor::applySetups (std::span<const LaneSetup> setups, const LaneIds& ids)
+void FurrowProcessor::applySetups (std::span<const LaneSetup> setups, const LaneIds& ids)
 {
     for (int s = 0; s < furrow::lanes; ++s)
     {
@@ -323,22 +398,29 @@ void SpikeProcessor::applySetups (std::span<const LaneSetup> setups, const LaneI
     }
     sync();
 }
-void SpikeProcessor::requestSample (int slot, LaneModel& lane, const SampleRef& ref)
+void FurrowProcessor::requestSample (int slot, LaneModel& lane, const SampleRef& ref)
 {
     lane.requested = ref;
     ++lane.generation;
     lane.pending.reset();
+    lane.peaks.fill (0.0f);
+    lane.hasPeaks = false;
     lane.error.clear();
     lane.sampleDirty = false;
     if (ref.kind == SampleRef::Kind::None) lane.sampleDirty = true;
     else if (ref.kind == SampleRef::Kind::Builtin)
     {
         lane.pending = furrow::sampler::makeBuiltin (ref.builtin);
+        if (lane.pending)
+        {
+            lane.peaks = SampleLoader::computePeaks (*lane.pending);
+            lane.hasPeaks = true;
+        }
         lane.sampleDirty = true;
     }
     else if (loader) loader->request (slot, lane.generation, juce::String::fromUTF8 (ref.path.c_str()));
 }
-void SpikeProcessor::sync()
+void FurrowProcessor::sync()
 {
     for (int s = 0; s < furrow::lanes; ++s)
     {
@@ -347,18 +429,21 @@ void SpikeProcessor::sync()
         if (lane.sampleDirty && sampler.setSample (s, lane.pending)) lane.sampleDirty = false;
     }
 }
-void SpikeProcessor::onLoaded (SampleLoader::Result&& result)
+void FurrowProcessor::onLoaded (SampleLoader::Result&& result)
 {
     const std::lock_guard lock (modelLock);
     auto& lane = model[static_cast<std::size_t> (result.lane)];
     if (lane.generation != result.generation) return;
     lane.pending = std::move (result.sample);
+    lane.peaks = result.peaks;
+    lane.hasPeaks = result.hasPeaks;
     lane.error = result.error;
     lane.sampleDirty = true;
     if (lane.pending && lane.setup.sample.kind == SampleRef::Kind::File) lane.setup.sample.hash = result.hash;
     sync();
+    bumpRevision();
 }
-std::vector<SpikeProcessor::LaneSetup> SpikeProcessor::laneSetups()
+std::vector<FurrowProcessor::LaneSetup> FurrowProcessor::laneSetups()
 {
     const std::lock_guard lock (modelLock);
     std::vector<LaneSetup> result;
@@ -366,7 +451,7 @@ std::vector<SpikeProcessor::LaneSetup> SpikeProcessor::laneSetups()
     for (int s = 0; s < furrow::lanes; ++s) if (ids[static_cast<std::size_t> (s)] != 0) result.push_back (model[static_cast<std::size_t> (s)].setup);
     return result;
 }
-std::unique_ptr<furrow::Engine> SpikeProcessor::patternEngineSnapshot()
+std::unique_ptr<furrow::Engine> FurrowProcessor::patternEngineSnapshot()
 {
     const std::lock_guard lock (modelLock);
     auto engine = std::make_unique<furrow::Engine>();
@@ -375,9 +460,28 @@ std::unique_ptr<furrow::Engine> SpikeProcessor::patternEngineSnapshot()
     engine->loadState (words);
     return engine;
 }
-void SpikeProcessor::saveLocked (juce::MemoryBlock& destination)
+void FurrowProcessor::saveLocked (juce::MemoryBlock& destination)
 {
+    syncAudioPatternLocked();
     if (! rejectedState.empty()) { destination.replaceAll (rejectedState.data(), rejectedState.size()); return; }
+    if (globalSwingParam != nullptr)
+    {
+        const int swingVal = std::clamp (static_cast<int> (std::lround (globalSwingParam->get() * 10000.0f)), 0, 10000);
+        if (swingVal != modelEngine->rackField (furrow::GlobalSwing))
+        {
+            const furrow::Command cmd { furrow::Op::SetRack, furrow::GlobalSwing, swingVal, 0, 0, 0 };
+            modelEngine->apply (std::span (&cmd, 1), [] (const furrow::MidiEvent&) {});
+        }
+    }
+    if (truncateParam != nullptr)
+    {
+        const int truncVal = truncateParam->get() ? 1 : 0;
+        if (truncVal != modelEngine->rackField (furrow::Truncate))
+        {
+            const furrow::Command cmd { furrow::Op::SetRack, furrow::Truncate, truncVal, 0, 0, 0 };
+            modelEngine->apply (std::span (&cmd, 1), [] (const furrow::MidiEvent&) {});
+        }
+    }
     std::vector<std::int32_t> words;
     modelEngine->saveState (words);
     std::vector<std::uint8_t> bytes;
@@ -393,12 +497,12 @@ void SpikeProcessor::saveLocked (juce::MemoryBlock& destination)
     furrow::encodePluginState (words, laneSetups(), metadata, bytes);
     destination.replaceAll (bytes.data(), bytes.size());
 }
-void SpikeProcessor::getStateInformation (juce::MemoryBlock& destination)
+void FurrowProcessor::getStateInformation (juce::MemoryBlock& destination)
 {
     const std::lock_guard lock (modelLock);
     saveLocked (destination);
 }
-void SpikeProcessor::setStateInformation (const void* data, int size)
+void FurrowProcessor::setStateInformation (const void* data, int size)
 {
     if (! data || size < 4) return;
     const auto bytes = std::span (static_cast<const std::uint8_t*> (data), static_cast<std::size_t> (size));
@@ -412,12 +516,15 @@ void SpikeProcessor::setStateInformation (const void* data, int size)
         lastError = "This Furrow state cannot be read. Load a compatible state to recover. The original data is retained.";
         blocked = true;
         resetRequested = true;
+        bumpRevision();
         return;
     }
     auto audio = std::make_unique<furrow::Engine>();
     audio->loadState (state.words);
     modelEngine = std::move (replacement);
     selectedPattern = modelEngine->pattern();
+    audioPattern = modelEngine->pattern();
+    audioPendingPattern = modelEngine->pendingPattern();
     if (state.version >= furrow::pluginMetadataVersion)
     {
         for (std::size_t i = 0; i < laneNames.size(); ++i)
@@ -429,14 +536,21 @@ void SpikeProcessor::setStateInformation (const void* data, int size)
         windowWidth = state.metadata.windowWidth;
         windowHeight = state.metadata.windowHeight;
     }
+    else
+    {
+        resetMetadata();
+    }
     applySetups (state.setups, laneIds());
+    syncParametersFromModelLocked();
     publishEngine (std::move (audio));
     rejectedState.clear();
     blocked = false;
     lastError.clear();
+    windowRevision.fetch_add (1, std::memory_order_release);
+    bumpRevision();
     updateHostDisplay (ChangeDetails().withProgramChanged (true));
 }
-void SpikeProcessor::remember()
+void FurrowProcessor::remember()
 {
     juce::MemoryBlock bytes;
     saveLocked (bytes);
@@ -444,7 +558,7 @@ void SpikeProcessor::remember()
     undoStates.push_back (std::move (bytes));
     redoStates.clear();
 }
-juce::Result SpikeProcessor::restoreHistory (bool redo)
+juce::Result FurrowProcessor::restoreHistory (bool redo)
 {
     auto& source = redo ? redoStates : undoStates;
     auto& destination = redo ? undoStates : redoStates;
@@ -457,7 +571,7 @@ juce::Result SpikeProcessor::restoreHistory (bool redo)
     setStateInformation (previous.getData(), static_cast<int> (previous.getSize()));
     return juce::Result::ok();
 }
-juce::Result SpikeProcessor::applyLocked (std::span<const furrow::Command> commands, bool history)
+juce::Result FurrowProcessor::applyLocked (std::span<const furrow::Command> commands, bool history)
 {
     if (blocked) return juce::Result::fail ("Load a readable state before editing.");
     collect();
@@ -484,13 +598,14 @@ juce::Result SpikeProcessor::applyLocked (std::span<const furrow::Command> comma
     if (std::any_of (commands.begin(), commands.end(), [] (const auto& command) {
         return command.op == furrow::Op::AddLane || command.op == furrow::Op::RemoveLane;
     })) applySetups (laneSetups(), laneIds());
+    bumpRevision();
     updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
     return juce::Result::ok();
 }
-juce::Result SpikeProcessor::applyCommands (std::span<const furrow::Command> commands)
+juce::Result FurrowProcessor::applyCommands (std::span<const furrow::Command> commands)
 {
     const std::lock_guard lock (modelLock);
     return applyLocked (commands);
 }
 
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new SpikeProcessor(); }
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new FurrowProcessor(); }

@@ -13,9 +13,9 @@ from pathlib import Path
 
 def package(build, destination, system):
     root = Path(__file__).resolve().parents[1]
-    artifacts = build / 'FurrowSpike_artefacts' / 'Release'
-    required = [artifacts / 'VST3' / 'Furrow Spike.vst3', artifacts / 'CLAP' / 'Furrow Spike.clap']
-    standalone = artifacts / 'Standalone' / ('Furrow Spike.exe' if system == 'windows' else 'Furrow Spike.app' if system == 'darwin' else 'Furrow Spike')
+    artifacts = build / 'Furrow_artefacts' / 'Release'
+    required = [artifacts / 'VST3' / 'Furrow.vst3', artifacts / 'CLAP' / 'Furrow.clap']
+    standalone = artifacts / 'Standalone' / ('Furrow.exe' if system == 'windows' else 'Furrow.app' if system == 'darwin' else 'Furrow')
     required.append(standalone)
     absent = [str(path) for path in required if not path.exists()]
     if absent:

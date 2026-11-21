@@ -71,6 +71,34 @@ void SampleLoader::run()
     }
 }
 
+std::array<float, SampleLoader::peakBins> SampleLoader::computePeaks (const furrow::sampler::SampleBuffer& buffer)
+{
+    std::array<float, peakBins> peaks {};
+    const auto frames = buffer.frames();
+    const int channels = buffer.channels();
+    if (frames < 1 || channels < 1)
+        return peaks;
+    float maxPeak = 0.0f;
+    for (int bin = 0; bin < peakBins; ++bin)
+    {
+        const auto start = (frames * bin) / peakBins;
+        const auto end = std::max (start + 1, (frames * (bin + 1)) / peakBins);
+        float binPeak = 0.0f;
+        for (int c = 0; c < channels; ++c)
+        {
+            const float* data = buffer.channel (c);
+            for (std::int64_t f = start; f < std::min (frames, end); ++f)
+                binPeak = std::max (binPeak, std::abs (data[f]));
+        }
+        peaks[static_cast<std::size_t> (bin)] = binPeak;
+        maxPeak = std::max (maxPeak, binPeak);
+    }
+    if (maxPeak > 0.0f)
+        for (float& p : peaks)
+            p /= maxPeak;
+    return peaks;
+}
+
 SampleLoader::Result SampleLoader::load (juce::AudioFormatManager& formats, const juce::String& path)
 {
     using furrow::sampler::SampleBuffer;
@@ -110,6 +138,8 @@ SampleLoader::Result SampleLoader::load (juce::AudioFormatManager& formats, cons
         result.error = "The file's audio could not be used: " + path;
         return result;
     }
+    result.peaks = computePeaks (*result.sample);
+    result.hasPeaks = true;
 
     const auto digest = juce::SHA256 (file).getRawData();
     if (digest.getSize() == result.hash.size())

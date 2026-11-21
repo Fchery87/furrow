@@ -18,6 +18,7 @@ struct PatternMidiExportOptions
     double sampleRate = 44100.0;
     int lengthSteps = 16;
     int ticksPerQuarter = 960;
+    int onlyLane = -1;
 };
 
 struct PatternMidiDiagnostic
@@ -32,6 +33,8 @@ struct PatternMidiDiagnostic
 struct PatternMidiImportPreview
 {
     std::vector<Command> commands;
+    std::vector<int> baseNotes;
+    std::vector<int> trackChannels;
     int lanes = 0;
     int lengthSteps = 0;
     std::vector<PatternMidiDiagnostic> diagnostics;

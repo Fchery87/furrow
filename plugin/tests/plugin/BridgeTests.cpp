@@ -1,4 +1,4 @@
-#include "SpikeProcessor.h"
+#include "FurrowProcessor.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -12,7 +12,7 @@ juce::var command (const char* action, std::initializer_list<std::pair<const cha
     return juce::var (object);
 }
 
-juce::MemoryBlock save (SpikeProcessor& processor)
+juce::MemoryBlock save (FurrowProcessor& processor)
 {
     juce::MemoryBlock bytes;
     processor.getStateInformation (bytes);
@@ -29,7 +29,7 @@ struct TemporaryFile
 TEST_CASE ("The processor exposes a structured editor snapshot")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor processor;
+    FurrowProcessor processor;
     const auto snapshot = processor.editorState();
     REQUIRE (snapshot.isObject());
     CHECK (snapshot.hasProperty ("lanes"));
@@ -41,7 +41,7 @@ TEST_CASE ("The processor exposes a structured editor snapshot")
 TEST_CASE ("Clearing a lane silences only the selected pattern and is undoable")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor processor;
+    FurrowProcessor processor;
     REQUIRE (processor.edit (command ("setStep", {{"lane", 0}, {"step", 0}, {"field", furrow::On}, {"value", 1}})).wasOk());
     REQUIRE (processor.edit (command ("pattern", {{"value", 1}})).wasOk());
     REQUIRE (processor.edit (command ("setStep", {{"lane", 0}, {"step", 511}, {"field", furrow::On}, {"value", 1}})).wasOk());
@@ -58,7 +58,7 @@ TEST_CASE ("Clearing a lane silences only the selected pattern and is undoable")
 TEST_CASE ("The editor rejects malformed edits and accepts a bounded step edit")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor processor;
+    FurrowProcessor processor;
     CHECK_FALSE (processor.edit (juce::var (new juce::DynamicObject)).wasOk());
 
     auto* command = new juce::DynamicObject();
@@ -73,7 +73,7 @@ TEST_CASE ("The editor rejects malformed edits and accepts a bounded step edit")
 TEST_CASE ("Editor changes survive host save and reopen before an audio block")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor source;
+    FurrowProcessor source;
     REQUIRE (source.edit (command ("pattern", {{"value", 3}})).wasOk());
     REQUIRE (source.edit (command ("renamePattern", {{"name", "Fill"}})).wasOk());
     REQUIRE (source.edit (command ("renameLane", {{"lane", 0}, {"name", "Deep kick"}})).wasOk());
@@ -83,7 +83,7 @@ TEST_CASE ("Editor changes survive host save and reopen before an audio block")
     REQUIRE (source.edit (command ("setSampler", {{"lane", 0}, {"field", "tune"}, {"value", -300}})).wasOk());
     REQUIRE (source.edit (command ("resize", {{"width", 1280}, {"height", 800}})).wasOk());
     const auto bytes = save (source);
-    SpikeProcessor restored;
+    FurrowProcessor restored;
     restored.setStateInformation (bytes.getData(), static_cast<int> (bytes.getSize()));
     const auto state = restored.editorState();
     CHECK (static_cast<int> (state["pattern"]) == 3);
@@ -107,7 +107,7 @@ TEST_CASE ("Editor changes survive host save and reopen before an audio block")
 TEST_CASE ("Rejected editor operations preserve persisted state and redo history")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor processor;
+    FurrowProcessor processor;
     REQUIRE (processor.edit (command ("renameLane", {{"lane", 0}, {"name", "Changed"}})).wasOk());
     REQUIRE (processor.edit (command ("undo")).wasOk());
     const auto before = save (processor);
@@ -137,7 +137,7 @@ TEST_CASE ("Rejected editor operations preserve persisted state and redo history
 TEST_CASE ("Kit loading restores sounds without replacing patterns and is undoable")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor processor;
+    FurrowProcessor processor;
     TemporaryFile kit;
     REQUIRE (processor.edit (command ("kitSave", {{"path", kit.file.getFullPathName()}})).wasOk());
     REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "tune"}, {"value", 200}})).wasOk());
@@ -170,7 +170,7 @@ TEST_CASE ("MIDI preview is nonmutating and acceptance is a single undoable edit
     juce::MemoryOutputStream stream (bytes, false);
     REQUIRE (file.writeTo (stream));
     REQUIRE (input.file.replaceWithData (bytes.getData(), bytes.getSize()));
-    SpikeProcessor processor;
+    FurrowProcessor processor;
     REQUIRE (processor.edit (command ("pattern", {{"value", 2}})).wasOk());
     const auto before = save (processor);
     const auto canUndo = static_cast<bool> (processor.editorState()["canUndo"]);
@@ -194,7 +194,7 @@ TEST_CASE ("MIDI preview is nonmutating and acceptance is a single undoable edit
 TEST_CASE ("A full audio edit queue refuses changes without consuming undo history")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor processor;
+    FurrowProcessor processor;
     REQUIRE (processor.edit (command ("renameLane", {{"lane", 0}, {"name", "Changed"}})).wasOk());
     REQUIRE (processor.edit (command ("undo")).wasOk());
     for (int i = 0; i < 128; ++i) REQUIRE (processor.edit (command ("panic")).wasOk());
@@ -209,7 +209,7 @@ TEST_CASE ("A full audio edit queue refuses changes without consuming undo histo
 TEST_CASE ("Sampler settings are undoable and saved routing reaches a reopened processor")
 {
     const juce::ScopedJuceInitialiser_GUI juce;
-    SpikeProcessor processor;
+    FurrowProcessor processor;
     const auto original = save (processor);
     REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "channel"}, {"value", 10}})).wasOk());
     REQUIRE (processor.edit (command ("undo")).wasOk());
@@ -217,7 +217,7 @@ TEST_CASE ("Sampler settings are undoable and saved routing reaches a reopened p
     REQUIRE (processor.edit (command ("redo")).wasOk());
     REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "target"}, {"value", "midi"}})).wasOk());
     const auto bytes = save (processor);
-    SpikeProcessor restored;
+    FurrowProcessor restored;
     restored.setStateInformation (bytes.getData(), static_cast<int> (bytes.getSize()));
     restored.setRateAndBufferSizeDetails (44100.0, 64);
     restored.prepareToPlay (44100.0, 64);
@@ -237,4 +237,251 @@ TEST_CASE ("Sampler settings are undoable and saved routing reaches a reopened p
         }
     }
     CHECK (notes == 1);
+}
+
+TEST_CASE ("Pattern switching while playing queues for the next bar and syncs when it lands")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    struct PlayingTransport final : juce::AudioPlayHead
+    {
+        double ppq = 0.0;
+        juce::Optional<PositionInfo> getPosition() const override
+        {
+            PositionInfo p;
+            p.setIsPlaying (true);
+            p.setBpm (120.0);
+            p.setPpqPosition (ppq);
+            p.setTimeSignature (TimeSignature { 4, 4 });
+            p.setPpqPositionOfLastBarStart (std::floor (ppq / 4.0) * 4.0);
+            return p;
+        }
+    };
+
+    FurrowProcessor processor;
+    processor.setRateAndBufferSizeDetails (44100.0, 512);
+    processor.prepareToPlay (44100.0, 512);
+    PlayingTransport transport;
+    processor.setPlayHead (&transport);
+    juce::AudioBuffer<float> audio (processor.getTotalNumOutputChannels(), 512);
+    juce::MidiBuffer midi;
+
+    transport.ppq = 0.5;
+    processor.processBlock (audio, midi);
+    REQUIRE (processor.edit (command ("pattern", {{"value", 2}})).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["pattern"]) == 0);
+    CHECK (static_cast<int> (processor.editorState()["pendingPattern"]) == 2);
+
+    // Advance past bar 1 (beat 4.0) so the queued switch lands on the audio thread.
+    for (int i = 0; i < 160; ++i)
+    {
+        transport.ppq = 0.5 + i * (512.0 / 44100.0 * 2.0);
+        processor.processBlock (audio, midi);
+    }
+    CHECK (static_cast<int> (processor.editorState()["pattern"]) == 2);
+    CHECK (static_cast<int> (processor.editorState()["pendingPattern"]) == -1);
+    processor.setPlayHead (nullptr);
+}
+
+TEST_CASE ("Non-routing sampler edits do not kill active voices or reset playback")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    struct PlayingTransport final : juce::AudioPlayHead
+    {
+        double ppq = 0.0;
+        juce::Optional<PositionInfo> getPosition() const override
+        {
+            PositionInfo p;
+            p.setIsPlaying (true);
+            p.setBpm (120.0);
+            p.setPpqPosition (ppq);
+            return p;
+        }
+    };
+
+    FurrowProcessor processor;
+    processor.setRateAndBufferSizeDetails (44100.0, 512);
+    processor.prepareToPlay (44100.0, 512);
+    PlayingTransport transport;
+    processor.setPlayHead (&transport);
+    juce::AudioBuffer<float> audio (processor.getTotalNumOutputChannels(), 512);
+    juce::MidiBuffer midi;
+
+    transport.ppq = 0.0;
+    processor.processBlock (audio, midi);
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "decay"}, {"value", 250.0}})).wasOk());
+
+    transport.ppq = 512.0 / 44100.0 * 2.0;
+    processor.processBlock (audio, midi);
+    float peak = 0.0f;
+    for (int f = 0; f < 512; ++f) peak = std::max (peak, std::abs (audio.getSample (0, f)));
+    CHECK (peak > 0.001f);
+    processor.setPlayHead (nullptr);
+}
+
+TEST_CASE ("Window resize persists without polluting musical undo history")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor processor;
+    CHECK_FALSE (static_cast<bool> (processor.editorState()["canUndo"]));
+    REQUIRE (processor.edit (command ("resize", {{"width", 1280}, {"height", 800}})).wasOk());
+    CHECK_FALSE (static_cast<bool> (processor.editorState()["canUndo"]));
+    CHECK (static_cast<int> (processor.editorState()["width"]) == 1280);
+    CHECK (static_cast<int> (processor.editorState()["height"]) == 800);
+}
+
+TEST_CASE ("setRack validates per-field bounds and rejects Mode and RackId")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor processor;
+    CHECK_FALSE (processor.edit (command ("setRack", {{"field", furrow::RackId}, {"value", 1}})).wasOk());
+    CHECK_FALSE (processor.edit (command ("setRack", {{"field", furrow::Mode}, {"value", 1}})).wasOk());
+    CHECK_FALSE (processor.edit (command ("setRack", {{"field", furrow::GlobalSwing}, {"value", 10001}})).wasOk());
+    CHECK_FALSE (processor.edit (command ("setRack", {{"field", furrow::Truncate}, {"value", 2}})).wasOk());
+    REQUIRE (processor.edit (command ("setRack", {{"field", furrow::GlobalSwing}, {"value", 3500}})).wasOk());
+    REQUIRE (processor.edit (command ("setRack", {{"field", furrow::Truncate}, {"value", 1}})).wasOk());
+    const auto state = processor.editorState();
+    CHECK (static_cast<int> (state["globalSwing"]) == 3500);
+    CHECK (static_cast<bool> (state["truncate"]));
+    CHECK (state["lanes"][0]["peaks"].isArray());
+    CHECK (state["lanes"][0]["peaks"].size() == SampleLoader::peakBins);
+}
+
+TEST_CASE ("Wave 2 pattern tools, batch step edits, clonePattern, and rerollSeed are atomic and undoable")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor processor;
+    const auto initial = save (processor);
+
+    REQUIRE (processor.edit (command ("fillLane", {{"lane", 0}, {"every", 3}})).wasOk());
+    {
+        const auto st = processor.editorState()["lanes"][0]["steps"];
+        CHECK (static_cast<int> (st[0][furrow::On]) == 1);
+        CHECK (static_cast<int> (st[1][furrow::On]) == 0);
+        CHECK (static_cast<int> (st[3][furrow::On]) == 1);
+    }
+    REQUIRE (processor.edit (command ("rotateLane", {{"lane", 0}, {"direction", 1}})).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["lanes"][0]["steps"][1][furrow::On]) == 1);
+    CHECK (static_cast<int> (processor.editorState()["lanes"][0]["steps"][0][furrow::On]) == 1); // step 15 wrapped to 0
+
+    REQUIRE (processor.edit (command ("invertLane", {{"lane", 0}})).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["lanes"][0]["steps"][1][furrow::On]) == 0);
+    CHECK (static_cast<int> (processor.editorState()["lanes"][0]["steps"][2][furrow::On]) == 1);
+
+    juce::Array<juce::var> batch;
+    for (int s = 0; s < 4; ++s)
+    {
+        auto* e = new juce::DynamicObject();
+        e->setProperty ("lane", 0);
+        e->setProperty ("step", s);
+        e->setProperty ("field", furrow::Velocity);
+        e->setProperty ("value", 60 + s * 10);
+        batch.add (juce::var (e));
+    }
+    REQUIRE (processor.edit (command ("setStepsBatch", {{"edits", batch}})).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["lanes"][0]["steps"][3][furrow::Velocity]) == 90);
+    REQUIRE (processor.edit (command ("undo")).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["lanes"][0]["steps"][3][furrow::Velocity]) == 100);
+
+    REQUIRE (processor.edit (command ("clonePattern")).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["pattern"]) == 1);
+    CHECK (processor.editorState()["patterns"][1].toString() == "Pattern 1 copy");
+    CHECK (static_cast<int> (processor.editorState()["lanes"][0]["steps"][2][furrow::On]) == 1);
+
+    const int beforeSeed = static_cast<int> (processor.editorState()["seed"]);
+    REQUIRE (processor.edit (command ("rerollSeed")).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["seed"]) != beforeSeed);
+}
+
+TEST_CASE ("Wave 3 multi-file sample drop, MIDI import into new pattern, and SHA-256 folder relink")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    const auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("furrow-wave3-test");
+    tempDir.deleteRecursively();
+    REQUIRE (tempDir.createDirectory());
+    const auto writeTestWav = [] (const juce::File& target, float value) {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (target);
+        const auto opts = juce::AudioFormatWriterOptions().withSampleRate (44100.0).withNumChannels (1).withBitsPerSample (32)
+                              .withSampleFormat (juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
+        auto writer = wav.createWriterFor (stream, opts);
+        REQUIRE (writer != nullptr);
+        std::vector<float> samples (256, value);
+        const float* ptrs[] = { samples.data() };
+        REQUIRE (writer->writeFromFloatArrays (ptrs, 1, 256));
+    };
+
+    const auto wavA = tempDir.getChildFile ("TomHigh.wav");
+    const auto wavB = tempDir.getChildFile ("RimShot.wav");
+    writeTestWav (wavA, 0.25f);
+    writeTestWav (wavB, 0.50f);
+
+    FurrowProcessor processor;
+    juce::Array<juce::var> dropPaths;
+    dropPaths.add (wavA.getFullPathName());
+    dropPaths.add (wavB.getFullPathName());
+    REQUIRE (processor.edit (command ("addSampleFiles", {{"paths", dropPaths}})).wasOk());
+    CHECK (processor.editorState()["lanes"].size() == 6);
+    CHECK (processor.editorState()["lanes"][4]["name"].toString() == "TomHigh");
+    CHECK (processor.editorState()["lanes"][5]["name"].toString() == "RimShot");
+
+    // Wait for SHA-256 hash to populate, move wavA to a subfolder, reload state, then relink by SHA-256.
+    for (int i = 0; i < 100 && processor.editorState()["lanes"][4]["sampleHash"].toString().isEmpty(); ++i)
+        juce::Thread::sleep (20);
+    REQUIRE (processor.editorState()["lanes"][4]["sampleHash"].toString().isNotEmpty());
+    const auto savedWithHash = save (processor);
+    const auto movedDir = tempDir.getChildFile ("moved");
+    REQUIRE (movedDir.createDirectory());
+    const auto movedWav = movedDir.getChildFile ("RenamedTom.wav");
+    REQUIRE (wavA.moveFileTo (movedWav));
+
+    FurrowProcessor reopened;
+    reopened.setStateInformation (savedWithHash.getData(), static_cast<int> (savedWithHash.getSize()));
+    REQUIRE (reopened.edit (command ("relinkFolder", {{"path", movedDir.getFullPathName()}})).wasOk());
+    CHECK (reopened.editorState()["lanes"][4]["samplePath"].toString() == movedWav.getFullPathName());
+
+    // MIDI import while on non-empty Pattern 0 imports into new empty Pattern 1 without overwriting Pattern 0.
+    const auto midFile = tempDir.getChildFile ("import.mid");
+    {
+        juce::MidiFile mf;
+        mf.setTicksPerQuarterNote (960);
+        juce::MidiMessageSequence seq;
+        seq.addEvent (juce::MidiMessage::noteOn (1, 48, juce::uint8 (100)), 0.0);
+        seq.addEvent (juce::MidiMessage::noteOff (1, 48), 240.0);
+        mf.addTrack (seq);
+        juce::MemoryBlock bytes;
+        juce::MemoryOutputStream out (bytes, false);
+        REQUIRE (mf.writeTo (out));
+        REQUIRE (midFile.replaceWithData (bytes.getData(), bytes.getSize()));
+    }
+    REQUIRE (processor.edit (command ("midiPreview", {{"path", midFile.getFullPathName()}})).wasOk());
+    REQUIRE (processor.edit (command ("midiImport")).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["pattern"]) == 1);
+    CHECK (processor.patternEngineSnapshot()->store().get (0, 0, 0, furrow::On) == 1);
+    CHECK (processor.patternEngineSnapshot()->store().get (1, 0, 0, furrow::On) == 1);
+
+    tempDir.deleteRecursively();
+}
+
+TEST_CASE ("Host-automatable Global Swing, Truncate Swing, and Bypass parameters sync with processor")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor processor;
+    REQUIRE (processor.getParameters().size() == 3);
+    REQUIRE (processor.getBypassParameter() != nullptr);
+
+    REQUIRE (processor.edit (command ("setRack", {{"field", furrow::GlobalSwing}, {"value", 5000}})).wasOk());
+    CHECK (std::abs (processor.getParameters()[0]->getValue() - 0.5f) < 1e-4f);
+
+    REQUIRE (processor.edit (command ("setRack", {{"field", furrow::Truncate}, {"value", 1}})).wasOk());
+    CHECK (processor.getParameters()[1]->getValue() > 0.5f);
+
+    processor.setRateAndBufferSizeDetails (44100.0, 256);
+    processor.prepareToPlay (44100.0, 256);
+    processor.getBypassParameter()->setValue (1.0f);
+    juce::AudioBuffer<float> audio (processor.getTotalNumOutputChannels(), 256);
+    juce::MidiBuffer midi;
+    processor.processBlock (audio, midi);
+    float peak = 0.0f;
+    for (int f = 0; f < 256; ++f) peak = std::max (peak, std::abs (audio.getSample (0, f)));
+    CHECK (peak == 0.0f);
 }

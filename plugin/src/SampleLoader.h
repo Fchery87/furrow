@@ -19,14 +19,20 @@
 class SampleLoader final : private juce::Thread
 {
 public:
+    static constexpr int peakBins = 128;
+
     struct Result
     {
         int lane = 0;
         std::uint64_t generation = 0;
         std::unique_ptr<furrow::sampler::SampleBuffer> sample;  // empty when the file could not be read
         std::array<std::uint8_t, 32> hash {};                   // SHA-256 of the file's bytes
+        std::array<float, peakBins> peaks {};
+        bool hasPeaks = false;
         juce::String error;                                     // why it could not be read
     };
+
+    static std::array<float, peakBins> computePeaks (const furrow::sampler::SampleBuffer& buffer);
 
     SampleLoader (std::function<void (Result&&)> done, std::function<void()> tick);
     ~SampleLoader() override;

@@ -3,3 +3,4 @@ tools/jsfx_host/.build/
 tools/jsfx_host/*.so
 diag/
 plugin/build*/
+plugin/dist/

@@ -17,11 +17,11 @@
 #include <span>
 #include <vector>
 
-class SpikeProcessor final : public juce::AudioProcessor
+class FurrowProcessor final : public juce::AudioProcessor
 {
 public:
-    SpikeProcessor();
-    ~SpikeProcessor() override;
+    FurrowProcessor();
+    ~FurrowProcessor() override;
     void prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock) override;
     void releaseResources() override {}
     void reset() override;
@@ -32,6 +32,7 @@ public:
     using AudioProcessor::processBlockBypassed;
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override;
+    juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }
     const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return true; }
@@ -46,8 +47,12 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     juce::var editorState();
+    juce::var transportState();
+    std::uint64_t stateRevision() const { return revision.load (std::memory_order_acquire); }
+    std::uint64_t windowStateRevision() const { return windowRevision.load (std::memory_order_acquire); }
     juce::Result edit (const juce::var& command);
     juce::Result applyCommands (std::span<const furrow::Command> commands);
+    juce::Result renderMidiToFile (int lane, const juce::File& file);
     std::vector<furrow::sampler::LaneSetup> laneSetups();
     std::unique_ptr<furrow::Engine> patternEngineSnapshot();
 
@@ -62,6 +67,8 @@ private:
         SampleRef requested;
         std::uint64_t generation = 0;
         std::unique_ptr<furrow::sampler::SampleBuffer> pending;
+        std::array<float, SampleLoader::peakBins> peaks {};
+        bool hasPeaks = false;
         bool settingsDirty = true;
         bool sampleDirty = false;
         juce::String error;
@@ -81,6 +88,10 @@ private:
     static BusesProperties buses();
     furrow::BlockInfo readTransport (int numSamples);
     LaneIds laneIds() const;
+    void resetMetadata();
+    void bumpRevision() { revision.fetch_add (1, std::memory_order_release); }
+    void syncAudioPatternLocked();
+    void syncParametersFromModelLocked();
     void applySetups (std::span<const LaneSetup> setups, const LaneIds& ids);
     void requestSample (int slot, LaneModel& lane, const SampleRef& ref);
     void sync();
@@ -88,8 +99,7 @@ private:
     void collect();
     void beginBlock (juce::MidiBuffer& midi);
     void route (const furrow::MidiEvent& event, juce::MidiBuffer& midi);
-    int acquireMidi (juce::MidiBuffer& midi);
-    void deliverMidi (int slot, juce::MidiBuffer& midi);
+    void deliverMidi (juce::MidiBuffer& midi);
     void publishEngine (std::unique_ptr<furrow::Engine> replacement);
     void saveLocked (juce::MemoryBlock& destination);
     juce::Result applyLocked (std::span<const furrow::Command> commands, bool remember = true);
@@ -121,6 +131,10 @@ private:
     std::atomic<bool> routeChanged { false };
     std::atomic<bool> resetRequested { false };
     std::atomic<int> selectedPattern { 0 };
+    std::atomic<int> audioPattern { 0 };
+    std::atomic<int> audioPendingPattern { -1 };
+    std::atomic<std::uint64_t> revision { 1 };
+    std::atomic<std::uint64_t> windowRevision { 1 };
     std::atomic<double> hostBeat { 0.0 }, hostBpm { 120.0 }, nextBar { 4.0 };
     std::atomic<bool> hostPlaying { false };
     std::array<std::atomic<int>, furrow::lanes> playheads {};
@@ -130,13 +144,18 @@ private:
     std::array<juce::String, furrow::lanes> laneColors;
     std::array<juce::String, furrow::patterns> patternNames;
     int windowWidth = 1100, windowHeight = 700;
-    static constexpr std::size_t midiSlots = 128;
-    static constexpr int midiBytes = 65536;
+    static constexpr std::size_t midiSlots = 256;
+    static constexpr int midiBytes = 32768;
     std::array<juce::MidiBuffer, midiSlots> midiBuffers;
     furrow::sampler::SpscQueue<int, midiSlots> readyMidi, usedMidi;
     std::atomic<bool> midiOverflow { false };
     int emittedBytes = 0;
-    int lastMidiSlot = -1;
+    int scratchMidiSlot = -1;
+    juce::AudioParameterFloat* globalSwingParam = nullptr;
+    juce::AudioParameterBool* truncateParam = nullptr;
+    juce::AudioParameterBool* bypassParam = nullptr;
+    int lastAudioSwing = 0;
+    int lastAudioTruncate = 0;
     std::unique_ptr<SampleLoader> loader;
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpikeProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FurrowProcessor)
 };

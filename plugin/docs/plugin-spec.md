@@ -2,7 +2,7 @@
 
 Oct 25, 2026 · No Chaserz
 
-**Status.** Draft. Nothing in this document has been built or host-tested yet. It describes the VST3 and CLAP edition of Furrow and the order in which it will be built. The REAPER edition in `jsfx/` and `lua/` stays supported, and [Furrow-Spec-and-Architecture.md](../../Furrow-Spec-and-Architecture.md) remains the authority for musical behaviour that both editions share.
+**Status.** V1 implemented as VST3, CLAP, and Standalone (`Furrow` 1.0.0). Engine, sampler, processor, WebView UI, `.furrowkit` kits, MIDI export/import, and SHA-256 sample relink are built and unit-tested. The REAPER edition in `jsfx/` and `lua/` stays supported, and [Furrow-Spec-and-Architecture.md](../../Furrow-Spec-and-Architecture.md) remains the authority for musical behaviour that both editions share.
 
 ## Overview
 
@@ -130,7 +130,7 @@ Each MIDI lane sends on its own MIDI channel from the plugin's single MIDI outpu
 
 | Data | Saved where | How |
 | --- | --- | --- |
-| Lanes, patterns, steps, settings | Host plugin state | The tag `FRWS`, the container version 2, the engine state's length, the engine state, then the lane setups. The engine state is SeqCore's state format 1: sparse records, each word a 32-bit little-endian float, byte for byte what the REAPER edition saves. Version 1 states from the development builds still load, as MIDI lanes. See `furrow/PluginState.h`. |
+| Lanes, patterns, steps, settings | Host plugin state | The tag `FRWS`, container version 3, the engine state, the lane setups, and UI metadata (lane names, lane colors, pattern names, window size). The engine state is SeqCore's state format 1: sparse records, each word a 32-bit little-endian float, byte for byte what the REAPER edition saves. Version 1 and 2 states from earlier development builds still load cleanly. See `furrow/PluginState.h`. |
 | Lane setups and sample references | Host plugin state, after the engine state | Per lane: its slot and id, target, MIDI channel, output, start, end, tune, attack, decay, release, choke group, and its sample: none, a built-in sound, or a file's absolute path and SHA-256 so a moved file can be found again. A path relative to the project waits until a host provides one. See `furrow/sampler/LaneSetup.h`. |
 | Kits | `.furrowkit` files | Lane settings and sample references, chosen by the user |
 | Exported patterns | `.mid` files | Standard MIDI file, type 1, one track per lane |
@@ -182,9 +182,9 @@ Milestone 2 ported SeqCore's V1 rules to `plugin/engine/`. The engine matches Se
 - **Live and Items modes.** The rack's mode is kept so a saved state round-trips, but the plugin never selects Items mode.
 - **Host input.** An empty block changes nothing. A block without a finite position, a positive tempo or a sample rate counts as stopped. A host reset releases every held note at the start of the next block.
 - **Stricter loading.** State words must be whole numbers, and the origin's four words must be 16-bit and give a finite beat. SeqCore accepts near-whole numbers and does not check the origin.
-- **MIDI channels.** The engine reports a lane, not a channel. Until lanes choose their own output, the development plugin sends lane n on channel n mod 16 + 1.
+- **MIDI channels.** The engine reports a lane, not a channel. Each lane's `LaneSetup` selects either internal sample playback or a MIDI output channel from 1 to 16.
 - **Exact arithmetic.** The engine is built with floating-point contraction off, so each multiply and add rounds as SeqCore's do. A fused multiply-add would change the last bits of timing on some platforms.
-- **Threading, for now.** The engine belongs to the audio thread. Until milestone 4 adds a message-thread copy of the rack and a lock-free handover, saving and loading hold JUCE's callback lock, so the audio thread waits for them.
+- **Threading.** The processor maintains a message-thread `modelEngine` and publishes prepared `Engine` snapshots and bounded SPSC edit batches to the audio thread without callback locks; replaced objects retire off-thread.
 
 Carried over as SeqCore has it, to revisit with the REAPER edition: a waiting hit or release at a negative beat counts as none, so a pattern whose origin is before beat 0 drops hits there. Origins before beat 0 need a stopped switch with the cursor before the project start.
 
@@ -204,7 +204,7 @@ Milestone 3 added the sampler in `plugin/sampler/`. Like the engine it has no JU
 - **Samples.** WAV, AIFF and FLAC, read on a background thread, up to ten minutes at 192 kHz, using the first two channels. A file that cannot be read leaves its lane silent and keeps the reference, so saving does not lose it.
 - **Built-in kit.** Kick, snare, closed hat and open hat, synthesised in code from fixed formulas, so a new instance makes sound without shipping sample files or a sample licence. The default rack plays them, with the two hats in choke group 1.
 - **Handover.** Settings and samples reach the audio thread through a bounded lock-free queue. A replaced sample goes back the same way once no voice plays it, and a background thread frees it. The plugin keeps a message-side copy of every lane's setup, which is what it saves; a change the queue cannot take yet waits there and is retried every 50 ms.
-- **Not yet.** Mod A and Mod B have no sampler target. Release velocity is ignored, as RS5K ignores it. Changing a lane's target with a note held comes with the interface, which is the first place it can change.
+- **Not yet.** Mod A and Mod B have no sampler target. Release velocity is ignored by the sampler, as RS5K ignores it. Switching a lane's target or MIDI channel releases held notes on the previous route before applying the new route.
 
 ## Build plan
 

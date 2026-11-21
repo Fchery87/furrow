@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(Furrow VERSION 0.0.1 LANGUAGES C CXX)
+project(Furrow VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,7 +11,7 @@ option(FURROW_BUILD_PLUGIN "Build the plugin. Needs JUCE, which is downloaded at
 option(FURROW_BUILD_TESTS "Build the engine tests." ON)
 option(FURROW_LTO "Use link-time optimisation. Slow to link; meant for release builds." OFF)
 option(FURROW_SANITIZE "Build the engine tests with address and undefined-behaviour sanitizers." OFF)
-option(FURROW_ENABLE_WEBVIEW "Build the JUCE WebView editor. Needs GTK/WebKitGTK on Linux." OFF)
+option(FURROW_ENABLE_WEBVIEW "Build the JUCE WebView editor. Needs GTK/WebKitGTK on Linux." ON)
 
 include(FetchContent)
 
@@ -48,15 +48,32 @@ if(FURROW_BUILD_PLUGIN)
     FetchContent_MakeAvailable(juce)
     FetchContent_MakeAvailable(clap_juce_extensions)
 
-    juce_add_plugin(FurrowSpike
+    if(WIN32 AND FURROW_ENABLE_WEBVIEW AND NOT JUCE_WEBVIEW2_PACKAGE_LOCATION)
+        set(FURROW_WEBVIEW2_ROOT "${CMAKE_BINARY_DIR}/_deps/webview2")
+        set(FURROW_WEBVIEW2_PKG "${FURROW_WEBVIEW2_ROOT}/Microsoft.Web.WebView2.1.0.3485.44")
+        if(NOT EXISTS "${FURROW_WEBVIEW2_PKG}/build/native/include/WebView2.h")
+            file(DOWNLOAD
+                "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.3485.44"
+                "${CMAKE_BINARY_DIR}/_deps/webview2.nupkg"
+                EXPECTED_HASH SHA256=bc09150b179246ac90189649b13be8e6b11b3ac200e817e18df106e1f3cf489e
+                TLS_VERIFY ON)
+            file(ARCHIVE_EXTRACT
+                INPUT "${CMAKE_BINARY_DIR}/_deps/webview2.nupkg"
+                DESTINATION "${FURROW_WEBVIEW2_PKG}"
+                TOUCH)
+        endif()
+        set(JUCE_WEBVIEW2_PACKAGE_LOCATION "${FURROW_WEBVIEW2_ROOT}" CACHE PATH "WebView2 NuGet package directory" FORCE)
+    endif()
+
+    juce_add_plugin(Furrow
         COMPANY_NAME "No Chaserz"
-        BUNDLE_ID com.nochaserz.furrow-spike
+        BUNDLE_ID com.nochaserz.furrow
         PLUGIN_MANUFACTURER_CODE Nchz
-        PLUGIN_CODE Fspk
+        PLUGIN_CODE Furw
         FORMATS VST3 Standalone
-        PRODUCT_NAME "Furrow Spike"
+        PRODUCT_NAME "Furrow"
         NEEDS_WEB_BROWSER ${FURROW_ENABLE_WEBVIEW}
-        NEEDS_WEBVIEW2 TRUE
+        NEEDS_WEBVIEW2 ${FURROW_ENABLE_WEBVIEW}
         IS_SYNTH TRUE
         NEEDS_MIDI_INPUT FALSE
         NEEDS_MIDI_OUTPUT TRUE
@@ -64,22 +81,22 @@ if(FURROW_BUILD_PLUGIN)
         VST3_CATEGORIES Instrument Generator
         COPY_PLUGIN_AFTER_BUILD FALSE)
 
-    clap_juce_extensions_plugin(TARGET FurrowSpike
-        CLAP_ID "com.nochaserz.furrow-spike"
+    clap_juce_extensions_plugin(TARGET Furrow
+        CLAP_ID "com.nochaserz.furrow"
         CLAP_FEATURES instrument drum-machine)
 
-    target_sources(FurrowSpike PRIVATE
+    target_sources(Furrow PRIVATE
         src/SampleLoader.cpp
-        src/SpikeProcessor.cpp
+        src/FurrowProcessor.cpp
         src/EditorBridge.cpp
         src/PatternMidi.cpp)
 
-    target_compile_definitions(FurrowSpike
+    target_compile_definitions(Furrow
         PUBLIC
             JUCE_USE_CURL=0
             JUCE_VST3_CAN_REPLACE_VST2=0)
 
-    target_link_libraries(FurrowSpike
+    target_link_libraries(Furrow
         PRIVATE
             furrow_sampler
             juce::juce_audio_formats
@@ -89,21 +106,21 @@ if(FURROW_BUILD_PLUGIN)
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)
     if(FURROW_LTO)
-        target_link_libraries(FurrowSpike PUBLIC juce::juce_recommended_lto_flags)
+        target_link_libraries(Furrow PUBLIC juce::juce_recommended_lto_flags)
     endif()
     if(FURROW_ENABLE_WEBVIEW)
         juce_add_binary_data(FurrowUIResources SOURCES ui/app/index.html)
-        target_sources(FurrowSpike PRIVATE src/PluginEditor.cpp)
-        target_compile_definitions(FurrowSpike PUBLIC FURROW_ENABLE_WEBVIEW=1 JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1)
-        target_link_libraries(FurrowSpike PRIVATE FurrowUIResources juce::juce_audio_utils juce::juce_gui_extra)
+        target_sources(Furrow PRIVATE src/PluginEditor.cpp)
+        target_compile_definitions(Furrow PUBLIC FURROW_ENABLE_WEBVIEW=1 JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1)
+        target_link_libraries(Furrow PRIVATE FurrowUIResources juce::juce_audio_utils juce::juce_gui_extra)
         if(WIN32)
-            set_property(TARGET FurrowSpike PROPERTY JUCE_NEEDS_WEBVIEW2 TRUE)
+            set_property(TARGET Furrow PROPERTY JUCE_NEEDS_WEBVIEW2 TRUE)
         endif()
     endif()
     # JUCE's Standalone wrapper includes the device and utility modules even when
     # the editor WebView is disabled. Keep these links on the shared target so
     # the generated Standalone target receives the required module definitions.
-    target_link_libraries(FurrowSpike PRIVATE juce::juce_audio_utils juce::juce_audio_devices)
+    target_link_libraries(Furrow PRIVATE juce::juce_audio_utils juce::juce_audio_devices)
 endif()
 
 if(FURROW_BUILD_TESTS)
@@ -151,9 +168,10 @@ if(FURROW_BUILD_TESTS)
             tests/plugin/ProcessorTests.cpp
             tests/plugin/BridgeTests.cpp
             tests/plugin/SampleLoaderTests.cpp
-            tests/plugin/PatternMidiTests.cpp)
-        target_include_directories(furrow_plugin_tests PRIVATE src $<TARGET_PROPERTY:FurrowSpike,INCLUDE_DIRECTORIES>)
-        target_link_libraries(furrow_plugin_tests PRIVATE FurrowSpike furrow_sampler Catch2::Catch2WithMain)
+            tests/plugin/PatternMidiTests.cpp
+            tests/support/AllocationCounter.cpp)
+        target_include_directories(furrow_plugin_tests PRIVATE src tests $<TARGET_PROPERTY:Furrow,INCLUDE_DIRECTORIES>)
+        target_link_libraries(furrow_plugin_tests PRIVATE Furrow furrow_sampler Catch2::Catch2WithMain)
         if(MSVC)
             target_compile_options(furrow_plugin_tests PRIVATE /W4 /WX /permissive- /utf-8)
         elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
