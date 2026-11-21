@@ -96,6 +96,7 @@ jobs:
 
       - name: Validate bundles
         run: |
+          ROOT=$(pwd)
           check() {
             if command -v sha256sum >/dev/null; then echo "$2  $1" | sha256sum -c -
             else echo "$2  $1" | shasum -a 256 -c -; fi
@@ -117,7 +118,7 @@ jobs:
             -DSMTG_ENABLE_VSTGUI_SUPPORT=OFF -DSMTG_ENABLE_VST3_PLUGIN_EXAMPLES=OFF \
             -DSMTG_ENABLE_VST3_HOSTING_EXAMPLES=OFF -DSMTG_RUN_VST_VALIDATOR=OFF
           cmake --build vst3sdk/build --config Release --target validator --parallel
-          cd "$GITHUB_WORKSPACE"
+          cd "$ROOT"
           ${{ matrix.run_prefix }} "$TOOLS/pluginval/${{ matrix.pluginval_exe }}" --strictness-level 10 --timeout-ms 240000 --validate "$ARTEFACTS/VST3/Furrow.vst3"
           vst3_val=$(find "$TOOLS/vst3sdk/build/bin" -type f \( -name validator -o -name validator.exe \) | head -n 1)
           "$vst3_val" "$ARTEFACTS/VST3/Furrow.vst3"
@@ -125,12 +126,16 @@ jobs:
           "$clap_val" validate "$ARTEFACTS/CLAP/Furrow.clap"
 
       - name: Sign Windows binaries (optional)
-        if: runner.os == 'Windows' && env.WINDOWS_SIGN_CERT_B64 != ''
+        if: runner.os == 'Windows'
         shell: pwsh
         env:
           WINDOWS_SIGN_CERT_B64: ${{ secrets.WINDOWS_SIGN_CERT_B64 }}
           WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
         run: |
+          if (-not $env:WINDOWS_SIGN_CERT_B64) {
+            Write-Host "WINDOWS_SIGN_CERT_B64 secret not set; skipping Authenticode signing."
+            exit 0
+          }
           $pfx = Join-Path $env:RUNNER_TEMP "codesign.pfx"
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGN_CERT_B64))
           $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1 -ExpandProperty FullName
@@ -206,7 +211,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: release-files
           merge-multiple: true

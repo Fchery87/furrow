@@ -22,8 +22,11 @@ if [[ -n ${APPLE_SIGN_ID:-} ]]; then
 fi
 
 PKG="$OUT_DIR/Furrow-${VERSION}-macOS.pkg"
-pkgbuild --root "$STAGE" --identifier com.nochaserz.furrow --version "$VERSION" \
-  ${APPLE_INSTALLER_SIGN_ID:+--sign "$APPLE_INSTALLER_SIGN_ID"} "$PKG"
+pkg_args=(--root "$STAGE" --identifier com.nochaserz.furrow --version "$VERSION")
+if [[ -n ${APPLE_INSTALLER_SIGN_ID:-} ]]; then
+  pkg_args+=(--sign "$APPLE_INSTALLER_SIGN_ID")
+fi
+pkgbuild "${pkg_args[@]}" "$PKG"
 
 if [[ -n ${APPLE_NOTARY_PROFILE:-} ]]; then
   xcrun notarytool submit "$PKG" --keychain-profile "$APPLE_NOTARY_PROFILE" --wait
