@@ -63,7 +63,7 @@ FurrowProcessor::FurrowProcessor() : AudioProcessor (buses()), modelEngine (std:
         laneMeters[static_cast<std::size_t> (s)] = 0.0f;
     }
     const char* names[] {"Kick", "Snare", "Closed hat", "Open hat"};
-    const char* colors[] {"#E2B24A", "#C987AE", "#8DB3D6", "#A89BE0"};
+    const char* colors[] {"#D99B38", "#D96B4F", "#5A98D4", "#857FD1"};
     std::vector<LaneSetup> setups;
     for (int s = 0; s < 4; ++s)
     {
@@ -94,7 +94,7 @@ FurrowProcessor::FurrowProcessor() : AudioProcessor (buses()), modelEngine (std:
 
 void FurrowProcessor::resetMetadata()
 {
-    const char* palette[] {"#E2B24A", "#8DB3D6", "#C987AE", "#A3BE6E", "#D2814F", "#A89BE0"};
+    const char* palette[] {"#D99B38", "#5A98D4", "#D96B4F", "#6FB065", "#C66A92", "#857FD1"};
     for (int s = 0; s < furrow::lanes; ++s)
     {
         laneNames[static_cast<std::size_t> (s)] = "Lane " + juce::String (s + 1);
@@ -705,7 +705,7 @@ juce::Result FurrowProcessor::restoreHistory (bool redo)
     setStateInformation (previous.getData(), static_cast<int> (previous.getSize()));
     return juce::Result::ok();
 }
-juce::Result FurrowProcessor::applyLocked (std::span<const furrow::Command> commands, bool history)
+juce::Result FurrowProcessor::applyLocked (std::span<const furrow::Command> commands, bool history, bool notify)
 {
     if (blocked) return juce::Result::fail ("Load a readable state before editing.");
     collect();
@@ -732,8 +732,11 @@ juce::Result FurrowProcessor::applyLocked (std::span<const furrow::Command> comm
     if (std::any_of (commands.begin(), commands.end(), [] (const auto& command) {
         return command.op == furrow::Op::AddLane || command.op == furrow::Op::RemoveLane;
     })) applySetups (laneSetups(), laneIds());
-    bumpRevision();
-    updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
+    if (notify)
+    {
+        bumpRevision();
+        updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
+    }
     return juce::Result::ok();
 }
 juce::Result FurrowProcessor::applyCommands (std::span<const furrow::Command> commands)

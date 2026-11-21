@@ -36,6 +36,13 @@ def package(build, destination, system):
         shutil.copytree(root / 'docs', stage / 'docs')
         if (root / 'extras').is_dir():
             shutil.copytree(root / 'extras', stage / 'extras')
+        if (root / 'assets' / 'brand').is_dir():
+            shutil.copytree(root / 'assets' / 'brand', stage / 'assets' / 'brand')
+        if system == 'linux':
+            if (root / 'tools' / 'install-linux.sh').is_file():
+                shutil.copy2(root / 'tools' / 'install-linux.sh', stage / 'install-linux.sh')
+            if (root / 'tools' / 'furrow.desktop').is_file():
+                shutil.copy2(root / 'tools' / 'furrow.desktop', stage / 'furrow.desktop')
         files = {}
         for path in sorted(stage.rglob('*')):
             if path.is_symlink():

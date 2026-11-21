@@ -16,6 +16,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
     bool isInterestedInFileDrag (const juce::StringArray&) override;
     void filesDropped (const juce::StringArray&, int, int) override;
 
@@ -23,6 +24,8 @@ private:
     void timerCallback() override;
     void parentHierarchyChanged() override;
     void loadUiIfReady();
+    void configureStandaloneWindow();
+    void toggleFullscreen();
     void sendEdit (const juce::var&);
     void chooseSample();
     void chooseFile (const juce::String& action, const juce::String& wildcard);
@@ -44,6 +47,7 @@ private:
     bool choosingFile = false;
     bool uiLoaded = false;
     bool uiReady = false;
+    bool standaloneConfigured = false;
     std::uint64_t lastSentRevision = 0;
     std::uint64_t lastWindowRevision = 0;
     bool lastPlaying = false;

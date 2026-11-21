@@ -14,6 +14,8 @@ AppPublisher=No Chaserz
 DefaultDirName={autopf}\No Chaserz\Furrow
 DefaultGroupName=Furrow
 LicenseFile=..\LICENSE
+SetupIconFile=..\assets\brand\furrow.ico
+UninstallDisplayIcon={app}\Furrow.exe
 OutputBaseFilename=Furrow-{#AppVersion}-Windows-Setup
 Compression=lzma2
 SolidCompression=yes
@@ -38,4 +40,8 @@ Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\docs\user-guide.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Furrow"; Filename: "{app}\Furrow.exe"; Components: standalone
+Name: "{group}\Furrow"; Filename: "{app}\Furrow.exe"; IconFilename: "{app}\Furrow.exe"; Components: standalone
+Name: "{autodesktop}\Furrow"; Filename: "{app}\Furrow.exe"; IconFilename: "{app}\Furrow.exe"; Components: standalone; Tasks: desktopicon
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut for Furrow Standalone"; GroupDescription: "Additional icons:"; Components: standalone; Flags: unchecked

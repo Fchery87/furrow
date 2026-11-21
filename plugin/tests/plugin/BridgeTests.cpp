@@ -595,3 +595,36 @@ TEST_CASE ("V1.2 sample browser folders, listing, hot-swap, preview, and WAV aud
 
     tempDir.deleteRecursively();
 }
+
+TEST_CASE ("Live-drag gesture edits update state immediately with one atomic undo snapshot")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor processor;
+    const auto initial = save (processor);
+    const auto revBefore = processor.stateRevision();
+
+    // Start + Move apply live without bumping UI revision; End bumps revision once and keeps one undo point.
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "filterCutoff"}, {"value", 4000.0}, {"gesture", "start"}})).wasOk());
+    CHECK (processor.stateRevision() == revBefore);
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "filterCutoff"}, {"value", 1800.0}, {"gesture", "move"}})).wasOk());
+    CHECK (processor.stateRevision() == revBefore);
+    CHECK (std::abs (static_cast<double> (processor.editorState()["lanes"][0]["filterCutoff"]) - 1800.0) < 1e-3);
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "filterCutoff"}, {"value", 950.0}, {"gesture", "end"}})).wasOk());
+    CHECK (processor.stateRevision() > revBefore);
+    CHECK (std::abs (static_cast<double> (processor.editorState()["lanes"][0]["filterCutoff"]) - 950.0) < 1e-3);
+
+    REQUIRE (processor.edit (command ("undo")).wasOk());
+    CHECK (save (processor) == initial);
+
+    // Same atomic gesture behavior for engine commands (GlobalSwing).
+    const auto swingRevBefore = processor.stateRevision();
+    REQUIRE (processor.edit (command ("setRack", {{"field", furrow::GlobalSwing}, {"value", 2000}, {"gesture", "start"}})).wasOk());
+    CHECK (processor.stateRevision() == swingRevBefore);
+    REQUIRE (processor.edit (command ("setRack", {{"field", furrow::GlobalSwing}, {"value", 4500}, {"gesture", "move"}})).wasOk());
+    CHECK (processor.stateRevision() == swingRevBefore);
+    REQUIRE (processor.edit (command ("setRack", {{"field", furrow::GlobalSwing}, {"value", 6000}, {"gesture", "end"}})).wasOk());
+    CHECK (processor.stateRevision() > swingRevBefore);
+    CHECK (static_cast<int> (processor.editorState()["globalSwing"]) == 6000);
+    REQUIRE (processor.edit (command ("undo")).wasOk());
+    CHECK (save (processor) == initial);
+}

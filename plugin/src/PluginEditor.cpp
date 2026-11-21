@@ -6,7 +6,17 @@
 
 namespace
 {
-const auto bg = juce::Colour (0xff241f1b);
+const auto bg = juce::Colour (0xff111215);
+
+const char* mimeTypeForPath (const juce::String& path)
+{
+    if (path.endsWithIgnoreCase (".css")) return "text/css; charset=utf-8";
+    if (path.endsWithIgnoreCase (".js")) return "application/javascript; charset=utf-8";
+    if (path.endsWithIgnoreCase (".svg")) return "image/svg+xml";
+    if (path.endsWithIgnoreCase (".woff2")) return "font/woff2";
+    if (path.endsWithIgnoreCase (".json")) return "application/json";
+    return "text/html; charset=utf-8";
+}
 
 juce::WebBrowserComponent::Options makeBrowserOptions (std::function<void (const juce::var&)> onEdit)
 {
@@ -14,10 +24,14 @@ juce::WebBrowserComponent::Options makeBrowserOptions (std::function<void (const
         .withNativeIntegrationEnabled (true)
         .withResourceProvider ([] (const auto& path) -> std::optional<juce::WebBrowserComponent::Resource>
         {
-            const auto key = path.isEmpty() || path == "/" ? "index_html" : path.trimCharactersAtStart ("/").replace ("/", "_");
+            const auto cleanPath = path.isEmpty() || path == "/" ? juce::String ("index.html") : path.trimCharactersAtStart ("/");
+            const auto key = cleanPath.replaceCharacter ('/', '_').replaceCharacter ('.', '_').replaceCharacter ('-', '_');
             int size = 0;
             if (const auto* data = BinaryData::getNamedResource (key.toRawUTF8(), size))
-                return juce::WebBrowserComponent::Resource { std::vector<std::byte> (reinterpret_cast<const std::byte*> (data), reinterpret_cast<const std::byte*> (data) + size), "text/html" };
+                return juce::WebBrowserComponent::Resource {
+                    std::vector<std::byte> (reinterpret_cast<const std::byte*> (data), reinterpret_cast<const std::byte*> (data) + size),
+                    mimeTypeForPath (cleanPath)
+                };
             return {};
         })
         .withEventListener ("edit", std::move (onEdit));
@@ -50,12 +64,52 @@ PluginEditor::PluginEditor (FurrowProcessor& p)
 PluginEditor::~PluginEditor()
 {
     stopTimer();
+    if (auto* docWin = findParentComponentOfClass<juce::DocumentWindow>())
+        if (juce::Desktop::getInstance().getKioskModeComponent() == docWin)
+            juce::Desktop::getInstance().setKioskModeComponent (nullptr, false);
     for (const auto& f : tempDragFiles) f.deleteFile();
 }
 void PluginEditor::paint (juce::Graphics& g) { g.fillAll (bg); }
 void PluginEditor::parentHierarchyChanged()
 {
+    configureStandaloneWindow();
     loadUiIfReady();
+}
+void PluginEditor::configureStandaloneWindow()
+{
+    if (standaloneConfigured || processor.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+        return;
+    if (auto* docWin = findParentComponentOfClass<juce::DocumentWindow>())
+    {
+        standaloneConfigured = true;
+        docWin->setTitleBarButtonsRequired (juce::DocumentWindow::allButtons, false);
+        docWin->setBackgroundColour (juce::Colour (0xff17191e));
+        docWin->setColour (juce::DocumentWindow::textColourId, juce::Colour (0xffeceef2));
+        docWin->setColour (juce::ResizableWindow::backgroundColourId, bg);
+        docWin->setColour (juce::TextButton::buttonColourId, juce::Colour (0xff1f2229));
+        docWin->setColour (juce::TextButton::textColourOffId, juce::Colour (0xffb4bac6));
+        docWin->setColour (juce::TextButton::textColourOnId, juce::Colour (0xffeceef2));
+    }
+}
+void PluginEditor::toggleFullscreen()
+{
+    if (processor.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+        return;
+    if (auto* docWin = findParentComponentOfClass<juce::DocumentWindow>())
+    {
+        auto& desktop = juce::Desktop::getInstance();
+        const bool isKiosk = desktop.getKioskModeComponent() == docWin;
+        desktop.setKioskModeComponent (isKiosk ? nullptr : docWin, false);
+    }
+}
+bool PluginEditor::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::F11Key && processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        toggleFullscreen();
+        return true;
+    }
+    return false;
 }
 void PluginEditor::loadUiIfReady()
 {
@@ -206,6 +260,7 @@ void PluginEditor::sendEdit (const juce::var& v)
         }
         if (object->hasProperty ("lane")) selectedLane = int (object->getProperty ("lane"));
         if (action == "selectLane") return;
+        if (action == "toggleFullscreen") { toggleFullscreen(); return; }
         if (action == "chooseSample") { chooseSample(); return; }
         if (action == "midiDragStart")
         {

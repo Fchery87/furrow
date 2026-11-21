@@ -5,6 +5,7 @@ The VST3, CLAP, and Standalone edition of Furrow (v1.2.0). The REAPER edition li
 The sequencer engine plays SeqCore's V1 rules and matches the REAPER edition event for event. The sampler plays WAV, AIFF, FLAC, OGG, and MP3 sample lanes plus a synthesized built-in drum kit with RS5K curves, One-Shot or Gate playback, Reverse, and a per-lane resonant low-pass/high-pass filter across up to 16 stereo outputs. MIDI input triggers pads by lane note and switches patterns via Program Change or an optional keyswitch channel, while MIDI lanes output on channels 1 to 16. The embedded local-only WebView interface provides a canvas step grid (up to 64 lanes by 512 steps), all 11 V1 step-lane editors, live peak meters, a 256-pattern bank picker, a collapsible sample browser with live arrow-key hot-swap, standalone internal Play/Stop/BPM transport, `.furrowkit` kits, MIDI and 24-bit WAV drag-out, MIDI import preview, and SHA-256 missing-sample relink.
 
 - [User guide](docs/user-guide.md) covers installation, workflows, shortcuts, and per-host MIDI routing.
+- [Design system](docs/design-system.md) documents the Graphite visual tokens, layout rules, live-drag gesture protocol, and embedded UI asset layout.
 - [Plugin spec and plan](docs/plugin-spec.md) covers scope, architecture, licence, and engine decisions.
 - [UI prototype](ui/prototype/index.html) is the original standalone browser design prototype.
 
@@ -15,7 +16,7 @@ The sequencer engine plays SeqCore's V1 rules and matches the REAPER edition eve
 | `engine/` | The sequencer engine: header-only C++20 with no JUCE or platform code |
 | `sampler/` | The sampler, the built-in kit and the plugin's state format, also with no JUCE code |
 | `src/` | The JUCE plugin around the engine |
-| `ui/` | Embedded local-only WebView interface (`app/index.html`) and original browser prototype (`prototype/index.html`) |
+| `ui/` | Embedded local-only Graphite WebView interface (`app/index.html`, `styles.css`, `app.js`) and original browser prototype (`prototype/index.html`) |
 | `tools/` | Packaging script (`package.py`), local validation script, and platform installer definitions |
 | `extras/` | REAPER multi-bus and MIDI-out `.RTrackTemplate` routing templates |
 | `tests/` | Engine and sampler tests, `golden/` with the SeqCore traces they replay, and `plugin/` with tests that drive the built plugin |

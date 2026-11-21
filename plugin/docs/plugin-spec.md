@@ -139,29 +139,30 @@ Loading rejects truncated, unsupported or over-capacity state with a visible err
 
 ## Interface
 
-The interface has to make the grid the first thing a person reads and the fastest thing to use. The clickable prototype in `plugin/ui/prototype/` explores the layout and look before any plugin code exists.
+The shipping interface uses the **Graphite** design system documented in [design-system.md](design-system.md) and lives as modular offline assets under `plugin/ui/app/` (`index.html`, `styles.css`, `app.js`) embedded into JUCE `BinaryData`. The original throwaway browser prototype stays at `plugin/ui/prototype/index.html` for historical reference.
 
 **Layout.**
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│ Furrow   Pattern ▾   ▶  120 BPM   Swing   Seed                     │  top bar
-├──────────────┬───────────────────────────────────────┬─────────────┤
-│ Lanes        │ Step grid, beats grouped by four,      │ Inspector   │
-│ name, M, S,  │ moving playhead                        │ selected    │
-│ volume       │                                        │ lane        │
-├──────────────┴───────────────────────────────────────┴─────────────┤
-│ Step lane editor: Velocity · Probability · Pitch · Gate · Ratchet   │
-└────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│ furrow  Browser  < 01 Pattern ▾ >  [▶ 120 BPM · Swing] Groove ▾  Kit ▾  ⋮ │  48px top bar
+├───────────┬──────────────┬───────────────────────────────────┬─────────────┤
+│ Browser   │ Lanes  S M F │ Bar / Beat ruler                  │ Inspector   │
+│ (toggle B)│ name, meter, │ Step grid (rounded pads, beat     │ (toggle I)  │
+│           │ M, S, ⋯      │ groups of 4, moving playhead)     │ Sample/Env/ │
+│           ├──────────────┴───────────────────────────────────┤ Filter/Mix  │
+│           │ Step Lanes (collapsible): Vel · Prob · Pitch ... │             │
+└───────────┴──────────────────────────────────────────────────┴─────────────┘
 ```
 
 **Principles.**
 
-- The grid is the one bold element. A step's fill height shows its velocity, its opacity shows its probability, and ratchets show as divisions inside the cell. A person can read a pattern's feel without opening an editor.
-- Every lane has its own colour, carried from the lane name through its steps and its bars in the editor.
+- The grid is the primary element on neutral matte Graphite chrome (`#111215` / `#17191E`). A step's fill height shows its velocity, its opacity and clipped hatch show its probability, and ratchets show as divisions inside the pad.
+- Every lane has its own restrained studio swatch carried from the lane header through its steps, waveform, knobs, and step-lane bars.
+- Continuous drags on knobs, waveform Start/End trim handles, step velocity, and step-editor bars stream live audio edits via the `gesture: "start" | "move" | "end"` bridge protocol while keeping one atomic undo point per drag.
 - Every action from the REAPER edition stays reachable by mouse and keyboard. Keyboard focus is always visible.
-- Motion only answers an action or shows playback. The playhead moves; nothing else animates on its own.
-- The window resizes freely and scales for HiDPI displays. The grid scrolls rather than shrinking cells below a usable size.
+- Motion only answers an action or shows playback (playhead, 60fps peak meter decay, brief hit flash). Nothing animates idly.
+- The window resizes freely down to `720 x 420` and scales for HiDPI displays. Side drawers collapse cleanly and the grid scrolls or fits rather than shrinking cells below a usable size.
 - Text follows the copy rules in the shared spec: plain verbs, sentence case, errors that say what went wrong and how to fix it.
 
 ## Testing

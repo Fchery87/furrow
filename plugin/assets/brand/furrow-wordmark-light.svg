@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 184 44" width="184" height="44" fill="none">
+  <rect width="184" height="44" rx="10" fill="#F4F4F0"/>
+  <g transform="translate(12, 8)">
+    <path d="M3 4.5H24.5L21.9 9.8H3V4.5Z" fill="#14161B"/>
+    <path d="M3 12.2H19.5L16.9 17.3H3V12.2Z" fill="#14161B"/>
+    <rect x="3" y="19.6" width="6" height="5" rx="1.2" fill="#14161B"/>
+    <rect x="18.5" y="19.6" width="6" height="5" rx="1.2" fill="#D99B38"/>
+  </g>
+  <text x="48" y="30" fill="#14161B" font-family="Inter, 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif" font-size="23" font-weight="700" letter-spacing="-0.6">furrow</text>
+</svg>

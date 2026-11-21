@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Furrow
+GenericName=Step Sequencer & Drum Sampler
+Comment=Channel Rack step sequencer and drum sampler instrument
+Exec=furrow
+Icon=furrow
+Terminal=false
+Categories=AudioVideo;Audio;Music;Sequencer;
+StartupWMClass=Furrow

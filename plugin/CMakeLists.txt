@@ -72,6 +72,8 @@ if(FURROW_BUILD_PLUGIN)
         PLUGIN_CODE Furw
         FORMATS VST3 Standalone
         PRODUCT_NAME "Furrow"
+        ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/brand/furrow-icon-512.png"
+        ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/assets/brand/furrow-icon-32.png"
         NEEDS_WEB_BROWSER ${FURROW_ENABLE_WEBVIEW}
         NEEDS_WEBVIEW2 ${FURROW_ENABLE_WEBVIEW}
         IS_SYNTH TRUE
@@ -112,7 +114,7 @@ if(FURROW_BUILD_PLUGIN)
         target_link_libraries(Furrow PUBLIC juce::juce_recommended_lto_flags)
     endif()
     if(FURROW_ENABLE_WEBVIEW)
-        juce_add_binary_data(FurrowUIResources SOURCES ui/app/index.html)
+        juce_add_binary_data(FurrowUIResources SOURCES ui/app/index.html ui/app/styles.css ui/app/app.js ui/app/favicon.svg)
         target_sources(Furrow PRIVATE src/PluginEditor.cpp)
         target_compile_definitions(Furrow PUBLIC FURROW_ENABLE_WEBVIEW=1 JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1)
         target_link_libraries(Furrow PRIVATE FurrowUIResources juce::juce_audio_utils juce::juce_gui_extra)

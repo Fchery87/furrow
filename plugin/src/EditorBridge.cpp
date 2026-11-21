@@ -196,18 +196,23 @@ juce::Result FurrowProcessor::edit (const juce::var& command)
     const std::lock_guard lock (modelLock);
     syncAudioPatternLocked();
     const auto action = field (command, "action").toString();
+    const auto gesture = field (command, "gesture").toString();
+    const bool liveTransient = gesture == "start" || gesture == "move";
     const auto result = editValidated (command);
     lastError = result.failed() ? result.getErrorMessage() : juce::String();
     const bool uiOnly = action == "browserPreview" || action == "browserStopPreview" || action == "browserList" || action == "resize";
-    if (! (action == "browserPreview" || action == "browserStopPreview"))
+    if (! (action == "browserPreview" || action == "browserStopPreview" || liveTransient))
         bumpRevision();
-    if (result.wasOk() && ! uiOnly) updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
+    if (result.wasOk() && ! uiOnly && ! liveTransient) updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
     return result;
 }
 
 juce::Result FurrowProcessor::editValidated (const juce::var& command)
 {
     const auto action = field (command, "action").toString();
+    const auto gesture = field (command, "gesture").toString();
+    const bool recordHistory = gesture != "move" && gesture != "end";
+    const bool notifyUi = gesture != "start" && gesture != "move";
     const int pattern = selectedPattern.load();
     const int lane = bounded (field (command, "lane"), 0, furrow::lanes - 1);
     if (blocked && action != "panic") return juce::Result::fail ("Load a readable state before editing.");
@@ -296,7 +301,7 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
         const int actual = bounded (value, fieldMin[static_cast<std::size_t> (fieldValue)], fieldMax[static_cast<std::size_t> (fieldValue)]);
         if (actual < fieldMin[static_cast<std::size_t> (fieldValue)]) return juce::Result::fail ("Step value is invalid.");
         const Command commandValue { Op::SetStep, pattern, lane, step, fieldValue, actual };
-        return applyCommands (std::span (&commandValue, 1));
+        return applyLocked (std::span (&commandValue, 1), recordHistory, notifyUi);
     }
     if (action == "setLane")
     {
@@ -305,7 +310,7 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
         const int actual = bounded (field (command, "value"), laneMin[static_cast<std::size_t> (fieldValue)], laneMax[static_cast<std::size_t> (fieldValue)]);
         if (actual < laneMin[static_cast<std::size_t> (fieldValue)]) return juce::Result::fail ("Lane value is invalid.");
         const Command commandValue { Op::SetLane, lane, fieldValue, actual, 0, 0 };
-        return applyCommands (std::span (&commandValue, 1));
+        return applyLocked (std::span (&commandValue, 1), recordHistory, notifyUi);
     }
     if (action == "setRack")
     {
@@ -318,7 +323,7 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
         const int actual = bounded (field (command, "value"), 0, high);
         if (actual < 0) return juce::Result::fail ("Rack value is invalid.");
         const Command commandValue { Op::SetRack, fieldValue, actual, 0, 0, 0 };
-        const auto result = applyCommands (std::span (&commandValue, 1));
+        const auto result = applyLocked (std::span (&commandValue, 1), recordHistory, notifyUi);
         if (result.wasOk()) syncParametersFromModelLocked();
         return result;
     }
@@ -368,7 +373,7 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
             if (actual < fieldMin[static_cast<std::size_t> (f)]) return juce::Result::fail ("Step value is invalid.");
             commands.push_back ({ Op::SetStep, pattern, l, step, f, actual });
         }
-        return applyCommands (commands);
+        return applyLocked (commands, recordHistory, notifyUi);
     }
     if (action == "fillLane")
     {
@@ -623,7 +628,7 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
             commands.push_back ({ Op::AddLane, freeSlots[i], freeSlots[i] + 1, freeSlots[i] + 1, std::min (127, 36 + freeSlots[i]), freeSlots[i] });
         const auto result = applyLocked (commands, true);
         if (result.failed()) return result;
-        const char* palette[] { "#E2B24A", "#8DB3D6", "#C987AE", "#A3BE6E", "#D2814F", "#A89BE0" };
+        const char* palette[] { "#D99B38", "#5A98D4", "#D96B4F", "#6FB065", "#C66A92", "#857FD1" };
         for (std::size_t i = 0; i < freeSlots.size(); ++i)
         {
             const int s = freeSlots[i];
@@ -777,7 +782,7 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
             else return juce::Result::fail ("Unknown sampler setting.");
         }
         if (! valid (settings)) return juce::Result::fail ("Sampler setting is out of range.");
-        remember();
+        if (recordHistory) remember();
         if (settings.target != prevTarget || settings.channel != prevChannel)
             routeChanged = true;
         applySetups (setups, laneIds());

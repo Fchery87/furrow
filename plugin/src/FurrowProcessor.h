@@ -104,7 +104,7 @@ private:
     void deliverMidi (juce::MidiBuffer& midi);
     void publishEngine (std::unique_ptr<furrow::Engine> replacement);
     void saveLocked (juce::MemoryBlock& destination);
-    juce::Result applyLocked (std::span<const furrow::Command> commands, bool remember = true);
+    juce::Result applyLocked (std::span<const furrow::Command> commands, bool remember = true, bool notify = true);
     void remember();
     juce::Result restoreHistory (bool redo);
     juce::Result editFile (const juce::var& command);
