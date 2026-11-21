@@ -172,6 +172,7 @@ void FurrowProcessor::prepareToPlay (double rate, int)
 {
     audioEngine->prepare (rate);
     sampler.prepare (rate);
+    wasAudioPlaying = false;
     resetRequested = true;
 }
 void FurrowProcessor::reset() { resetRequested.store (true, std::memory_order_release); }
@@ -370,6 +371,9 @@ void FurrowProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         if (bus.getNumChannels() > 0) busOutputs[static_cast<std::size_t> (b)] = {bus.getWritePointer (0), bus.getNumChannels() > 1 ? bus.getWritePointer (1) : nullptr};
     }
     const auto transport = readTransport (buffer.getNumSamples());
+    if (stopVoicesRequested.exchange (false, std::memory_order_acq_rel) || (wasAudioPlaying && ! transport.playing))
+        sampler.stopAll();
+    wasAudioPlaying = transport.playing;
     if (! blocked.load (std::memory_order_acquire))
     {
         const int keyswitchCh = patternMidiChannel.load (std::memory_order_acquire);
@@ -421,6 +425,23 @@ void FurrowProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         });
         flushIncomingUpTo (buffer.getNumSamples());
         sampler.render (busOutputs, rendered, buffer.getNumSamples());
+        if (wrapperType == wrapperType_Standalone)
+        {
+            // Keep overlapping full-scale samples from hard-clipping the OS audio driver.
+            constexpr float knee = 0.89f;
+            constexpr float headroom = 0.10f;
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            {
+                auto* data = buffer.getWritePointer (ch);
+                for (int f = 0; f < buffer.getNumSamples(); ++f)
+                {
+                    const float x = data[f];
+                    const float ax = std::abs (x);
+                    if (ax > knee)
+                        data[f] = std::copysign (knee + headroom * std::tanh ((ax - knee) / headroom), x);
+                }
+            }
+        }
     }
     else
     {

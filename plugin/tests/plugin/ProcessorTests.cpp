@@ -570,3 +570,50 @@ TEST_CASE ("Bypass parameter persists across save and reload for VST3 controller
     load (b, bytes);
     CHECK (b.getBypassParameter()->getValue() > 0.5f);
 }
+
+TEST_CASE ("Stopping transport silences active OneShot voices smoothly without allocations")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    struct TogglePlayHead final : juce::AudioPlayHead
+    {
+        bool playing = true;
+        double ppq = 0.0;
+        juce::Optional<PositionInfo> getPosition() const override
+        {
+            PositionInfo info;
+            info.setIsPlaying (playing);
+            info.setBpm (120.0);
+            info.setPpqPosition (ppq);
+            return info;
+        }
+    };
+
+    FurrowProcessor p;
+    prepare (p);
+    TogglePlayHead head;
+    p.setPlayHead (&head);
+    juce::AudioBuffer<float> audio (p.getTotalNumOutputChannels(), block);
+    juce::MidiBuffer midi;
+
+    // Trigger default OneShot Kick + Hat at beat 0.
+    p.processBlock (audio, midi);
+    float playPeak = 0.0f;
+    for (int f = 0; f < block; ++f) playPeak = std::max (playPeak, std::abs (audio.getSample (0, f)));
+    REQUIRE (playPeak > 0.05f);
+
+    // Stop transport and process 15 ms (~660 samples): OneShot voices must smoothly choke to silence.
+    head.playing = false;
+    {
+        const furrow::test::CountAllocations guard;
+        for (int i = 0; i < 4; ++i)
+        {
+            midi.clear();
+            p.processBlock (audio, midi);
+        }
+        CHECK (furrow::test::allocations.load() == 0);
+    }
+    float afterStopPeak = 0.0f;
+    for (int f = 0; f < block; ++f) afterStopPeak = std::max (afterStopPeak, std::abs (audio.getSample (0, f)));
+    CHECK (afterStopPeak < 1e-5f);
+    p.setPlayHead (nullptr);
+}

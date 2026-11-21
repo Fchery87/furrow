@@ -143,8 +143,10 @@ private:
     std::atomic<double> hostBeat { 0.0 }, hostBpm { 120.0 }, nextBar { 4.0 };
     std::atomic<bool> hostPlaying { false };
     std::atomic<bool> internalPlaying { false };
+    std::atomic<bool> stopVoicesRequested { false };
     std::atomic<double> internalBpm { 120.0 };
     double internalBeat = 0.0;
+    bool wasAudioPlaying = false;
     std::atomic<int> patternMidiChannel { 0 };
     std::array<std::atomic<int>, furrow::lanes> playheads {};
     std::array<std::atomic<float>, furrow::lanes> laneMeters {};

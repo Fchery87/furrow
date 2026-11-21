@@ -249,6 +249,7 @@ let browserAutoSwap = false;
 let browserFilter = '';
 let browserCursor = -1;
 let audioDragTail = false;
+let lastSwingRendered = null;
 let focusCell = { slot: 0, step: 0 };
 let openMenu = null;
 let renamingPattern = false;
@@ -406,10 +407,12 @@ function renderTop() {
   if ($('redoBtn')) $('redoBtn').disabled = !state.canRedo;
   if ($('error')) $('error').textContent = state.error || '';
   const slot = $('globalSwingSlot');
-  if (slot && typeof document.createElementNS === 'function') {
+  const swingVal = state.globalSwing || 0;
+  if (slot && typeof document.createElementNS === 'function' && swingVal !== lastSwingRendered) {
+    lastSwingRendered = swingVal;
     slot.innerHTML = '';
     slot.appendChild(makeKnob({
-      label: 'Swing', small: true, min: 0, max: 10000, step: 100, def: 0, value: state.globalSwing || 0, color: '#DCD0BA',
+      label: 'Swing', small: true, min: 0, max: 10000, step: 100, def: 0, value: swingVal, color: '#DCD0BA',
       fmt: v => Math.round(v / 100) + '%',
       onChange: v => emit('setRack', { field: RACK_FIELDS.globalSwing, value: Math.round(v) }),
     }));
@@ -739,7 +742,10 @@ function showPatternPopover() {
 }
 
 $('patternBtn')?.addEventListener('click', showPatternPopover);
-$('standalonePlayBtn')?.addEventListener('click', () => emit('standaloneTransport', { playing: !transport.playing }));
+$('standalonePlayBtn')?.addEventListener('click', e => {
+  e?.target?.blur?.();
+  emit('standaloneTransport', { playing: !transport.playing });
+});
 $('bpmInput')?.addEventListener('change', e => emit('standaloneTransport', { bpm: clamp(Number(e.target.value) || 120, 20, 300) }));
 $('truncateBtn')?.addEventListener('click', () => emit('setRack', { field: RACK_FIELDS.truncate, value: state.truncate ? 0 : 1 }));
 $('seedBtn')?.addEventListener('click', () => emit('rerollSeed'));

@@ -132,6 +132,16 @@ public:
             lane.volume = lane.left = lane.right = lane.bendRatio = 1.0;
     }
 
+    // Smoothly chokes all active lane voices and any preview voice (e.g. on transport stop).
+    void stopAll()
+    {
+        for (auto& v : voices_)
+            if (v.stage != Stage::Off)
+                choke (v);
+        if (previewVoice_.stage != Stage::Off)
+            choke (previewVoice_);
+    }
+
     // Applies queued changes and hands back samples no voice plays any more. Call at the start
     // of each block.
     void update()

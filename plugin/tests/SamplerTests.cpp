@@ -684,12 +684,25 @@ TEST_CASE ("V1.1 sampler supports OneShot, Reverse, SVF LP/HP filter, peak meter
     for (std::size_t i = 160; i < 256; ++i) lpEnergy = std::max (lpEnergy, std::abs (fl[i]));
     CHECK (lpEnergy < 0.05f);
 
-    // Preview voice renders directly on main bus.
-    auto prev = mono (constant (64, 0.5f));
+    // Preview voice renders directly on main bus, and stopAll smoothly silences both OneShot and preview voices.
+    auto prev = mono (constant (4000, 0.5f));
     REQUIRE (sampler.setPreviewSample (prev));
+    auto longBuf = mono (constant (4000, 0.5f));
+    s.filterMode = FilterMode::Off;
+    s.playMode = PlayMode::OneShot;
+    REQUIRE (sampler.setLane (0, s));
+    REQUIRE (sampler.setSample (0, longBuf));
     sampler.update();
+    sampler.handle (noteOn (0, root, 127), root, bendRange);
     std::fill (fl.begin(), fl.end(), 0.0f);
     std::fill (fr.begin(), fr.end(), 0.0f);
     sampler.render (fbuses, 0, 64);
-    CHECK (fl[10] == Approx (0.5f).margin (1e-4));
+    CHECK (fl[10] > 0.5f);
+
+    sampler.stopAll();
+    std::vector<float> fadeL (600, 0.0f), fadeR (600, 0.0f);
+    Bus fadeBuses[1] = { { fadeL.data(), fadeR.data() } };
+    sampler.render (fadeBuses, 0, 600);
+    CHECK (std::abs (fadeL[550]) < 1e-5f);
+    CHECK (sampler.activeVoices() == 0);
 }

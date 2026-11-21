@@ -501,7 +501,18 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
     if (action == "standaloneTransport")
     {
         if (command.hasProperty ("playing"))
-            internalPlaying.store (static_cast<bool> (field (command, "playing")), std::memory_order_release);
+        {
+            const bool play = static_cast<bool> (field (command, "playing"));
+            internalPlaying.store (play, std::memory_order_release);
+            if (! play)
+            {
+                stopVoicesRequested.store (true, std::memory_order_release);
+                ++previewGeneration;
+                pendingPreview.reset();
+                previewDirty = true;
+                sync();
+            }
+        }
         if (command.hasProperty ("bpm"))
         {
             const auto v = field (command, "bpm");
