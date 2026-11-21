@@ -1,13 +1,26 @@
 #include "AllocationCounter.h"
 
-#include <cstdlib>
-#include <new>
+#if defined(__SANITIZE_THREAD__)
+#define FURROW_TSAN_ACTIVE 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define FURROW_TSAN_ACTIVE 1
+#else
+#define FURROW_TSAN_ACTIVE 0
+#endif
+#else
+#define FURROW_TSAN_ACTIVE 0
+#endif
 
 namespace furrow::test
 {
 std::atomic<long> allocations { 0 };
 thread_local bool counting = false;
 } // namespace furrow::test
+
+#if ! FURROW_TSAN_ACTIVE
+#include <cstdlib>
+#include <new>
 
 using furrow::test::allocations;
 using furrow::test::counting;
@@ -38,3 +51,4 @@ void operator delete (void* p, const std::nothrow_t&) noexcept { std::free (p); 
 void operator delete[] (void* p) noexcept { std::free (p); }
 void operator delete[] (void* p, std::size_t) noexcept { std::free (p); }
 void operator delete[] (void* p, const std::nothrow_t&) noexcept { std::free (p); }
+#endif
