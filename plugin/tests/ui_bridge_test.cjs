@@ -91,6 +91,27 @@ click('inspector', { action: 'removeLane' }); expect({ action: 'removeLane', lan
 click('inspector', { action: 'retrySample' }); expect({ action: 'retrySample', lane: 0, path: '/samples/kick.wav' });
 click('inspector', { action: 'midiPreview' }); expect({ action: 'midiPreview' });
 click('inspector', { action: 'midiImport' }); expect({ action: 'midiImport' });
+click('inspector', { playmode: 'gate' }); expect({ action: 'setSampler', lane: 0, field: 'playMode', value: 'gate' });
+click('inspector', { reverse: '1' }); expect({ action: 'setSampler', lane: 0, field: 'reverse', value: true });
+click('inspector', { filter: 'lp' }); expect({ action: 'setSampler', lane: 0, field: 'filterMode', value: 'lp' });
+click('inspector', { action: 'duplicateLane' }); expect({ action: 'duplicateLane', lane: 0 });
+click('inspector', { action: 'midiDragLane' }); expect({ action: 'midiDragStart', lane: 0 });
+click('inspector', { action: 'audioDragLane' }); expect({ action: 'audioDragStart', lane: 0, includeTail: false });
+getEl('wavTailBtn').listeners.click();
+getEl('dragWavBtn').listeners.pointerdown({ button: 0 }); expect({ action: 'audioDragStart', lane: -1, includeTail: true });
+subscriptions.state({
+  ...snapshot,
+  browserFolders: [{ name: 'Drums', path: '/drums' }],
+  browserListing: { path: '/drums', parent: '/', entries: [{ name: 'kick.wav', path: '/drums/kick.wav', isDir: false }] },
+});
+getEl('browserToggleBtn').listeners.click();
+assert.equal(getEl('browserPane').hidden, false);
+getEl('browserList').listeners.keydown({ key: 'ArrowDown', preventDefault() {} }); expect({ action: 'browserPreview', path: '/drums/kick.wav' });
+getEl('browserAutoSwapBtn').listeners.click();
+getEl('browserList').listeners.keydown({ key: 'ArrowUp', preventDefault() {} }); expect({ action: 'browserHotSwap', lane: 0, path: '/drums/kick.wav' });
+getEl('standalonePlayBtn').listeners.click(); expect({ action: 'standaloneTransport', playing: false });
+subscriptions.transport({ playing: true, bpm: 128, beat: 1.5, pattern: 0, pendingPattern: 1, playheads: [{ slot: 0, step: 6 }], meters: [{ slot: 0, peak: 0.75 }] });
+assert.equal(getEl('meter-0').style.height, '75%');
 change('length', '32'); expect({ action: 'setLength', lane: 0, value: 32 });
 change('name', 'Sub kick', 'text'); expect({ action: 'renameLane', lane: 0, name: 'Sub kick' });
 getEl('truncateBtn').listeners.click(); expect({ action: 'setRack', field: 5, value: 1 });

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Build a macOS .pkg installer for Furrow 1.0.0.
+# Build a macOS .pkg installer for Furrow.
 # Optional signing and notarization run only when APPLE_SIGN_ID and APPLE_NOTARY_PROFILE are set.
 BUILD_DIR=${1:-plugin/build/Furrow_artefacts/Release}
 OUT_DIR=${2:-plugin/dist}
+VERSION=${FURROW_VERSION:-1.2.0}
 mkdir -p "$OUT_DIR"
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
@@ -20,8 +21,8 @@ if [[ -n ${APPLE_SIGN_ID:-} ]]; then
     "$STAGE/Applications/Furrow.app"
 fi
 
-PKG="$OUT_DIR/Furrow-1.0.0-macOS.pkg"
-pkgbuild --root "$STAGE" --identifier com.nochaserz.furrow --version 1.0.0 \
+PKG="$OUT_DIR/Furrow-${VERSION}-macOS.pkg"
+pkgbuild --root "$STAGE" --identifier com.nochaserz.furrow --version "$VERSION" \
   ${APPLE_INSTALLER_SIGN_ID:+--sign "$APPLE_INSTALLER_SIGN_ID"} "$PKG"
 
 if [[ -n ${APPLE_NOTARY_PROFILE:-} ]]; then

@@ -155,6 +155,9 @@ TEST_CASE ("A new instance plays the built-in kit, starting each hit on its samp
 {
     const juce::ScopedJuceInitialiser_GUI juce;
     FurrowProcessor p;
+    auto state = saved (p);
+    for (auto& s : state.setups) s.settings.playMode = PlayMode::Gate;
+    load (p, encode (state));
     prepare (p);
     const auto run = play (p, 2 * static_cast<int> (rate));
 
@@ -226,6 +229,7 @@ TEST_CASE ("A sample file loads in the background and plays from its first frame
     kick.sample.kind = SampleRef::Kind::File;
     kick.sample.path = wav.file.getFullPathName().toStdString();
     kick.settings.attack = 0.0;
+    kick.settings.playMode = PlayMode::Gate;
     // Only the kick lane, so nothing else sounds at sample 0.
     state.setups[2].settings.target = Target::Midi;
     load (p, encode (state));
@@ -276,7 +280,7 @@ TEST_CASE ("A missing sample file keeps its lane and its reference")
     load (p, bytes);
     std::this_thread::sleep_for (std::chrono::milliseconds (300));
     const auto restored = saved (p);
-    CHECK (restored.version == pluginMetadataVersion);
+    CHECK (restored.version == pluginV11Version);
     CHECK (restored.words == state.words);
     CHECK (restored.setups == state.setups);
     if (! legacy)
@@ -302,6 +306,7 @@ TEST_CASE ("A lane plays on its own output bus when the host turns that bus on")
     REQUIRE (p.setBusesLayout (layout));
     auto state = saved (p);
     state.setups[0].settings.output = 2;
+    state.setups[0].settings.playMode = PlayMode::Gate;
     load (p, encode (state));
     prepare (p);
     const auto run = play (p, 11025 + block);
@@ -524,4 +529,44 @@ TEST_CASE ("Loading a legacy v2 state resets prior lane and pattern metadata")
     const auto legacy = encode (saved (p));
     load (p, legacy);
     CHECK (p.editorState()["lanes"][0]["name"].toString() == "Lane 1");
+}
+
+TEST_CASE ("Incoming MIDI triggers pads and Program Change switches patterns without allocations")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor p;
+    prepare (p);
+    juce::AudioBuffer<float> audio (p.getTotalNumOutputChannels(), block);
+    // Warm up one block.
+    {
+        juce::MidiBuffer warm;
+        p.processBlock (audio, warm);
+    }
+
+    // Trigger Kick (note 36) via incoming MIDI note-on while stopped and verify audio renders with 0 allocations.
+    {
+        juce::MidiBuffer in;
+        in.addEvent (juce::MidiMessage::noteOn (1, 36, juce::uint8 (110)), 12);
+        in.addEvent (juce::MidiMessage::programChange (1, 3), 0);
+        const furrow::test::CountAllocations guard;
+        p.processBlock (audio, in);
+        CHECK (furrow::test::allocations.load() == 0);
+    }
+    float peak = 0.0f;
+    for (int f = 12; f < block; ++f) peak = std::max (peak, std::abs (audio.getSample (0, f)));
+    CHECK (peak > 0.01f);
+    CHECK (static_cast<int> (p.editorState()["pattern"]) == 3);
+}
+
+TEST_CASE ("Bypass parameter persists across save and reload for VST3 controller sync")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor a;
+    REQUIRE (a.getBypassParameter() != nullptr);
+    a.getBypassParameter()->setValueNotifyingHost (1.0f);
+    const auto bytes = save (a);
+
+    FurrowProcessor b;
+    load (b, bytes);
+    CHECK (b.getBypassParameter()->getValue() > 0.5f);
 }

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(Furrow VERSION 1.0.0 LANGUAGES C CXX)
+project(Furrow VERSION 1.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -75,7 +75,7 @@ if(FURROW_BUILD_PLUGIN)
         NEEDS_WEB_BROWSER ${FURROW_ENABLE_WEBVIEW}
         NEEDS_WEBVIEW2 ${FURROW_ENABLE_WEBVIEW}
         IS_SYNTH TRUE
-        NEEDS_MIDI_INPUT FALSE
+        NEEDS_MIDI_INPUT TRUE
         NEEDS_MIDI_OUTPUT TRUE
         IS_MIDI_EFFECT FALSE
         VST3_CATEGORIES Instrument Generator
@@ -89,12 +89,15 @@ if(FURROW_BUILD_PLUGIN)
         src/SampleLoader.cpp
         src/FurrowProcessor.cpp
         src/EditorBridge.cpp
-        src/PatternMidi.cpp)
+        src/PatternMidi.cpp
+        src/PatternAudio.cpp)
 
     target_compile_definitions(Furrow
         PUBLIC
             JUCE_USE_CURL=0
-            JUCE_VST3_CAN_REPLACE_VST2=0)
+            JUCE_VST3_CAN_REPLACE_VST2=0
+            JUCE_USE_MP3AUDIOFORMAT=1
+            JUCE_USE_OGGVORBIS=1)
 
     target_link_libraries(Furrow
         PRIVATE
@@ -169,6 +172,7 @@ if(FURROW_BUILD_TESTS)
             tests/plugin/BridgeTests.cpp
             tests/plugin/SampleLoaderTests.cpp
             tests/plugin/PatternMidiTests.cpp
+            tests/plugin/PatternAudioTests.cpp
             tests/support/AllocationCounter.cpp)
         target_include_directories(furrow_plugin_tests PRIVATE src tests $<TARGET_PROPERTY:Furrow,INCLUDE_DIRECTORIES>)
         target_link_libraries(furrow_plugin_tests PRIVATE Furrow furrow_sampler Catch2::Catch2WithMain)

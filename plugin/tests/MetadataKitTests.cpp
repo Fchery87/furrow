@@ -40,20 +40,28 @@ Metadata metadata()
 }
 }
 
-TEST_CASE ("v3 plugin state round-trips metadata and setups")
+TEST_CASE ("v4 plugin state round-trips metadata, bypass, keyswitch channel, and V1.1 setups")
 {
     const std::vector<std::int32_t> words { 1, 60, 5000, -7 };
-    const std::vector<LaneSetup> setups { setup (0, 1), setup (3, 99) };
-    const auto expected = metadata();
+    auto s0 = setup (0, 1);
+    s0.settings.playMode = PlayMode::OneShot;
+    s0.settings.reverse = true;
+    s0.settings.filterMode = FilterMode::LowPass;
+    s0.settings.filterCutoffHz = 1800.0;
+    s0.settings.filterResonance = 0.45;
+    const std::vector<LaneSetup> setups { s0, setup (3, 99) };
+    auto expected = metadata();
+    expected.bypass = true;
+    expected.patternMidiChannel = 16;
     std::vector<std::uint8_t> bytes;
     encodePluginState (words, setups, expected, bytes);
 
     REQUIRE (bytes.size() > 9);
     CHECK (std::string (bytes.begin(), bytes.begin() + 4) == "FRWS");
-    CHECK (bytes[4] == 3);
+    CHECK (bytes[4] == pluginV11Version);
     PluginState decoded;
     REQUIRE (decodePluginState (bytes, decoded));
-    CHECK (decoded.version == 3);
+    CHECK (decoded.version == pluginV11Version);
     CHECK (decoded.words == words);
     CHECK (decoded.setups == setups);
     CHECK (decoded.metadata == expected);

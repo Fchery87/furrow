@@ -58,7 +58,10 @@ FurrowProcessor::FurrowProcessor() : AudioProcessor (buses()), modelEngine (std:
     audioEngine->loadState (words);
     resetMetadata();
     for (int s = 0; s < furrow::lanes; ++s)
+    {
         playheads[static_cast<std::size_t> (s)] = -1;
+        laneMeters[static_cast<std::size_t> (s)] = 0.0f;
+    }
     const char* names[] {"Kick", "Snare", "Closed hat", "Open hat"};
     const char* colors[] {"#E2B24A", "#C987AE", "#8DB3D6", "#A89BE0"};
     std::vector<LaneSetup> setups;
@@ -66,6 +69,7 @@ FurrowProcessor::FurrowProcessor() : AudioProcessor (buses()), modelEngine (std:
     {
         auto setup = midiSetup (s, s + 1);
         setup.settings.target = Target::Sample;
+        setup.settings.playMode = furrow::sampler::PlayMode::OneShot;
         setup.settings.choke = s >= 2 ? 1 : 0;
         setup.sample.kind = SampleRef::Kind::Builtin;
         setup.sample.builtin = static_cast<furrow::sampler::Builtin> (s);
@@ -74,6 +78,8 @@ FurrowProcessor::FurrowProcessor() : AudioProcessor (buses()), modelEngine (std:
         setups.push_back (setup);
     }
     applySetups (setups, laneIds());
+    browserSettingsFile = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Furrow/settings.json");
+    loadBrowserSettingsLocked();
     for (std::size_t i = 0; i < midiSlots; ++i)
         midiBuffers[i].ensureSize (midiBytes);
     scratchMidiSlot = 0;
@@ -118,12 +124,9 @@ void FurrowProcessor::syncParametersFromModelLocked()
 
 void FurrowProcessor::syncAudioPatternLocked()
 {
-    const int pending = modelEngine->pendingPattern();
-    if (pending < 0)
-        return;
     const int active = audioPattern.load (std::memory_order_acquire);
     const int audioPending = audioPendingPattern.load (std::memory_order_acquire);
-    if (audioPending < 0 && active == pending)
+    if (audioPending < 0 && active >= 0 && active < furrow::patterns && active != modelEngine->pattern())
     {
         const furrow::Command commit { furrow::Op::SetRack, furrow::CurrentPattern, active, 0, 0, 0 };
         modelEngine->apply (std::span (&commit, 1), [] (const furrow::MidiEvent&) {});
@@ -187,7 +190,19 @@ furrow::BlockInfo FurrowProcessor::readTransport (int samples)
     furrow::BlockInfo info;
     info.numSamples = samples;
     info.sampleRate = getSampleRate();
-    if (auto* head = getPlayHead())
+    if (wrapperType == wrapperType_Standalone)
+    {
+        info.playing = internalPlaying.load (std::memory_order_acquire);
+        info.bpm = std::clamp (internalBpm.load (std::memory_order_acquire), 20.0, 300.0);
+        if (! info.playing)
+            internalBeat = 0.0;
+        info.beat = internalBeat;
+        nextBar = std::floor (info.beat / 4.0) * 4.0 + 4.0;
+        if (info.playing && info.sampleRate > 0.0 && samples > 0)
+            internalBeat += static_cast<double> (samples) * info.bpm / (60.0 * info.sampleRate);
+    }
+    else if (auto* head = getPlayHead())
+    {
         if (const auto position = head->getPosition())
         {
             if (auto beat = position->getPpqPosition()) info.beat = *beat;
@@ -198,6 +213,7 @@ furrow::BlockInfo FurrowProcessor::readTransport (int samples)
             const double start = position->getPpqPositionOfLastBarStart().orFallback (std::floor (info.beat / bar) * bar);
             nextBar = start + bar;
         }
+    }
     hostBeat = info.beat;
     hostBpm = info.bpm;
     hostPlaying = info.playing;
@@ -320,8 +336,29 @@ void FurrowProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     }
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
+    if (buffer.getNumSamples() <= 0 || scratchMidiSlot < 0)
+    {
+        midi.clear();
+        return;
+    }
+
+    struct IncomingMidi { int offset; std::uint8_t status; std::uint8_t channel; std::uint8_t data1; std::uint8_t data2; };
+    std::array<IncomingMidi, 256> incoming {};
+    int incomingCount = 0;
+    for (const auto metadata : midi)
+    {
+        if (incomingCount >= static_cast<int> (incoming.size())) break;
+        const auto* raw = metadata.data;
+        if (metadata.numBytes < 2) continue;
+        const std::uint8_t status = static_cast<std::uint8_t> (raw[0] & 0xF0u);
+        const std::uint8_t channel = static_cast<std::uint8_t> ((raw[0] & 0x0Fu) + 1u);
+        if (status == 0xC0u)
+            incoming[static_cast<std::size_t> (incomingCount++)] = { std::clamp (metadata.samplePosition, 0, buffer.getNumSamples() - 1), status, channel, raw[1], 0 };
+        else if ((status == 0x90u || status == 0x80u) && metadata.numBytes >= 3)
+            incoming[static_cast<std::size_t> (incomingCount++)] = { std::clamp (metadata.samplePosition, 0, buffer.getNumSamples() - 1), status, channel, raw[1], raw[2] };
+    }
     midi.clear();
-    if (buffer.getNumSamples() <= 0 || scratchMidiSlot < 0) return;
+
     auto& output = midiBuffers[static_cast<std::size_t> (scratchMidiSlot)];
     output.clear();
     emittedBytes = 0;
@@ -335,8 +372,46 @@ void FurrowProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     const auto transport = readTransport (buffer.getNumSamples());
     if (! blocked.load (std::memory_order_acquire))
     {
+        const int keyswitchCh = patternMidiChannel.load (std::memory_order_acquire);
+        for (int i = 0; i < incomingCount; ++i)
+        {
+            const auto& msg = incoming[static_cast<std::size_t> (i)];
+            const bool isProg = msg.status == 0xC0u;
+            const bool isKeyswitch = keyswitchCh > 0 && msg.channel == keyswitchCh && msg.status == 0x90u && msg.data2 > 0;
+            if (isProg || isKeyswitch)
+            {
+                const int pat = static_cast<int> (msg.data1) % furrow::patterns;
+                const furrow::Command cmd = transport.playing
+                    ? furrow::Command { furrow::Op::QueuePattern, pat, 0, 0, 0, 0, nextBar.load (std::memory_order_acquire) }
+                    : furrow::Command { furrow::Op::SetRack, furrow::CurrentPattern, pat, 0, 0, 0 };
+                audioEngine->apply (std::span (&cmd, 1), [&] (const auto& e) { route (e, output); });
+            }
+        }
+
         int rendered = 0;
+        int inIdx = 0;
+        auto flushIncomingUpTo = [&] (int limitOffset) {
+            while (inIdx < incomingCount && incoming[static_cast<std::size_t> (inIdx)].offset <= limitOffset)
+            {
+                const auto& msg = incoming[static_cast<std::size_t> (inIdx++)];
+                if (msg.status != 0x90u && msg.status != 0x80u) continue;
+                if (keyswitchCh > 0 && msg.channel == keyswitchCh) continue;
+                if (msg.offset > rendered)
+                {
+                    sampler.render (busOutputs, rendered, msg.offset);
+                    rendered = msg.offset;
+                }
+                for (int s = 0; s < furrow::lanes; ++s)
+                {
+                    if (! audioEngine->laneField (s, furrow::Active)) continue;
+                    if (audioEngine->laneField (s, furrow::Note) != static_cast<int> (msg.data1)) continue;
+                    route (furrow::MidiEvent { msg.offset, s, msg.status, msg.data1, msg.data2 }, output);
+                }
+            }
+        };
+
         audioEngine->process (transport, [&] (const furrow::MidiEvent& e) {
+            flushIncomingUpTo (e.offset);
             if (sampler.lane (e.lane).target == Target::Sample && e.offset > rendered)
             {
                 sampler.render (busOutputs, rendered, e.offset);
@@ -344,6 +419,7 @@ void FurrowProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
             }
             route (e, output);
         });
+        flushIncomingUpTo (buffer.getNumSamples());
         sampler.render (busOutputs, rendered, buffer.getNumSamples());
     }
     else
@@ -351,9 +427,18 @@ void FurrowProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         audioEngine->panic ([&] (const auto& e) { route (e, output); });
         sampler.reset();
     }
+    const auto& peaks = sampler.lanePeaks();
+    for (int s = 0; s < furrow::lanes; ++s)
+    {
+        const auto idx = static_cast<std::size_t> (s);
+        playheads[idx].store (audioEngine->playhead (s), std::memory_order_relaxed);
+        const float p = peaks[idx];
+        float cur = laneMeters[idx].load (std::memory_order_relaxed);
+        if (p > cur) laneMeters[idx].store (p, std::memory_order_relaxed);
+    }
+    sampler.clearPeaks();
     audioPattern.store (audioEngine->pattern(), std::memory_order_release);
     audioPendingPattern.store (audioEngine->pendingPattern(), std::memory_order_release);
-    for (int s = 0; s < furrow::lanes; ++s) playheads[static_cast<std::size_t> (s)].store (audioEngine->playhead (s), std::memory_order_relaxed);
     deliverMidi (midi);
 }
 void FurrowProcessor::collect()
@@ -428,10 +513,21 @@ void FurrowProcessor::sync()
         if (lane.settingsDirty && sampler.setLane (s, lane.setup.settings)) lane.settingsDirty = false;
         if (lane.sampleDirty && sampler.setSample (s, lane.pending)) lane.sampleDirty = false;
     }
+    if (previewDirty && sampler.setPreviewSample (pendingPreview))
+        previewDirty = false;
 }
 void FurrowProcessor::onLoaded (SampleLoader::Result&& result)
 {
     const std::lock_guard lock (modelLock);
+    if (result.lane == SampleLoader::previewLane)
+    {
+        if (previewGeneration != result.generation) return;
+        pendingPreview = std::move (result.sample);
+        previewDirty = true;
+        sync();
+        return;
+    }
+    if (result.lane < 0 || result.lane >= furrow::lanes) return;
     auto& lane = model[static_cast<std::size_t> (result.lane)];
     if (lane.generation != result.generation) return;
     lane.pending = std::move (result.sample);
@@ -494,6 +590,8 @@ void FurrowProcessor::saveLocked (juce::MemoryBlock& destination)
     for (std::size_t i = 0; i < patternNames.size(); ++i) metadata.patternNames[i] = patternNames[i].toStdString();
     metadata.windowWidth = windowWidth;
     metadata.windowHeight = windowHeight;
+    metadata.bypass = bypassParam != nullptr && bypassParam->get();
+    metadata.patternMidiChannel = patternMidiChannel.load (std::memory_order_acquire);
     furrow::encodePluginState (words, laneSetups(), metadata, bytes);
     destination.replaceAll (bytes.data(), bytes.size());
 }
@@ -535,10 +633,25 @@ void FurrowProcessor::setStateInformation (const void* data, int size)
         for (std::size_t i = 0; i < patternNames.size(); ++i) patternNames[i] = juce::String::fromUTF8 (state.metadata.patternNames[i].c_str());
         windowWidth = state.metadata.windowWidth;
         windowHeight = state.metadata.windowHeight;
+        if (state.version >= furrow::pluginV11Version)
+        {
+            patternMidiChannel.store (state.metadata.patternMidiChannel, std::memory_order_release);
+            if (bypassParam != nullptr)
+                bypassParam->setValueNotifyingHost (state.metadata.bypass ? 1.0f : 0.0f);
+        }
+        else
+        {
+            patternMidiChannel.store (0, std::memory_order_release);
+            if (bypassParam != nullptr)
+                bypassParam->setValueNotifyingHost (0.0f);
+        }
     }
     else
     {
         resetMetadata();
+        patternMidiChannel.store (0, std::memory_order_release);
+        if (bypassParam != nullptr)
+            bypassParam->setValueNotifyingHost (0.0f);
     }
     applySetups (state.setups, laneIds());
     syncParametersFromModelLocked();

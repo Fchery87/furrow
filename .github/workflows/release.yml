@@ -1,0 +1,230 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.2.0)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PLUGINVAL_VERSION: v1.0.4
+  CLAP_VALIDATOR_VERSION: "0.4.1"
+  CLAP_VALIDATOR_BUILD: 0.4.1-127-g152b982
+  VST3_SDK_TAG: v3.8.1_build_84
+
+jobs:
+  build:
+    name: Build & package (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+            platform: linux
+            cmake_args: ""
+            pluginval_zip: pluginval_Linux.zip
+            pluginval_sha256: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
+            pluginval_exe: pluginval
+            clap_validator_asset: ubuntu-22.04
+            clap_validator_sha256: 49edadcfb407ea0dd946ce418300e853fbd2660fa4b0d00e4f19ff8eef24ad90
+            run_prefix: xvfb-run -a
+          - name: macOS
+            os: macos-15
+            platform: darwin
+            cmake_args: '"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0'
+            pluginval_zip: pluginval_macOS.zip
+            pluginval_sha256: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
+            pluginval_exe: pluginval.app/Contents/MacOS/pluginval
+            clap_validator_asset: macos-universal
+            clap_validator_sha256: bbec8cd7d18274e549d5d8c12ece3cec54be966129388dd2e742b9957f2ba9f1
+            run_prefix: ""
+          - name: Windows
+            os: windows-2025
+            platform: windows
+            cmake_args: ""
+            pluginval_zip: pluginval_Windows.zip
+            pluginval_sha256: c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab
+            pluginval_exe: pluginval.exe
+            clap_validator_asset: windows
+            clap_validator_sha256: d935c3af0a45c3911ea2e900f4aa5d6709dac82bb485f0c4ce28648ab2cd0c10
+            run_prefix: ""
+    env:
+      ARTEFACTS: build/Furrow_artefacts/Release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve release version
+        run: |
+          raw="${{ inputs.tag || github.ref_name }}"
+          ver="${raw#v}"
+          echo "RELEASE_TAG=$raw" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=$ver" >> "$GITHUB_ENV"
+          echo "TOOLS=$(cd "$RUNNER_TEMP" && pwd)/tools" >> "$GITHUB_ENV"
+
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxrender-dev libxi-dev xvfb
+
+      - name: Configure & Build
+        run: |
+          cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release -DFURROW_ENABLE_WEBVIEW=ON -DFURROW_LTO=ON ${{ matrix.cmake_args }}
+          cmake --build build --config Release --parallel
+
+      - name: Run unit and UI tests
+        run: ${{ matrix.run_prefix }} ctest --test-dir build -C Release --output-on-failure
+
+      - name: Validate bundles
+        run: |
+          check() {
+            if command -v sha256sum >/dev/null; then echo "$2  $1" | sha256sum -c -
+            else echo "$2  $1" | shasum -a 256 -c -; fi
+          }
+          mkdir -p "$TOOLS" && cd "$TOOLS"
+          curl -fsSLo pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/$PLUGINVAL_VERSION/${{ matrix.pluginval_zip }}"
+          check pluginval.zip "${{ matrix.pluginval_sha256 }}"
+          unzip -q pluginval.zip -d pluginval
+          name="clap-validator-$CLAP_VALIDATOR_BUILD-${{ matrix.clap_validator_asset }}.zip"
+          curl -fsSLo clap-validator.zip "https://github.com/free-audio/clap-validator/releases/download/$CLAP_VALIDATOR_VERSION/$name"
+          check clap-validator.zip "${{ matrix.clap_validator_sha256 }}"
+          unzip -q clap-validator.zip -d clap-validator
+          for archive in clap-validator/*.tar.gz; do
+            [ -e "$archive" ] && tar -xzf "$archive" -C clap-validator
+          done
+          git -c advice.detachedHead=false clone -q --depth 1 -b "$VST3_SDK_TAG" https://github.com/steinbergmedia/vst3sdk.git vst3sdk
+          git -C vst3sdk submodule update -q --init --depth 1 base pluginterfaces public.sdk cmake
+          cmake -S vst3sdk -B vst3sdk/build -DCMAKE_BUILD_TYPE=Release \
+            -DSMTG_ENABLE_VSTGUI_SUPPORT=OFF -DSMTG_ENABLE_VST3_PLUGIN_EXAMPLES=OFF \
+            -DSMTG_ENABLE_VST3_HOSTING_EXAMPLES=OFF -DSMTG_RUN_VST_VALIDATOR=OFF
+          cmake --build vst3sdk/build --config Release --target validator --parallel
+          cd "$GITHUB_WORKSPACE"
+          ${{ matrix.run_prefix }} "$TOOLS/pluginval/${{ matrix.pluginval_exe }}" --strictness-level 10 --timeout-ms 240000 --validate "$ARTEFACTS/VST3/Furrow.vst3"
+          vst3_val=$(find "$TOOLS/vst3sdk/build/bin" -type f \( -name validator -o -name validator.exe \) | head -n 1)
+          "$vst3_val" "$ARTEFACTS/VST3/Furrow.vst3"
+          clap_val=$(find "$TOOLS/clap-validator" -type f \( -name clap-validator -o -name clap-validator.exe \) | head -n 1)
+          "$clap_val" validate "$ARTEFACTS/CLAP/Furrow.clap"
+
+      - name: Sign Windows binaries (optional)
+        if: runner.os == 'Windows' && env.WINDOWS_SIGN_CERT_B64 != ''
+        shell: pwsh
+        env:
+          WINDOWS_SIGN_CERT_B64: ${{ secrets.WINDOWS_SIGN_CERT_B64 }}
+          WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGN_CERT_B64))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1 -ExpandProperty FullName
+          foreach ($target in @(
+            "build\Furrow_artefacts\Release\VST3\Furrow.vst3\Contents\x86_64-win\Furrow.vst3",
+            "build\Furrow_artefacts\Release\CLAP\Furrow.clap",
+            "build\Furrow_artefacts\Release\Standalone\Furrow.exe"
+          )) {
+            & $signtool sign /f $pfx /p $env:WINDOWS_SIGN_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $target
+          }
+          Remove-Item $pfx -Force
+
+      - name: Package archive
+        run: python3 plugin/tools/package.py --build build --output dist --platform "${{ matrix.platform }}"
+
+      - name: Build Windows Inno Setup installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_SIGN_CERT_B64: ${{ secrets.WINDOWS_SIGN_CERT_B64 }}
+          WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $absBuild = (Resolve-Path "build\Furrow_artefacts\Release").Path
+          $absOut = (Resolve-Path "dist").Path
+          & $iscc "/DAppVersion=$env:RELEASE_VERSION" "/DBuildDir=$absBuild" "/O$absOut" "plugin\tools\installer-windows.iss"
+          if ($env:WINDOWS_SIGN_CERT_B64) {
+            $pfx = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGN_CERT_B64))
+            $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1 -ExpandProperty FullName
+            $setup = Get-ChildItem "dist\Furrow-*-Windows-Setup.exe" | Select-Object -First 1 -ExpandProperty FullName
+            & $signtool sign /f $pfx /p $env:WINDOWS_SIGN_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $setup
+            Remove-Item $pfx -Force
+          }
+
+      - name: Build macOS .pkg installer (optional signing & notarization)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERT_P12_B64: ${{ secrets.APPLE_CERT_P12_B64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_SIGN_ID: ${{ secrets.APPLE_SIGN_ID }}
+          APPLE_INSTALLER_SIGN_ID: ${{ secrets.APPLE_INSTALLER_SIGN_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_CERT_P12_B64" ]; then
+            KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+            security create-keychain -p temp-pass "$KEYCHAIN"
+            security set-keychain-settings -lut 21600 "$KEYCHAIN"
+            security unlock-keychain -p temp-pass "$KEYCHAIN"
+            echo "$APPLE_CERT_P12_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+            security list-keychain -d user -s "$KEYCHAIN"
+            security set-key-partition-list -S apple-tool:,apple: -k temp-pass "$KEYCHAIN"
+            if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+              xcrun notarytool store-credentials "furrow-notary" --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --keychain "$KEYCHAIN"
+              export APPLE_NOTARY_PROFILE="furrow-notary"
+            fi
+          fi
+          FURROW_VERSION="$RELEASE_VERSION" bash plugin/tools/installer-macos.sh "$ARTEFACTS" dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: release-files
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd release-files
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_WIN: ${{ secrets.WINDOWS_SIGN_CERT_B64 != '' }}
+          SIGNED_MAC: ${{ secrets.APPLE_SIGN_ID != '' }}
+        run: |
+          NOTES="Furrow ${GITHUB_REF_NAME} (VST3, CLAP, Standalone)."$'\n\n'
+          if [ "$SIGNED_WIN" = "true" ]; then NOTES+="- Windows binaries: Authenticode signed."$'\n'; else NOTES+="- Windows binaries: unsigned."$'\n'; fi
+          if [ "$SIGNED_MAC" = "true" ]; then NOTES+="- macOS binaries: Developer ID signed (and notarized when notary secrets are set)."$'\n'; else NOTES+="- macOS binaries: unsigned (clear quarantine with \`xattr -dr com.apple.quarantine\`)."$'\n'; fi
+          NOTES+="- Linux binaries: unsigned tarball."$'\n'
+          gh release create "$GITHUB_REF_NAME" release-files/* --title "Furrow $GITHUB_REF_NAME" --notes "$NOTES"

@@ -1,17 +1,20 @@
-; Furrow 1.0.0 Windows Installer (Inno Setup)
-; Build with: iscc /DBuildDir=..\build-win\Furrow_artefacts\Release installer-windows.iss
+; Furrow Windows Installer (Inno Setup)
+; Build with: iscc /DAppVersion=1.2.0 /DBuildDir=..\build-win\Furrow_artefacts\Release installer-windows.iss
+#ifndef AppVersion
+  #define AppVersion "1.2.0"
+#endif
 #ifndef BuildDir
   #define BuildDir "..\build-win\Furrow_artefacts\Release"
 #endif
 
 [Setup]
 AppName=Furrow
-AppVersion=1.0.0
+AppVersion={#AppVersion}
 AppPublisher=No Chaserz
 DefaultDirName={autopf}\No Chaserz\Furrow
 DefaultGroupName=Furrow
 LicenseFile=..\LICENSE
-OutputBaseFilename=Furrow-1.0.0-Windows-Setup
+OutputBaseFilename=Furrow-{#AppVersion}-Windows-Setup
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible

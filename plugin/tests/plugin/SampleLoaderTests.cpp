@@ -55,8 +55,17 @@ TEST_CASE ("Sample loading keeps only the latest queued request for a lane")
 TEST_CASE ("Sample loader rejects an unsupported file with a useful error")
 {
     juce::AudioFormatManager formats;
-    formats.registerFormat (new juce::WavAudioFormat(), true);
+    SampleLoader::registerAudioFormats (formats);
     const auto result = SampleLoader::load (formats, "/furrow-test-does-not-exist.wav");
     CHECK (result.sample == nullptr);
     CHECK (result.error.contains ("not found"));
+
+    CHECK (SampleLoader::isSupportedAudioExtension (".wav"));
+    CHECK (SampleLoader::isSupportedAudioExtension (".aif"));
+    CHECK (SampleLoader::isSupportedAudioExtension (".aiff"));
+    CHECK (SampleLoader::isSupportedAudioExtension (".flac"));
+    CHECK (SampleLoader::isSupportedAudioExtension (".ogg"));
+    CHECK (SampleLoader::isSupportedAudioExtension (".MP3"));
+    CHECK_FALSE (SampleLoader::isSupportedAudioExtension (".txt"));
+    CHECK (formats.getNumKnownFormats() >= 5);
 }

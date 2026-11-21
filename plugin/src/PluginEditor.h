@@ -26,8 +26,9 @@ private:
     void sendEdit (const juce::var&);
     void chooseSample();
     void chooseFile (const juce::String& action, const juce::String& wildcard);
-    void chooseFolder (const juce::String& action);
+    void chooseFolder (const juce::String& action, const juce::String& title);
     void startMidiDrag (int lane);
+    void startAudioDrag (int lane, bool includeTail);
     class LocalBrowser final : public juce::WebBrowserComponent
     {
     public:

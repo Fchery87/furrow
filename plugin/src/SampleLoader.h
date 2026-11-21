@@ -20,6 +20,11 @@ class SampleLoader final : private juce::Thread
 {
 public:
     static constexpr int peakBins = 128;
+    static constexpr int previewLane = furrow::lanes;
+
+    static bool isSupportedAudioExtension (const juce::String& extension);
+    static juce::String audioWildcard();
+    static void registerAudioFormats (juce::AudioFormatManager& formats);
 
     struct Result
     {

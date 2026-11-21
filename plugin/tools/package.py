@@ -34,6 +34,8 @@ def package(build, destination, system):
         shutil.copy2(root / 'LICENSE', stage / 'LICENSE')
         shutil.copy2(root / 'README.md', stage / 'README.md')
         shutil.copytree(root / 'docs', stage / 'docs')
+        if (root / 'extras').is_dir():
+            shutil.copytree(root / 'extras', stage / 'extras')
         files = {}
         for path in sorted(stage.rglob('*')):
             if path.is_symlink():

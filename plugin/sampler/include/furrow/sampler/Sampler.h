@@ -58,6 +58,7 @@ public:
             delete retired_[static_cast<std::size_t> (i)];
         for (auto& lane : lanes_)
             delete lane.sample;
+        delete previewSample_;
     }
 
     // ---- Non-audio threads ----
@@ -90,6 +91,20 @@ public:
         return true;
     }
 
+    // Queues a sample for immediate main-bus preview (pass empty unique_ptr to stop preview).
+    bool setPreviewSample (std::unique_ptr<SampleBuffer>& sample)
+    {
+        const std::lock_guard<std::mutex> lock (producer_);
+        collectLocked();
+        if (outstanding_ >= static_cast<int> (queueSize))
+            return false;
+        if (! changes_.push ({ previewLane, {}, true, sample.get() }))
+            return false;
+        ++outstanding_;
+        sample.release();
+        return true;
+    }
+
     // Frees samples the audio thread has finished with. Returns how many it freed.
     int collect()
     {
@@ -111,6 +126,8 @@ public:
     {
         for (auto& v : voices_)
             v.stage = Stage::Off;
+        previewVoice_.stage = Stage::Off;
+        lanePeaks_.fill (0.0f);
         for (auto& lane : lanes_)
             lane.volume = lane.left = lane.right = lane.bendRatio = 1.0;
     }
@@ -122,6 +139,29 @@ public:
         Change change;
         while (changes_.pop (change))
         {
+            if (change.lane == previewLane)
+            {
+                SampleBuffer* old = previewSample_;
+                previewSample_ = change.sample;
+                previewVoice_.stage = Stage::Off;
+                if (old != nullptr)
+                    retired_[static_cast<std::size_t> (retiring_++)] = old;
+                else
+                    returned_.push (nullptr);
+                if (previewSample_ != nullptr)
+                {
+                    previewVoice_ = {};
+                    previewVoice_.stage = Stage::Hold;
+                    previewVoice_.sample = previewSample_;
+                    previewVoice_.position = 0.0;
+                    previewVoice_.startLimit = 0.0;
+                    previewVoice_.end = static_cast<double> (previewSample_->frames());
+                    previewVoice_.step = previewSample_->sampleRate() / rate_;
+                    previewVoice_.velocity = 1.0;
+                    previewVoice_.level = 1.0;
+                }
+                continue;
+            }
             auto& lane = lanes_[static_cast<std::size_t> (change.lane)];
             if (! change.replace)
             {
@@ -143,7 +183,8 @@ public:
         for (int i = 0; i < retiring_;)
         {
             SampleBuffer* sample = retired_[static_cast<std::size_t> (i)];
-            const bool playing = std::any_of (voices_.begin(), voices_.end(), [sample] (const Voice& v) { return v.stage != Stage::Off && v.sample == sample; });
+            const bool playing = (previewVoice_.stage != Stage::Off && previewVoice_.sample == sample)
+                || std::any_of (voices_.begin(), voices_.end(), [sample] (const Voice& v) { return v.stage != Stage::Off && v.sample == sample; });
             if (playing)
             {
                 ++i;
@@ -186,7 +227,7 @@ public:
                 else if (e.data1 == 121)
                     lane.volume = lane.left = lane.right = lane.bendRatio = 1.0;
                 else if (e.data1 == 123)
-                    forLane (e.lane, [this] (Voice& v) { release (v); });
+                    forLane (e.lane, [] (Voice& v) { release (v); });
                 break;
             case 0xE0:
                 lane.bendRatio = std::exp2 (bendSemitones (e.data1 | (e.data2 << 7), bendRange) / 12.0);
@@ -213,9 +254,18 @@ public:
                 bus = buses[wanted];
             else if (! buses.empty())
                 bus = buses[0];
-            renderVoice (v, lane, bus, from, to);
+            renderVoice (v, lane, bus, from, to, lanePeaks_[static_cast<std::size_t> (v.lane)]);
+        }
+        if (previewVoice_.stage != Stage::Off && ! buses.empty() && buses[0].left != nullptr)
+        {
+            const Lane neutral;
+            float ignoredPeak = 0.0f;
+            renderVoice (previewVoice_, neutral, buses[0], from, to, ignoredPeak);
         }
     }
+
+    const std::array<float, furrow::lanes>& lanePeaks() const { return lanePeaks_; }
+    void clearPeaks() { lanePeaks_.fill (0.0f); }
 
     const LaneSettings& lane (int index) const { return lanes_[static_cast<std::size_t> (index)].settings; }
 
@@ -257,8 +307,12 @@ private:
         int choke = 0;
         const SampleBuffer* sample = nullptr;
         double position = 0.0;  // in sample frames
+        double startLimit = 0.0;
         double end = 0.0;
         double step = 1.0;      // frames per output frame before pitch bend
+        bool reverse = false;
+        double ic1L = 0.0, ic2L = 0.0;
+        double ic1R = 0.0, ic2R = 0.0;
         double velocity = 1.0;
         double level = 0.0;
         double fall = 0.0;      // per-frame multiplier in Decay and Release, step in Choke
@@ -339,8 +393,11 @@ private:
         v.note = note;
         v.choke = s.choke;
         v.sample = lane.sample;
-        v.position = s.start * frames;
+        v.reverse = s.reverse;
+        v.startLimit = s.start * frames;
         v.end = s.end * frames;
+        v.position = s.reverse ? std::max (v.startLimit, v.end - 1.0) : v.startLimit;
+        v.ic1L = v.ic2L = v.ic1R = v.ic2R = 0.0;
         v.step = lane.sample->sampleRate() / rate_ * std::exp2 ((note - rootNote + s.tune / 100.0) / 12.0);
         v.velocity = velocityGain (velocity);
         v.attackFrames = samples (s.attack);
@@ -359,7 +416,9 @@ private:
 
     void noteOff (int lane, int note)
     {
-        forLane (lane, [this, note] (Voice& v) {
+        if (lanes_[static_cast<std::size_t> (lane)].settings.playMode == PlayMode::OneShot)
+            return;
+        forLane (lane, [note] (Voice& v) {
             if (v.note == note)
                 release (v);
         });
@@ -451,25 +510,55 @@ private:
         return static_cast<float> (((c3 * t + c2) * t + c1) * t + x0);
     }
 
-    static void renderVoice (Voice& v, const Lane& lane, Bus bus, int from, int to)
+    void renderVoice (Voice& v, const Lane& lane, Bus bus, int from, int to, float& peakOut) const
     {
         const double step = v.step * lane.bendRatio;
         const double gainLeft = v.velocity * lane.volume * lane.left;
         const double gainRight = v.velocity * lane.volume * lane.right;
         const float* first = v.sample->channel (0);
         const float* second = v.sample->channel (v.sample->channels() > 1 ? 1 : 0);
+        const auto fMode = lane.settings.filterMode;
+        double a1 = 0.0, a2 = 0.0, a3 = 0.0, k = 2.0;
+        if (fMode != FilterMode::Off)
+        {
+            const double fc = std::clamp (lane.settings.filterCutoffHz, filterMinHz, std::min (filterMaxHz, 0.45 * rate_));
+            const double g = std::tan (3.14159265358979323846 * fc / rate_);
+            k = 2.0 - 1.9 * std::clamp (lane.settings.filterResonance, 0.0, filterResMax);
+            a1 = 1.0 / (1.0 + g * (g + k));
+            a2 = g * a1;
+            a3 = g * a2;
+        }
+        float peak = peakOut;
         for (int f = from; f < to; ++f)
         {
-            if (v.position >= v.end)
+            if (v.reverse ? (v.position < v.startLimit) : (v.position >= v.end))
             {
                 v.stage = Stage::Off;
+                peakOut = peak;
                 return;
             }
             const double level = envelope (v);
-            const auto i = static_cast<std::int64_t> (v.position);
+            const auto i = static_cast<std::int64_t> (std::floor (v.position));
             const double t = v.position - static_cast<double> (i);
-            const double left = read (first, i, t) * gainLeft * level;
-            const double right = read (second, i, t) * gainRight * level;
+            double left = read (first, i, t) * gainLeft * level;
+            double right = read (second, i, t) * gainRight * level;
+            if (fMode != FilterMode::Off)
+            {
+                const double v3L = left - v.ic2L;
+                const double v1L = a1 * v.ic1L + a2 * v3L;
+                const double v2L = v.ic2L + a2 * v.ic1L + a3 * v3L;
+                v.ic1L = 2.0 * v1L - v.ic1L;
+                v.ic2L = 2.0 * v2L - v.ic2L;
+                left = (fMode == FilterMode::LowPass) ? v2L : (left - k * v1L - v2L);
+
+                const double v3R = right - v.ic2R;
+                const double v1R = a1 * v.ic1R + a2 * v3R;
+                const double v2R = v.ic2R + a2 * v.ic1R + a3 * v3R;
+                v.ic1R = 2.0 * v1R - v.ic1R;
+                v.ic2R = 2.0 * v2R - v.ic2R;
+                right = (fMode == FilterMode::LowPass) ? v2R : (right - k * v1R - v2R);
+            }
+            peak = std::max (peak, static_cast<float> (std::max (std::abs (left), std::abs (right))));
             if (bus.right != nullptr)
             {
                 bus.left[f] += static_cast<float> (left);
@@ -477,15 +566,24 @@ private:
             }
             else if (bus.left != nullptr)
                 bus.left[f] += static_cast<float> (0.5 * (left + right));
-            v.position += step;
+            v.position += v.reverse ? -step : step;
             if (v.stage == Stage::Off)
+            {
+                peakOut = peak;
                 return;
+            }
         }
+        peakOut = peak;
     }
+
+    static constexpr int previewLane = furrow::lanes;
 
     // Audio thread.
     std::array<Lane, furrow::lanes> lanes_ {};
     std::array<Voice, voices> voices_ {};
+    SampleBuffer* previewSample_ = nullptr;
+    Voice previewVoice_ {};
+    std::array<float, furrow::lanes> lanePeaks_ {};
     std::array<SampleBuffer*, queueSize> retired_ {};
     int retiring_ = 0;
     double rate_ = 44100.0;

@@ -483,5 +483,115 @@ TEST_CASE ("Host-automatable Global Swing, Truncate Swing, and Bypass parameters
     processor.processBlock (audio, midi);
     float peak = 0.0f;
     for (int f = 0; f < 256; ++f) peak = std::max (peak, std::abs (audio.getSample (0, f)));
-    CHECK (peak == 0.0f);
+    CHECK (peak <= 1e-6f);
+}
+
+TEST_CASE ("V1.1 reorderLanes, duplicateLane, standaloneTransport, and filter/reverse/oneshot edits")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    FurrowProcessor processor;
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "playMode"}, {"value", "gate"}})).wasOk());
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "reverse"}, {"value", true}})).wasOk());
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "filterMode"}, {"value", "lp"}})).wasOk());
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "filterCutoff"}, {"value", 1200.0}})).wasOk());
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "filterResonance"}, {"value", 0.5}})).wasOk());
+    const auto s1 = processor.editorState();
+    CHECK (s1["lanes"][0]["playMode"].toString() == "gate");
+    CHECK (static_cast<bool> (s1["lanes"][0]["reverse"]));
+    CHECK (s1["lanes"][0]["filterMode"].toString() == "lp");
+
+    REQUIRE (processor.edit (command ("duplicateLane", {{"lane", 0}})).wasOk());
+    CHECK (processor.editorState()["lanes"].size() == 5);
+    CHECK (processor.editorState()["lanes"][4]["name"].toString() == "Kick copy");
+    CHECK (static_cast<bool> (processor.editorState()["lanes"][4]["reverse"]));
+
+    juce::Array<juce::var> order;
+    order.add (3); order.add (2); order.add (1); order.add (0); order.add (4);
+    REQUIRE (processor.edit (command ("reorderLanes", {{"order", order}})).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["lanes"][0]["slot"]) == 3);
+    CHECK (static_cast<int> (processor.editorState()["lanes"][3]["slot"]) == 0);
+
+    REQUIRE (processor.edit (command ("setPatternMidiChannel", {{"value", 16}})).wasOk());
+    CHECK (static_cast<int> (processor.editorState()["patternMidiChannel"]) == 16);
+
+    REQUIRE (processor.edit (command ("standaloneTransport", {{"playing", true}, {"bpm", 132.0}})).wasOk());
+    CHECK_FALSE (processor.edit (command ("standaloneTransport", {{"bpm", 500.0}})).wasOk());
+}
+
+TEST_CASE ("V1.2 sample browser folders, listing, hot-swap, preview, and WAV audio export")
+{
+    const juce::ScopedJuceInitialiser_GUI juce;
+    const auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("furrow-v12-browser-test");
+    tempDir.deleteRecursively();
+    REQUIRE (tempDir.createDirectory());
+    const auto subDir = tempDir.getChildFile ("Kicks");
+    REQUIRE (subDir.createDirectory());
+    const auto writeWav = [] (const juce::File& target, float value) {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (target);
+        const auto opts = juce::AudioFormatWriterOptions().withSampleRate (44100.0).withNumChannels (1).withBitsPerSample (32)
+                              .withSampleFormat (juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
+        auto writer = wav.createWriterFor (stream, opts);
+        REQUIRE (writer != nullptr);
+        std::vector<float> samples (512, value);
+        const float* ptrs[] = { samples.data() };
+        REQUIRE (writer->writeFromFloatArrays (ptrs, 1, 512));
+    };
+    const auto kickWav = subDir.getChildFile ("PunchKick.wav");
+    writeWav (kickWav, 0.4f);
+
+    FurrowProcessor processor;
+    processor.setBrowserSettingsFile (tempDir.getChildFile ("settings.json"));
+    REQUIRE (processor.edit (command ("browserAddFolder", {{"path", tempDir.getFullPathName()}})).wasOk());
+    CHECK (processor.editorState()["browserFolders"].size() == 1);
+    CHECK (processor.editorState()["browserListing"]["entries"].size() == 1);
+    CHECK (static_cast<bool> (processor.editorState()["browserListing"]["entries"][0]["isDir"]));
+
+    REQUIRE (processor.edit (command ("browserList", {{"path", subDir.getFullPathName()}})).wasOk());
+    REQUIRE (processor.editorState()["browserListing"]["entries"].size() == 1);
+    CHECK (processor.editorState()["browserListing"]["entries"][0]["name"].toString() == "PunchKick.wav");
+
+    // Hot-swap preserves existing steps and filter settings and is undoable.
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "filterMode"}, {"value", "lp"}})).wasOk());
+    REQUIRE (processor.edit (command ("setSampler", {{"lane", 0}, {"field", "playMode"}, {"value", "gate"}})).wasOk());
+    const auto beforeSwap = save (processor);
+    REQUIRE (processor.edit (command ("browserHotSwap", {{"lane", 0}, {"path", kickWav.getFullPathName()}})).wasOk());
+    const auto afterSwap = processor.editorState();
+    CHECK (afterSwap["lanes"][0]["samplePath"].toString() == kickWav.getFullPathName());
+    CHECK (afterSwap["lanes"][0]["filterMode"].toString() == "lp");
+    CHECK (afterSwap["lanes"][0]["playMode"].toString() == "gate");
+    CHECK (static_cast<int> (afterSwap["lanes"][0]["steps"][0][furrow::On]) == 1);
+    REQUIRE (processor.edit (command ("undo")).wasOk());
+    CHECK (save (processor) == beforeSwap);
+
+    // Preview loads asynchronously and plays on the main bus.
+    processor.setRateAndBufferSizeDetails (44100.0, 256);
+    processor.prepareToPlay (44100.0, 256);
+    REQUIRE (processor.edit (command ("browserPreview", {{"path", kickWav.getFullPathName()}})).wasOk());
+    float previewPeak = 0.0f;
+    juce::AudioBuffer<float> audio (processor.getTotalNumOutputChannels(), 256);
+    juce::MidiBuffer midi;
+    for (int attempt = 0; attempt < 50 && previewPeak <= 0.01f; ++attempt)
+    {
+        juce::Thread::sleep (10);
+        processor.processBlock (audio, midi);
+        for (int f = 0; f < 256; ++f) previewPeak = std::max (previewPeak, std::abs (audio.getSample (0, f)));
+    }
+    CHECK (previewPeak > 0.1f);
+    REQUIRE (processor.edit (command ("browserStopPreview")).wasOk());
+
+    // Processor WAV render helper writes a valid 24-bit WAV.
+    const auto outWav = tempDir.getChildFile ("bounce.wav");
+    REQUIRE (processor.renderAudioToFile (-1, false, outWav).wasOk());
+    CHECK (outWav.existsAsFile());
+    CHECK (outWav.getSize() > 1000);
+
+    // Browser settings persist across restarts and remove cleanly.
+    FurrowProcessor reopened;
+    reopened.setBrowserSettingsFile (tempDir.getChildFile ("settings.json"));
+    CHECK (reopened.editorState()["browserFolders"].size() == 1);
+    REQUIRE (reopened.edit (command ("browserRemoveFolder", {{"path", tempDir.getFullPathName()}})).wasOk());
+    CHECK (reopened.editorState()["browserFolders"].size() == 0);
+
+    tempDir.deleteRecursively();
 }

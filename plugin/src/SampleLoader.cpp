@@ -5,12 +5,30 @@
 #include <algorithm>
 #include <cstring>
 
+bool SampleLoader::isSupportedAudioExtension (const juce::String& extension)
+{
+    const auto ext = extension.toLowerCase();
+    return ext == ".wav" || ext == ".aif" || ext == ".aiff" || ext == ".flac" || ext == ".ogg" || ext == ".mp3";
+}
+
+juce::String SampleLoader::audioWildcard()
+{
+    return "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3";
+}
+
+void SampleLoader::registerAudioFormats (juce::AudioFormatManager& formats)
+{
+    formats.registerFormat (new juce::WavAudioFormat(), true);
+    formats.registerFormat (new juce::AiffAudioFormat(), false);
+    formats.registerFormat (new juce::FlacAudioFormat(), false);
+    formats.registerFormat (new juce::OggVorbisAudioFormat(), false);
+    formats.registerFormat (new juce::MP3AudioFormat(), false);
+}
+
 SampleLoader::SampleLoader (std::function<void (Result&&)> done, std::function<void()> tick)
     : juce::Thread ("Furrow sample loader"), done_ (std::move (done)), tick_ (std::move (tick))
 {
-    formats_.registerFormat (new juce::WavAudioFormat(), true);
-    formats_.registerFormat (new juce::AiffAudioFormat(), false);
-    formats_.registerFormat (new juce::FlacAudioFormat(), false);
+    registerAudioFormats (formats_);
     startThread();
 }
 
@@ -27,7 +45,7 @@ void SampleLoader::request (int lane, std::uint64_t generation, const juce::Stri
 {
     {
         const std::lock_guard<std::mutex> lock (lock_);
-        if (lane < 0 || lane >= furrow::lanes)
+        if (lane < 0 || lane > previewLane)
             return;
         std::erase_if (jobs_, [lane] (const Job& job) { return job.lane == lane; });
         jobs_.push_back ({ lane, generation, path });
@@ -112,7 +130,7 @@ SampleLoader::Result SampleLoader::load (juce::AudioFormatManager& formats, cons
     const std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
     if (reader == nullptr)
     {
-        result.error = "The file is not a WAV, AIFF or FLAC file Furrow can read: " + path;
+        result.error = "The file is not a WAV, AIFF, FLAC, OGG or MP3 file Furrow can read: " + path;
         return result;
     }
     if (reader->numChannels < 1 || reader->lengthInSamples < 1 || reader->lengthInSamples > SampleBuffer::maxFrames

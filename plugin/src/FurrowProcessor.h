@@ -34,7 +34,7 @@ public:
     bool hasEditor() const override;
     juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }
     const juce::String getName() const override { return JucePlugin_Name; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.01; }
@@ -53,6 +53,8 @@ public:
     juce::Result edit (const juce::var& command);
     juce::Result applyCommands (std::span<const furrow::Command> commands);
     juce::Result renderMidiToFile (int lane, const juce::File& file);
+    juce::Result renderAudioToFile (int lane, bool includeTail, const juce::File& file);
+    void setBrowserSettingsFile (const juce::File& file);
     std::vector<furrow::sampler::LaneSetup> laneSetups();
     std::unique_ptr<furrow::Engine> patternEngineSnapshot();
 
@@ -107,6 +109,9 @@ private:
     juce::Result restoreHistory (bool redo);
     juce::Result editFile (const juce::var& command);
     juce::Result editValidated (const juce::var& command);
+    void loadBrowserSettingsLocked();
+    void saveBrowserSettingsLocked() const;
+    juce::Result listBrowserFolderLocked (const juce::String& path);
     furrow::plugin::PatternMidiImportPreview midiPreview;
     juce::var midiPreviewState;
     std::vector<int> midiPreviewSlots;
@@ -137,7 +142,12 @@ private:
     std::atomic<std::uint64_t> windowRevision { 1 };
     std::atomic<double> hostBeat { 0.0 }, hostBpm { 120.0 }, nextBar { 4.0 };
     std::atomic<bool> hostPlaying { false };
+    std::atomic<bool> internalPlaying { false };
+    std::atomic<double> internalBpm { 120.0 };
+    double internalBeat = 0.0;
+    std::atomic<int> patternMidiChannel { 0 };
     std::array<std::atomic<int>, furrow::lanes> playheads {};
+    std::array<std::atomic<float>, furrow::lanes> laneMeters {};
     std::vector<juce::MemoryBlock> undoStates, redoStates;
     juce::String lastError;
     std::array<juce::String, furrow::lanes> laneNames;
@@ -156,6 +166,12 @@ private:
     juce::AudioParameterBool* bypassParam = nullptr;
     int lastAudioSwing = 0;
     int lastAudioTruncate = 0;
+    juce::File browserSettingsFile;
+    std::vector<juce::String> browserFolders;
+    juce::var browserListing;
+    std::uint64_t previewGeneration = 0;
+    std::unique_ptr<furrow::sampler::SampleBuffer> pendingPreview;
+    bool previewDirty = false;
     std::unique_ptr<SampleLoader> loader;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FurrowProcessor)
 };

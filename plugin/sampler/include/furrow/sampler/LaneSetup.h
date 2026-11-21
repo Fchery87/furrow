@@ -44,7 +44,8 @@ struct LaneSetup
     bool operator== (const LaneSetup&) const = default;
 };
 
-inline constexpr std::uint8_t setupFormat = 1;
+inline constexpr std::uint8_t setupFormatV1 = 1;
+inline constexpr std::uint8_t setupFormat = 2;
 inline constexpr std::size_t pathMax = 4096;
 
 namespace detail
@@ -159,6 +160,11 @@ inline void encodeSetups (std::span<const LaneSetup> setups, std::vector<std::ui
         w.f64 (s.settings.attack);
         w.f64 (s.settings.decay);
         w.f64 (s.settings.release);
+        w.u8 (static_cast<std::uint32_t> (s.settings.playMode));
+        w.u8 (s.settings.reverse ? 1u : 0u);
+        w.u8 (static_cast<std::uint32_t> (s.settings.filterMode));
+        w.f64 (s.settings.filterCutoffHz);
+        w.f64 (s.settings.filterResonance);
         w.u8 (static_cast<std::uint32_t> (s.sample.kind));
         if (s.sample.kind == SampleRef::Kind::Builtin)
             w.u8 (static_cast<std::uint32_t> (s.sample.builtin));
@@ -177,7 +183,8 @@ inline bool decodeSetups (std::span<const std::uint8_t> bytes, std::vector<LaneS
 {
     out.clear();
     detail::Reader r { bytes };
-    if (r.u8() != setupFormat)
+    const auto format = r.u8();
+    if (format != setupFormatV1 && format != setupFormat)
         return false;
     const auto count = r.u8();
     if (! r.ok || count > static_cast<std::uint32_t> (furrow::lanes))
@@ -199,13 +206,26 @@ inline bool decodeSetups (std::span<const std::uint8_t> bytes, std::vector<LaneS
         s.settings.attack = r.f64();
         s.settings.decay = r.f64();
         s.settings.release = r.f64();
+        std::uint32_t playMode = 0, reverse = 0, filterMode = 0;
+        if (format >= setupFormat)
+        {
+            playMode = r.u8();
+            reverse = r.u8();
+            filterMode = r.u8();
+            s.settings.filterCutoffHz = r.f64();
+            s.settings.filterResonance = r.f64();
+        }
         const auto kind = r.u8();
         if (! r.ok || s.slot >= furrow::lanes || seen[static_cast<std::size_t> (s.slot)] || id < 1
-            || id > static_cast<std::uint32_t> (furrow::idMax) || target > 1 || kind > 2)
+            || id > static_cast<std::uint32_t> (furrow::idMax) || target > 1 || kind > 2
+            || playMode > 1 || reverse > 1 || filterMode > 2)
             return false;
         seen[static_cast<std::size_t> (s.slot)] = true;
         s.id = static_cast<std::int32_t> (id);
         s.settings.target = static_cast<Target> (target);
+        s.settings.playMode = static_cast<PlayMode> (playMode);
+        s.settings.reverse = reverse != 0;
+        s.settings.filterMode = static_cast<FilterMode> (filterMode);
         if (! valid (s.settings))
             return false;
         s.sample.kind = static_cast<SampleRef::Kind> (kind);

@@ -15,6 +15,7 @@ namespace furrow
 inline constexpr std::array<char, 4> pluginStateTag {'F', 'R', 'W', 'S'};
 inline constexpr std::uint8_t pluginStateVersion = 2;
 inline constexpr std::uint8_t pluginMetadataVersion = 3;
+inline constexpr std::uint8_t pluginV11Version = 4;
 struct Metadata
 {
     std::array<std::string, lanes> laneNames {};
@@ -22,6 +23,8 @@ struct Metadata
     std::array<std::string, patterns> patternNames {};
     int windowWidth = 1100;
     int windowHeight = 700;
+    bool bypass = false;
+    int patternMidiChannel = 0; // 0 = Off, 1..16 = MIDI note keyswitch channel
     bool operator== (const Metadata&) const = default;
 };
 struct PluginState
@@ -48,15 +51,20 @@ inline bool text (Reader& reader, std::string& value)
     reader.at += length;
     return value.find ('\0') == std::string::npos && sampler::detail::validUtf8 (value);
 }
-inline void metadata (Writer& writer, const Metadata& value)
+inline void metadata (Writer& writer, const Metadata& value, int version)
 {
     for (const auto& name : value.laneNames) text (writer, name);
     for (const auto color : value.laneColors) writer.u32 (color);
     for (const auto& name : value.patternNames) text (writer, name);
     writer.u32 (static_cast<std::uint32_t> (value.windowWidth));
     writer.u32 (static_cast<std::uint32_t> (value.windowHeight));
+    if (version >= pluginV11Version)
+    {
+        writer.u8 (value.bypass ? 1u : 0u);
+        writer.u8 (static_cast<std::uint32_t> (value.patternMidiChannel));
+    }
 }
-inline bool metadata (Reader& reader, Metadata& value)
+inline bool metadata (Reader& reader, Metadata& value, int version)
 {
     for (auto& name : value.laneNames) if (! text (reader, name)) return false;
     for (auto& color : value.laneColors) color = reader.u32();
@@ -65,6 +73,16 @@ inline bool metadata (Reader& reader, Metadata& value)
     if (! reader.ok || width < 720 || width > 4096 || height < 420 || height > 2160) return false;
     value.windowWidth = static_cast<int> (width);
     value.windowHeight = static_cast<int> (height);
+    value.bypass = false;
+    value.patternMidiChannel = 0;
+    if (version >= pluginV11Version)
+    {
+        const auto bypass = reader.u8();
+        const auto patCh = reader.u8();
+        if (! reader.ok || bypass > 1 || patCh > 16) return false;
+        value.bypass = bypass != 0;
+        value.patternMidiChannel = static_cast<int> (patCh);
+    }
     return true;
 }
 inline std::span<const std::uint8_t> section (Reader& reader)
@@ -97,11 +115,11 @@ inline void encodePluginState (std::span<const std::int32_t> words, std::span<co
     state::toBytes (words, engine);
     sampler::encodeSetups (setups, lanesBytes);
     out.assign (pluginStateTag.begin(), pluginStateTag.end());
-    out.push_back (pluginMetadataVersion);
+    out.push_back (pluginV11Version);
     state_detail::Writer writer {out};
     state_detail::section (writer, engine);
     state_detail::section (writer, lanesBytes);
-    state_detail::metadata (writer, metadata);
+    state_detail::metadata (writer, metadata, pluginV11Version);
 }
 inline bool decodePluginState (std::span<const std::uint8_t> bytes, PluginState& out)
 {
@@ -112,7 +130,7 @@ inline bool decodePluginState (std::span<const std::uint8_t> bytes, PluginState&
     {
         if (bytes[5] > 1 || ! state::fromBytes (bytes.subspan (6), result.words)) return false;
     }
-    else if (result.version == pluginStateVersion || result.version == pluginMetadataVersion)
+    else if (result.version == pluginStateVersion || result.version == pluginMetadataVersion || result.version == pluginV11Version)
     {
         state_detail::Reader reader {bytes.subspan (5)};
         const auto engine = state_detail::section (reader);
@@ -125,7 +143,7 @@ inline bool decodePluginState (std::span<const std::uint8_t> bytes, PluginState&
         {
             const auto setups = state_detail::section (reader);
             if (! reader.ok || ! sampler::decodeSetups (setups, result.setups)
-                || ! state_detail::metadata (reader, result.metadata) || reader.at != reader.in.size()) return false;
+                || ! state_detail::metadata (reader, result.metadata, result.version) || reader.at != reader.in.size()) return false;
         }
     }
     else return false;

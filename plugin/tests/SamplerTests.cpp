@@ -625,3 +625,71 @@ TEST_CASE ("The built-in kit is the same every time and plays at a safe level")
         CHECK (std::abs (a->channel (0)[a->frames() - 1]) < 1.0e-3f);
     }
 }
+
+TEST_CASE ("V1.1 sampler supports OneShot, Reverse, SVF LP/HP filter, peak meters, and preview voice")
+{
+    Sampler sampler;
+    sampler.prepare (rate);
+    LaneSettings s;
+    s.target = Target::Sample;
+    s.attack = 0.0;
+    s.release = 1.0;
+    s.playMode = PlayMode::OneShot;
+    REQUIRE (sampler.setLane (0, s));
+    auto buf = mono (ramp (200));
+    REQUIRE (sampler.setSample (0, buf));
+    sampler.update();
+
+    // OneShot ignores noteOff and plays to sample end while reporting lane peak.
+    sampler.handle (noteOn (0, root, 127), root, bendRange);
+    sampler.handle (noteOff (0, root), root, bendRange);
+    std::vector<float> l (200, 0.0f), r (200, 0.0f);
+    Bus buses[1] = { { l.data(), r.data() } };
+    sampler.render (buses, 0, 200);
+    CHECK (std::abs (l[150]) > 0.1f);
+    CHECK (sampler.lanePeaks()[0] > 0.15f);
+    sampler.clearPeaks();
+    CHECK (sampler.lanePeaks()[0] == 0.0f);
+
+    // Reverse plays frames from end down to start.
+    s.reverse = true;
+    REQUIRE (sampler.setLane (0, s));
+    sampler.update();
+    std::fill (l.begin(), l.end(), 0.0f);
+    std::fill (r.begin(), r.end(), 0.0f);
+    sampler.handle (noteOn (0, root, 127), root, bendRange);
+    sampler.render (buses, 0, 50);
+    CHECK (l[0] > l[40]);
+
+    // LowPass filter attenuates Nyquist alternating impulse; HighPass attenuates DC.
+    std::vector<float> nyq (256);
+    for (std::size_t i = 0; i < nyq.size(); ++i) nyq[i] = (i % 2 == 0) ? 0.8f : -0.8f;
+    auto nyqBuf = mono (nyq);
+    s.reverse = false;
+    s.filterMode = FilterMode::LowPass;
+    s.filterCutoffHz = 500.0;
+    s.filterResonance = 0.2;
+    REQUIRE (sampler.setLane (0, s));
+    REQUIRE (sampler.setSample (0, nyqBuf));
+    sampler.update();
+    std::vector<float> fl (256, 0.0f), fr (256, 0.0f);
+    Bus fbuses[1] = { { fl.data(), fr.data() } };
+    sampler.handle (noteOn (0, root, 127), root, bendRange);
+    {
+        const test::CountAllocations guard;
+        sampler.render (fbuses, 0, 256);
+        CHECK (test::allocations == 0);
+    }
+    float lpEnergy = 0.0f;
+    for (std::size_t i = 160; i < 256; ++i) lpEnergy = std::max (lpEnergy, std::abs (fl[i]));
+    CHECK (lpEnergy < 0.05f);
+
+    // Preview voice renders directly on main bus.
+    auto prev = mono (constant (64, 0.5f));
+    REQUIRE (sampler.setPreviewSample (prev));
+    sampler.update();
+    std::fill (fl.begin(), fl.end(), 0.0f);
+    std::fill (fr.begin(), fr.end(), 0.0f);
+    sampler.render (fbuses, 0, 64);
+    CHECK (fl[10] == Approx (0.5f).margin (1e-4));
+}

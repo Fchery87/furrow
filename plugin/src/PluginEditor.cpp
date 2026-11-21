@@ -85,14 +85,13 @@ void PluginEditor::resized()
 bool PluginEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
     if (files.isEmpty()) return false;
-    const juce::StringArray audio { ".wav", ".aif", ".aiff", ".flac" };
     if (files.size() == 1)
     {
         const auto ext = juce::File (files[0]).getFileExtension().toLowerCase();
-        return audio.contains (ext) || ext == ".mid" || ext == ".midi";
+        return SampleLoader::isSupportedAudioExtension (ext) || ext == ".mid" || ext == ".midi";
     }
     for (const auto& f : files)
-        if (! audio.contains (juce::File (f).getFileExtension().toLowerCase()))
+        if (! SampleLoader::isSupportedAudioExtension (juce::File (f).getFileExtension()))
             return false;
     return true;
 }
@@ -114,11 +113,11 @@ void PluginEditor::filesDropped (const juce::StringArray& files, int, int)
     o->setProperty ("paths", list);
     sendEdit (juce::var (o));
 }
-void PluginEditor::chooseFolder (const juce::String& action)
+void PluginEditor::chooseFolder (const juce::String& action, const juce::String& title)
 {
     if (choosingFile) return;
     choosingFile = true;
-    chooser = std::make_unique<juce::FileChooser> ("Choose folder to relink missing samples", juce::File {});
+    chooser = std::make_unique<juce::FileChooser> (title, juce::File {});
     const auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
     juce::Component::SafePointer<PluginEditor> safeThis (this);
     chooser->launchAsync (chooserFlags, [safeThis, action] (const juce::FileChooser& c)
@@ -148,9 +147,22 @@ void PluginEditor::startMidiDrag (int lane)
         temp.deleteFile();
     }
 }
+void PluginEditor::startAudioDrag (int lane, bool includeTail)
+{
+    const auto temp = juce::File::createTempFile (".wav");
+    if (processor.renderAudioToFile (lane, includeTail, temp).wasOk())
+    {
+        tempDragFiles.add (temp);
+        performExternalDragDropOfFiles ({ temp.getFullPathName() }, false, this);
+    }
+    else
+    {
+        temp.deleteFile();
+    }
+}
 void PluginEditor::chooseSample()
 {
-    chooseFile ("loadSample", "*.wav;*.aif;*.aiff;*.flac");
+    chooseFile ("loadSample", SampleLoader::audioWildcard());
 }
 void PluginEditor::chooseFile (const juce::String& action, const juce::String& wildcard)
 {
@@ -201,12 +213,20 @@ void PluginEditor::sendEdit (const juce::var& v)
             startMidiDrag (dragLane);
             return;
         }
+        if (action == "audioDragStart")
+        {
+            const int dragLane = object->hasProperty ("lane") ? int (object->getProperty ("lane")) : -1;
+            const bool includeTail = object->hasProperty ("includeTail") && bool (object->getProperty ("includeTail"));
+            startAudioDrag (dragLane, includeTail);
+            return;
+        }
         if (! object->hasProperty ("path"))
         {
             if (action == "kitSave") { chooseFile (action, "*.furrowkit"); return; }
             if (action == "kitLoad") { chooseFile (action, "*.furrowkit;*.furrow"); return; }
             if (action == "midiExport" || action == "midiPreview") { chooseFile (action, "*.mid;*.midi"); return; }
-            if (action == "relinkFolder") { chooseFolder (action); return; }
+            if (action == "relinkFolder") { chooseFolder (action, "Choose folder to relink missing samples"); return; }
+            if (action == "browserAddFolder") { chooseFolder (action, "Choose sample library folder"); return; }
         }
     }
     processor.edit (v);
@@ -238,7 +258,8 @@ void PluginEditor::timerCallback()
     const double bpm = double (transport["bpm"]);
     const int pat = int (transport["pattern"]);
     const int pending = int (transport["pendingPattern"]);
-    if (playing || playing != lastPlaying || bpm != lastBpm || pat != lastPattern || pending != lastPendingPattern)
+    const bool hasMeters = transport["meters"].isArray() && transport["meters"].size() > 0;
+    if (playing || hasMeters || playing != lastPlaying || bpm != lastBpm || pat != lastPattern || pending != lastPendingPattern)
     {
         lastPlaying = playing;
         lastBpm = bpm;

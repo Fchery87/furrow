@@ -1,4 +1,5 @@
 #include "FurrowProcessor.h"
+#include "PatternAudio.h"
 #include "furrow/KitState.h"
 
 #include <juce_cryptography/juce_cryptography.h>
@@ -42,9 +43,11 @@ juce::var FurrowProcessor::transportState()
     root->setProperty ("pattern", playing ? audioPattern.load (std::memory_order_acquire) : selectedPattern.load (std::memory_order_acquire));
     root->setProperty ("pendingPattern", playing ? audioPendingPattern.load (std::memory_order_acquire) : -1);
     juce::Array<juce::var> heads;
+    juce::Array<juce::var> meters;
     for (int s = 0; s < furrow::lanes; ++s)
     {
-        const int step = playheads[static_cast<std::size_t> (s)].load (std::memory_order_relaxed);
+        const auto idx = static_cast<std::size_t> (s);
+        const int step = playheads[idx].load (std::memory_order_relaxed);
         if (step >= 0)
         {
             auto* item = new juce::DynamicObject();
@@ -52,8 +55,17 @@ juce::var FurrowProcessor::transportState()
             item->setProperty ("step", step);
             heads.add (juce::var (item));
         }
+        const float peak = laneMeters[idx].exchange (0.0f, std::memory_order_relaxed);
+        if (peak > 0.0005f)
+        {
+            auto* m = new juce::DynamicObject();
+            m->setProperty ("slot", s);
+            m->setProperty ("peak", std::min (1.0f, peak));
+            meters.add (juce::var (m));
+        }
     }
     root->setProperty ("playheads", heads);
+    root->setProperty ("meters", meters);
     return juce::var (root);
 }
 
@@ -63,10 +75,12 @@ juce::var FurrowProcessor::editorState()
     syncAudioPatternLocked();
     auto* root = new juce::DynamicObject();
     root->setProperty ("revision", static_cast<juce::int64> (stateRevision()));
+    root->setProperty ("standalone", wrapperType == wrapperType_Standalone);
+    root->setProperty ("patternMidiChannel", patternMidiChannel.load (std::memory_order_acquire));
     root->setProperty ("pattern", selectedPattern.load());
     root->setProperty ("pendingPattern", hostPlaying.load (std::memory_order_acquire) ? audioPendingPattern.load (std::memory_order_acquire) : modelEngine->pendingPattern());
     root->setProperty ("playing", hostPlaying.load());
-    root->setProperty ("bpm", hostBpm.load());
+    root->setProperty ("bpm", wrapperType == wrapperType_Standalone ? internalBpm.load (std::memory_order_acquire) : hostBpm.load());
     root->setProperty ("beat", hostBeat.load());
     root->setProperty ("globalSwing", modelEngine->rackField (GlobalSwing));
     root->setProperty ("truncate", modelEngine->rackField (Truncate) != 0);
@@ -77,16 +91,50 @@ juce::var FurrowProcessor::editorState()
     root->setProperty ("width", windowWidth);
     root->setProperty ("height", windowHeight);
     root->setProperty ("midiPreview", midiPreviewState);
+    juce::Array<juce::var> folderList;
+    for (const auto& f : browserFolders)
+    {
+        auto* item = new juce::DynamicObject();
+        item->setProperty ("path", f);
+        item->setProperty ("name", juce::File (f).getFileName());
+        folderList.add (juce::var (item));
+    }
+    root->setProperty ("browserFolders", folderList);
+    root->setProperty ("browserListing", browserListing);
     juce::Array<juce::var> patternList;
     for (const auto& name : patternNames) patternList.add (name);
     root->setProperty ("patterns", patternList);
-    juce::Array<juce::var> laneList;
+
+    juce::Array<juce::var> nonEmpty;
+    for (int p = 0; p < furrow::patterns; ++p)
+    {
+        bool any = false;
+        for (int s = 0; s < furrow::lanes && ! any; ++s)
+        {
+            if (! modelEngine->laneField (s, Active)) continue;
+            const int len = modelEngine->store().length (p, s);
+            for (int k = 0; k < len; ++k)
+                if (modelEngine->store().get (p, s, k, On) != 0) { any = true; break; }
+        }
+        if (any) nonEmpty.add (p);
+    }
+    root->setProperty ("nonEmptyPatterns", nonEmpty);
+
+    std::vector<int> orderedSlots;
     for (int s = 0; s < furrow::lanes; ++s)
+        if (modelEngine->laneField (s, Active)) orderedSlots.push_back (s);
+    std::stable_sort (orderedSlots.begin(), orderedSlots.end(), [this] (int a, int b) {
+        const int ra = modelEngine->laneField (a, Row), rb = modelEngine->laneField (b, Row);
+        return ra != rb ? ra < rb : a < b;
+    });
+
+    juce::Array<juce::var> laneList;
+    for (const int s : orderedSlots)
     {
         const auto index = static_cast<std::size_t> (s);
-        if (! modelEngine->laneField (s, Active)) continue;
         auto* lane = new juce::DynamicObject();
         lane->setProperty ("slot", s);
+        lane->setProperty ("row", modelEngine->laneField (s, Row));
         lane->setProperty ("name", laneNames[index]);
         lane->setProperty ("color", laneColors[index]);
         lane->setProperty ("length", modelEngine->store().length (selectedPattern.load(), s));
@@ -99,16 +147,22 @@ juce::var FurrowProcessor::editorState()
         lane->setProperty ("swing", modelEngine->laneField (s, Swing));
         lane->setProperty ("modACc", modelEngine->laneField (s, ModACc));
         lane->setProperty ("modBCc", modelEngine->laneField (s, ModBCc));
-        lane->setProperty ("target", model[index].setup.settings.target == Target::Sample ? "sample" : "midi");
-        lane->setProperty ("channel", model[index].setup.settings.channel);
-        lane->setProperty ("output", model[index].setup.settings.output);
-        lane->setProperty ("start", model[index].setup.settings.start);
-        lane->setProperty ("end", model[index].setup.settings.end);
-        lane->setProperty ("tune", model[index].setup.settings.tune);
-        lane->setProperty ("attack", model[index].setup.settings.attack);
-        lane->setProperty ("decay", model[index].setup.settings.decay);
-        lane->setProperty ("release", model[index].setup.settings.release);
-        lane->setProperty ("choke", model[index].setup.settings.choke);
+        const auto& st = model[index].setup.settings;
+        lane->setProperty ("target", st.target == Target::Sample ? "sample" : "midi");
+        lane->setProperty ("playMode", st.playMode == PlayMode::OneShot ? "oneshot" : "gate");
+        lane->setProperty ("reverse", st.reverse);
+        lane->setProperty ("filterMode", st.filterMode == FilterMode::LowPass ? "lp" : (st.filterMode == FilterMode::HighPass ? "hp" : "off"));
+        lane->setProperty ("filterCutoff", st.filterCutoffHz);
+        lane->setProperty ("filterResonance", st.filterResonance);
+        lane->setProperty ("channel", st.channel);
+        lane->setProperty ("output", st.output);
+        lane->setProperty ("start", st.start);
+        lane->setProperty ("end", st.end);
+        lane->setProperty ("tune", st.tune);
+        lane->setProperty ("attack", st.attack);
+        lane->setProperty ("decay", st.decay);
+        lane->setProperty ("release", st.release);
+        lane->setProperty ("choke", st.choke);
         const auto kind = model[index].setup.sample.kind;
         lane->setProperty ("sampleKind", kind == SampleRef::Kind::Builtin ? "builtin" : (kind == SampleRef::Kind::File ? "file" : "none"));
         lane->setProperty ("sampleBuiltin", static_cast<int> (model[index].setup.sample.builtin));
@@ -141,10 +195,13 @@ juce::Result FurrowProcessor::edit (const juce::var& command)
 {
     const std::lock_guard lock (modelLock);
     syncAudioPatternLocked();
+    const auto action = field (command, "action").toString();
     const auto result = editValidated (command);
     lastError = result.failed() ? result.getErrorMessage() : juce::String();
-    bumpRevision();
-    if (result.wasOk()) updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
+    const bool uiOnly = action == "browserPreview" || action == "browserStopPreview" || action == "browserList" || action == "resize";
+    if (! (action == "browserPreview" || action == "browserStopPreview"))
+        bumpRevision();
+    if (result.wasOk() && ! uiOnly) updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
     return result;
 }
 
@@ -441,6 +498,89 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
         publishEngine (std::move (audio));
         return juce::Result::ok();
     }
+    if (action == "standaloneTransport")
+    {
+        if (command.hasProperty ("playing"))
+            internalPlaying.store (static_cast<bool> (field (command, "playing")), std::memory_order_release);
+        if (command.hasProperty ("bpm"))
+        {
+            const auto v = field (command, "bpm");
+            if (! v.isDouble() && ! integer (v)) return juce::Result::fail ("BPM must be numeric.");
+            const double bpmVal = static_cast<double> (v);
+            if (! std::isfinite (bpmVal) || bpmVal < 20.0 || bpmVal > 300.0) return juce::Result::fail ("BPM must be between 20 and 300.");
+            internalBpm.store (bpmVal, std::memory_order_release);
+        }
+        return juce::Result::ok();
+    }
+    if (action == "setPatternMidiChannel")
+    {
+        const int ch = bounded (field (command, "value"), 0, 16);
+        if (ch < 0) return juce::Result::fail ("Pattern MIDI channel must be 0 to 16.");
+        remember();
+        patternMidiChannel.store (ch, std::memory_order_release);
+        return juce::Result::ok();
+    }
+    if (action == "reorderLanes")
+    {
+        const auto order = field (command, "order");
+        if (! order.isArray() || order.size() == 0 || order.size() > furrow::lanes)
+            return juce::Result::fail ("Lane order is invalid.");
+        std::array<bool, furrow::lanes> seen {};
+        std::vector<Command> commands;
+        commands.reserve (static_cast<std::size_t> (order.size()));
+        for (int i = 0; i < order.size(); ++i)
+        {
+            const int s = bounded (order[i], 0, furrow::lanes - 1);
+            if (s < 0 || seen[static_cast<std::size_t> (s)] || ! modelEngine->laneField (s, Active))
+                return juce::Result::fail ("Lane order contains an invalid or duplicate lane.");
+            seen[static_cast<std::size_t> (s)] = true;
+            commands.push_back ({ Op::SetLane, s, Row, i, 0, 0 });
+        }
+        return applyCommands (commands);
+    }
+    if (action == "duplicateLane")
+    {
+        if (lane < 0 || ! modelEngine->laneField (lane, Active)) return juce::Result::fail ("Lane is invalid.");
+        int dst = -1;
+        for (int s = 0; s < furrow::lanes; ++s)
+            if (! modelEngine->laneField (s, Active)) { dst = s; break; }
+        if (dst < 0) return juce::Result::fail ("There is no free lane.");
+        const int maxRow = [&] {
+            int r = 0;
+            for (int s = 0; s < furrow::lanes; ++s)
+                if (modelEngine->laneField (s, Active)) r = std::max (r, modelEngine->laneField (s, Row) + 1);
+            return std::min (furrow::lanes - 1, r);
+        }();
+        std::vector<Command> commands;
+        commands.push_back ({ Op::AddLane, dst, dst + 1, dst + 1, modelEngine->laneField (lane, Note), maxRow });
+        for (int f = Note; f <= ModBCc; ++f)
+        {
+            if (f == Row) continue;
+            commands.push_back ({ Op::SetLane, dst, f, modelEngine->laneField (lane, f), 0, 0 });
+        }
+        const int len = modelEngine->store().length (pattern, lane);
+        commands.push_back ({ Op::SetLength, pattern, dst, len, 0, 0 });
+        for (int step = 0; step < len; ++step)
+            for (int f = 0; f < stepFields; ++f)
+            {
+                const int val = modelEngine->store().get (pattern, lane, step, f);
+                if (val != fieldDefault[static_cast<std::size_t> (f)])
+                    commands.push_back ({ Op::SetStep, pattern, dst, step, f, val });
+            }
+        const auto res = applyLocked (commands, true);
+        if (res.failed()) return res;
+        const auto srcIdx = static_cast<std::size_t> (lane), dstIdx = static_cast<std::size_t> (dst);
+        laneNames[dstIdx] = (laneNames[srcIdx] + " copy").substring (0, 128);
+        laneColors[dstIdx] = laneColors[srcIdx];
+        auto copied = model[srcIdx].setup;
+        copied.slot = dst;
+        copied.id = modelEngine->laneField (dst, Id);
+        model[dstIdx].setup = copied;
+        model[dstIdx].settingsDirty = true;
+        requestSample (dst, model[dstIdx], copied.sample);
+        sync();
+        return juce::Result::ok();
+    }
     if (action == "rerollSeed")
     {
         const int current = modelEngine->rackField (Seed);
@@ -459,10 +599,10 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
             const auto p = paths[i].toString();
             const auto ext = juce::File (p).getFileExtension().toLowerCase();
             if (juce::File::isAbsolutePath (p) && p.getNumBytesAsUTF8() <= pathMax
-                && juce::StringArray { ".wav", ".aif", ".aiff", ".flac" }.contains (ext))
+                && SampleLoader::isSupportedAudioExtension (ext))
                 validPaths.push_back (p);
         }
-        if (validPaths.empty()) return juce::Result::fail ("Drop WAV, AIFF or FLAC audio files.");
+        if (validPaths.empty()) return juce::Result::fail ("Drop WAV, AIFF, FLAC, OGG or MP3 audio files.");
         std::vector<int> freeSlots;
         for (int s = 0; s < furrow::lanes && freeSlots.size() < validPaths.size(); ++s)
             if (! modelEngine->laneField (s, Active)) freeSlots.push_back (s);
@@ -480,6 +620,7 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
             laneNames[static_cast<std::size_t> (s)] = juce::File (validPaths[i]).getFileNameWithoutExtension().substring (0, 128);
             laneColors[static_cast<std::size_t> (s)] = palette[s % 6];
             laneModel.setup.settings.target = Target::Sample;
+            laneModel.setup.settings.playMode = PlayMode::OneShot;
             laneModel.settingsDirty = true;
             laneModel.setup.sample.kind = SampleRef::Kind::File;
             laneModel.setup.sample.path = validPaths[i].toStdString();
@@ -489,23 +630,79 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
         sync();
         return juce::Result::ok();
     }
-    if (action == "loadSample" || action == "retrySample")
+    if (action == "loadSample" || action == "retrySample" || action == "browserHotSwap")
     {
         const auto path = field (command, "path").toString();
         if (lane < 0 || ! juce::File::isAbsolutePath (path) || path.getNumBytesAsUTF8() > pathMax)
             return juce::Result::fail ("Sample path must be absolute and at most 4096 bytes.");
         const auto extension = juce::File (path).getFileExtension().toLowerCase();
-        if (! juce::StringArray { ".wav", ".aif", ".aiff", ".flac" }.contains (extension)) return juce::Result::fail ("Use a WAV, AIFF or FLAC sample.");
+        if (! SampleLoader::isSupportedAudioExtension (extension))
+            return juce::Result::fail ("Use a WAV, AIFF, FLAC, OGG or MP3 sample.");
         const std::lock_guard lock (modelLock);
         if (! modelEngine->laneField (lane, Active)) return juce::Result::fail ("Lane is inactive.");
         remember();
-        model[static_cast<std::size_t> (lane)].setup.settings.target = Target::Sample;
-        model[static_cast<std::size_t> (lane)].settingsDirty = true;
-        routeChanged = true;
-        model[static_cast<std::size_t> (lane)].setup.sample.hash.fill (0);
-        model[static_cast<std::size_t> (lane)].setup.sample.kind = SampleRef::Kind::File;
-        model[static_cast<std::size_t> (lane)].setup.sample.path = path.toStdString();
-        requestSample (lane, model[static_cast<std::size_t> (lane)], model[static_cast<std::size_t> (lane)].setup.sample);
+        auto& lm = model[static_cast<std::size_t> (lane)];
+        const bool switchedTarget = lm.setup.settings.target != Target::Sample;
+        lm.setup.settings.target = Target::Sample;
+        if (action == "loadSample")
+            lm.setup.settings.playMode = PlayMode::OneShot;
+        lm.settingsDirty = true;
+        if (switchedTarget)
+            routeChanged = true;
+        lm.setup.sample.hash.fill (0);
+        lm.setup.sample.kind = SampleRef::Kind::File;
+        lm.setup.sample.path = path.toStdString();
+        requestSample (lane, lm, lm.setup.sample);
+        sync();
+        return juce::Result::ok();
+    }
+    if (action == "browserAddFolder")
+    {
+        const auto path = field (command, "path").toString();
+        const juce::File dir (path);
+        if (! juce::File::isAbsolutePath (path) || ! dir.isDirectory())
+            return juce::Result::fail ("Select an existing folder to add to the browser.");
+        const auto normalized = dir.getFullPathName();
+        if (std::find (browserFolders.begin(), browserFolders.end(), normalized) == browserFolders.end())
+        {
+            browserFolders.push_back (normalized);
+            saveBrowserSettingsLocked();
+        }
+        return listBrowserFolderLocked (normalized);
+    }
+    if (action == "browserRemoveFolder")
+    {
+        const auto path = field (command, "path").toString();
+        const auto before = browserFolders.size();
+        browserFolders.erase (std::remove (browserFolders.begin(), browserFolders.end(), path), browserFolders.end());
+        if (browserFolders.size() != before)
+            saveBrowserSettingsLocked();
+        if (browserListing.isObject() && browserListing["path"].toString().startsWith (path))
+            browserListing = juce::var();
+        return juce::Result::ok();
+    }
+    if (action == "browserList")
+    {
+        const auto path = field (command, "path").toString();
+        return listBrowserFolderLocked (path);
+    }
+    if (action == "browserPreview")
+    {
+        const auto path = field (command, "path").toString();
+        const juce::File file (path);
+        if (! juce::File::isAbsolutePath (path) || ! file.existsAsFile()
+            || ! SampleLoader::isSupportedAudioExtension (file.getFileExtension()))
+            return juce::Result::fail ("Choose an existing audio file to preview.");
+        ++previewGeneration;
+        if (loader)
+            loader->request (SampleLoader::previewLane, previewGeneration, file.getFullPathName());
+        return juce::Result::ok();
+    }
+    if (action == "browserStopPreview")
+    {
+        ++previewGeneration;
+        pendingPreview.reset();
+        previewDirty = true;
         sync();
         return juce::Result::ok();
     }
@@ -534,6 +731,23 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
             if (value != juce::var ("midi") && value != juce::var ("sample")) return juce::Result::fail ("Target is invalid.");
             settings.target = value.toString() == "sample" ? Target::Sample : Target::Midi;
         }
+        else if (name == "playMode")
+        {
+            if (value != juce::var ("oneshot") && value != juce::var ("gate")) return juce::Result::fail ("Play mode is invalid.");
+            settings.playMode = value.toString() == "oneshot" ? PlayMode::OneShot : PlayMode::Gate;
+        }
+        else if (name == "reverse")
+        {
+            settings.reverse = static_cast<bool> (value);
+        }
+        else if (name == "filterMode")
+        {
+            const auto m = value.toString();
+            if (m == "off") settings.filterMode = FilterMode::Off;
+            else if (m == "lp") settings.filterMode = FilterMode::LowPass;
+            else if (m == "hp") settings.filterMode = FilterMode::HighPass;
+            else return juce::Result::fail ("Filter mode is invalid.");
+        }
         else if (name == "channel") settings.channel = bounded (value, 1, 16);
         else if (name == "output") settings.output = bounded (value, 1, outputs);
         else if (name == "tune") settings.tune = bounded (value, -tuneMax, tuneMax);
@@ -547,6 +761,8 @@ juce::Result FurrowProcessor::editValidated (const juce::var& command)
             else if (name == "attack") settings.attack = number;
             else if (name == "decay") settings.decay = number;
             else if (name == "release") settings.release = number;
+            else if (name == "filterCutoff") settings.filterCutoffHz = number;
+            else if (name == "filterResonance") settings.filterResonance = number;
             else return juce::Result::fail ("Unknown sampler setting.");
         }
         if (! valid (settings)) return juce::Result::fail ("Sampler setting is out of range.");
@@ -597,6 +813,107 @@ juce::Result FurrowProcessor::renderMidiToFile (int onlyLane, const juce::File& 
         if (! compact.writeTo (output)) return juce::Result::fail ("Could not render active MIDI lanes.");
     }
     return file.replaceWithData (bytes.getData(), bytes.getSize()) ? juce::Result::ok() : juce::Result::fail ("Could not write MIDI file.");
+}
+
+juce::Result FurrowProcessor::renderAudioToFile (int onlyLane, bool includeTail, const juce::File& file)
+{
+    const std::lock_guard lock (modelLock);
+    const auto setups = laneSetups();
+    if (setups.empty()) return juce::Result::fail ("Add a lane before exporting audio.");
+    furrow::plugin::PatternAudioExportOptions options;
+    options.lengthSteps = 1;
+    options.bpm = wrapperType == wrapperType_Standalone ? internalBpm.load (std::memory_order_acquire) : hostBpm.load (std::memory_order_acquire);
+    if (! std::isfinite (options.bpm) || options.bpm <= 0.0) options.bpm = 120.0;
+    options.sampleRate = getSampleRate() > 0.0 ? getSampleRate() : 44100.0;
+    options.onlyLane = onlyLane;
+    options.includeTail = includeTail;
+    for (const auto& setup : setups)
+        if (onlyLane < 0 || setup.slot == onlyLane)
+            options.lengthSteps = std::max (options.lengthSteps, modelEngine->store().length (selectedPattern.load(), setup.slot));
+    return furrow::plugin::exportPatternWav (*modelEngine, setups, options, file);
+}
+
+void FurrowProcessor::setBrowserSettingsFile (const juce::File& file)
+{
+    const std::lock_guard lock (modelLock);
+    browserSettingsFile = file;
+    browserFolders.clear();
+    browserListing = juce::var();
+    loadBrowserSettingsLocked();
+}
+
+void FurrowProcessor::loadBrowserSettingsLocked()
+{
+    if (! browserSettingsFile.existsAsFile()) return;
+    const auto parsed = juce::JSON::parse (browserSettingsFile);
+    if (! parsed.isObject()) return;
+    const auto arr = parsed["browserFolders"];
+    if (! arr.isArray()) return;
+    browserFolders.clear();
+    for (int i = 0; i < arr.size(); ++i)
+    {
+        const auto p = arr[i].toString();
+        if (juce::File::isAbsolutePath (p) && juce::File (p).isDirectory())
+            browserFolders.push_back (p);
+    }
+}
+
+void FurrowProcessor::saveBrowserSettingsLocked() const
+{
+    if (browserSettingsFile == juce::File {}) return;
+    auto* root = new juce::DynamicObject();
+    juce::Array<juce::var> arr;
+    for (const auto& f : browserFolders) arr.add (f);
+    root->setProperty ("browserFolders", arr);
+    const auto parent = browserSettingsFile.getParentDirectory();
+    if (parent != juce::File {}) parent.createDirectory();
+    browserSettingsFile.replaceWithText (juce::JSON::toString (juce::var (root), true));
+}
+
+juce::Result FurrowProcessor::listBrowserFolderLocked (const juce::String& path)
+{
+    const juce::File dir (path);
+    if (! juce::File::isAbsolutePath (path) || ! dir.isDirectory())
+        return juce::Result::fail ("Browser folder does not exist.");
+
+    auto dirs = dir.findChildFiles (juce::File::findDirectories, false);
+    auto files = dir.findChildFiles (juce::File::findFiles, false);
+    auto byName = [] (const juce::File& a, const juce::File& b) {
+        return a.getFileName().compareIgnoreCase (b.getFileName()) < 0;
+    };
+    std::sort (dirs.begin(), dirs.end(), byName);
+    std::sort (files.begin(), files.end(), byName);
+
+    juce::Array<juce::var> entries;
+    constexpr int maxEntries = 1000;
+    for (const auto& d : dirs)
+    {
+        if (entries.size() >= maxEntries) break;
+        if (d.getFileName().startsWithChar ('.')) continue;
+        auto* item = new juce::DynamicObject();
+        item->setProperty ("name", d.getFileName());
+        item->setProperty ("path", d.getFullPathName());
+        item->setProperty ("isDir", true);
+        entries.add (juce::var (item));
+    }
+    for (const auto& f : files)
+    {
+        if (entries.size() >= maxEntries) break;
+        if (! SampleLoader::isSupportedAudioExtension (f.getFileExtension())) continue;
+        auto* item = new juce::DynamicObject();
+        item->setProperty ("name", f.getFileName());
+        item->setProperty ("path", f.getFullPathName());
+        item->setProperty ("isDir", false);
+        entries.add (juce::var (item));
+    }
+
+    auto* listing = new juce::DynamicObject();
+    listing->setProperty ("path", dir.getFullPathName());
+    const auto parent = dir.getParentDirectory();
+    listing->setProperty ("parent", parent != dir ? parent.getFullPathName() : juce::String());
+    listing->setProperty ("entries", entries);
+    browserListing = juce::var (listing);
+    return juce::Result::ok();
 }
 
 juce::Result FurrowProcessor::editFile (const juce::var& command)
@@ -699,7 +1016,7 @@ juce::Result FurrowProcessor::editFile (const juce::var& command)
         }
         if (missingSlots.empty()) return juce::Result::ok();
         int relinked = 0;
-        const auto candidates = file.findChildFiles (juce::File::findFiles, true, "*.wav;*.aif;*.aiff;*.flac");
+        const auto candidates = file.findChildFiles (juce::File::findFiles, true, SampleLoader::audioWildcard());
         for (const auto& candidate : candidates)
         {
             const auto digest = juce::SHA256 (candidate).getRawData();

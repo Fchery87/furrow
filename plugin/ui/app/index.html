@@ -41,7 +41,28 @@ button{cursor:pointer}
 
 /* Main 3-pane layout */
 .main{display:grid;grid-template-columns:minmax(0,1fr) var(--inspector);grid-template-rows:minmax(0,1fr) 156px;min-height:0}
+.main.browser-open{grid-template-columns:232px minmax(0,1fr) var(--inspector)}
+.browser{grid-column:1;grid-row:1/3;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;padding:10px;gap:8px}
+.browser[hidden]{display:none}
+.browser-head{display:flex;align-items:center;justify-content:space-between;gap:4px}
+.browser-roots{display:flex;flex-direction:column;gap:3px;max-height:108px;overflow-y:auto}
+.browser-root{display:flex;align-items:center;gap:4px}
+.browser-root .root-btn{flex:1;min-width:0;text-align:left;background:var(--ridge-alt);border:1px solid var(--line);border-radius:5px;padding:4px 7px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.browser-root .root-btn.active{background:var(--ridge);border-color:var(--chaff-dim);color:var(--focus)}
+.browser-root .root-rm{width:22px;height:22px;padding:0;border-radius:5px;border:1px solid var(--line);background:none;color:var(--chaff-dim)}
+.browser-nav{display:flex;gap:4px;align-items:center}
+.browser-filter{flex:1;min-width:0;background:var(--furrow);border:1px solid var(--line);border-radius:5px;padding:4px 7px;font-size:12px}
+.browser-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px;outline:none}
+.browser-item{display:flex;align-items:center;gap:4px;padding:4px 6px;border-radius:5px;font-size:12px;cursor:pointer}
+.browser-item:hover{background:var(--ridge-alt)}
+.browser-item.selected{background:var(--ridge);color:var(--focus)}
+.browser-item.loaded{border-left:2px solid #E2B24A}
+.browser-item .item-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.browser-item .item-add{width:20px;height:20px;padding:0;border-radius:4px;border:1px solid var(--line);background:var(--ridge-alt);font-size:11px;flex:none}
 .rack-area{grid-column:1;grid-row:1;display:grid;grid-template-columns:var(--head) minmax(0,1fr);min-height:0;overflow:hidden}
+.main.browser-open .rack-area{grid-column:2}
+.main.browser-open .editor{grid-column:2}
+.main.browser-open .inspector{grid-column:3}
 .lane-headers{overflow-y:auto;overflow-x:hidden;padding:10px 6px 10px 14px;border-right:1px solid var(--line)}
 .lane-headers::-webkit-scrollbar{width:0}
 .lane-row{height:var(--row-h);display:flex;align-items:center;gap:6px;padding:0 4px;border-radius:6px}
@@ -56,6 +77,17 @@ button{cursor:pointer}
 .ms{width:24px;height:24px;flex:none;border-radius:5px;border:1px solid var(--line);background:var(--ridge-alt);font-size:11px;font-weight:700;color:var(--chaff-dim);padding:0}
 .ms.m[aria-pressed="true"]{background:var(--chaff-dim);color:var(--peat);border-color:var(--chaff-dim)}
 .ms.s[aria-pressed="true"]{background:var(--focus);color:var(--peat);border-color:var(--focus)}
+.meter{width:4px;height:28px;border-radius:2px;background:var(--furrow);overflow:hidden;display:flex;align-items:flex-end;flex:none}
+.meter-fill{width:100%;height:0%;background:#A3BE6E;transition:height 45ms linear}
+.drag-handle{cursor:grab;color:var(--chaff-faint);font-size:12px;padding:0 2px;flex:none}
+.lane-row.drag-over{outline:1.5px solid var(--focus)}
+.bank-pop{position:fixed;z-index:35;width:320px;background:#332C26;border:1px solid #4A4038;border-radius:10px;padding:10px;box-shadow:0 14px 32px rgba(0,0,0,.55);display:flex;flex-direction:column;gap:8px}
+.bank-tabs{display:grid;grid-template-columns:repeat(8,1fr);gap:3px}
+.bank-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.pat-cell{position:relative;background:var(--ridge-alt);border:1px solid var(--line);border-radius:5px;padding:6px 4px;font-size:11px;text-align:center}
+.pat-cell.active{background:var(--chaff);color:var(--peat);border-color:var(--chaff);font-weight:700}
+.pat-cell.has-data::after{content:"";position:absolute;top:3px;right:3px;width:5px;height:5px;border-radius:50%;background:#E2B24A}
+.bpm-input{width:54px;background:var(--furrow);border:1px solid var(--line);border-radius:5px;padding:2px 5px;text-align:right;font-variant-numeric:tabular-nums}
 .drop-zone{margin-top:8px;min-height:42px;border:1.5px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--chaff-dim);font-size:12px;padding:6px}
 .grid-scroll{overflow:auto;padding:10px 12px 10px 8px;background:var(--peat);position:relative}
 #gridCanvas{display:block;cursor:pointer;touch-action:none}
@@ -119,12 +151,14 @@ button{cursor:pointer}
 <div class="app" id="app">
   <header class="topbar">
     <div class="wordmark">furrow</div>
+    <button class="btn" id="browserToggleBtn" aria-pressed="false" data-hint="Toggle collapsible sample library browser.">Browser</button>
     <div class="pattern-wrap" id="patternWrap">
       <button class="pattern-btn" id="patternBtn" aria-haspopup="menu" data-hint="Switch, rename, clone or clear patterns. While playing, switches queue for the next bar."><span id="patternName">Pattern 1</span><span aria-hidden="true">▾</span></button>
       <span class="queued" id="queuedBadge" hidden></span>
     </div>
     <div class="transport">
-      <div class="play-pill" id="playPill" data-hint="Host transport state and tempo."><span class="play-dot"></span><span id="bpmText">120 BPM</span></div>
+      <button class="btn" id="standalonePlayBtn" hidden data-hint="Play or stop standalone transport (Space).">Play</button>
+      <div class="play-pill" id="playPill" data-hint="Transport state and tempo."><span class="play-dot"></span><span id="bpmText">120 BPM</span><input class="bpm-input" id="bpmInput" type="number" min="20" max="300" step="1" value="120" hidden aria-label="Standalone BPM"></div>
       <div id="globalSwingSlot"></div>
       <button class="btn" id="truncateBtn" aria-pressed="false" data-hint="Truncate swung notes before the next step boundary.">Truncate</button>
       <button class="btn" id="seedBtn" data-hint="Reroll probability seed.">Seed <span id="seedVal">0</span></button>
@@ -136,11 +170,28 @@ button{cursor:pointer}
       <button class="btn" data-action="kitLoad">Load kit</button>
       <button class="btn" data-action="midiExport">Export MIDI</button>
       <button class="btn" id="dragMidiBtn" data-hint="Drag this pattern onto your host timeline as a MIDI file.">Drag MIDI</button>
+      <button class="btn" id="dragWavBtn" data-hint="Drag this pattern onto your host timeline as a 24-bit WAV loop.">Drag WAV</button>
+      <button class="btn" id="wavTailBtn" aria-pressed="false" data-hint="Include up to 2 seconds of ringing tail when dragging WAV.">Tail</button>
       <button class="btn danger" data-action="panic">Panic</button>
     </div>
   </header>
 
-  <main class="main">
+  <main class="main" id="mainLayout">
+    <aside class="browser" id="browserPane" hidden aria-label="Sample browser">
+      <div class="browser-head">
+        <span class="label">Samples</span>
+        <div class="actions">
+          <button class="btn" id="browserAutoSwapBtn" aria-pressed="false" data-hint="When active, Up/Down arrows hot-swap the selected lane live.">Auto-swap</button>
+          <button class="btn" id="browserAddFolderBtn">+ Folder</button>
+        </div>
+      </div>
+      <div class="browser-roots" id="browserRoots"></div>
+      <div class="browser-nav">
+        <button class="btn" id="browserUpBtn" disabled>..</button>
+        <input class="browser-filter" id="browserFilterInput" type="search" placeholder="Filter samples..." aria-label="Filter browser">
+      </div>
+      <div class="browser-list" id="browserList" tabindex="0" role="listbox" aria-label="Sample files"></div>
+    </aside>
     <section class="rack-area" aria-label="Pattern rack">
       <div class="lane-headers" id="laneHeaders"></div>
       <div class="grid-scroll" id="gridScroll">
@@ -187,10 +238,17 @@ const STEP_FIELDS = [
 ];
 
 const CELL_W = 28, CELL_GAP = 3, GROUP_GAP = 6, ROW_H = 44, CELL_H = 36;
-let state = { lanes: [], patterns: ['Pattern 1'], pattern: 0, pendingPattern: -1, playing: false, bpm: 120, globalSwing: 0, truncate: false, seed: 0, canUndo: false, canRedo: false, error: '' };
-let transport = { playing: false, bpm: 120, beat: 0, pattern: 0, pendingPattern: -1, playheads: {} };
+let state = { standalone: false, patternMidiChannel: 0, nonEmptyPatterns: [0], browserFolders: [], browserListing: null, lanes: [], patterns: ['Pattern 1'], pattern: 0, pendingPattern: -1, playing: false, bpm: 120, globalSwing: 0, truncate: false, seed: 0, canUndo: false, canRedo: false, error: '' };
+let transport = { playing: false, bpm: 120, beat: 0, pattern: 0, pendingPattern: -1, playheads: {}, meters: {} };
 let selectedSlot = 0;
 let activeTab = 0;
+let activeBank = 0;
+let dragLaneSlot = -1;
+let browserOpen = false;
+let browserAutoSwap = false;
+let browserFilter = '';
+let browserCursor = -1;
+let audioDragTail = false;
 let focusCell = { slot: 0, step: 0 };
 let openMenu = null;
 let renamingPattern = false;
@@ -325,7 +383,20 @@ function renderTop() {
     if (show) $('queuedBadge').textContent = `Next bar: ${names[pending] || 'Pattern ' + (pending + 1)}`;
   }
   if ($('playPill')) $('playPill').className = 'play-pill' + (transport.playing ? ' playing' : '');
-  if ($('bpmText')) $('bpmText').textContent = `${Math.round(transport.bpm || state.bpm || 120)} BPM`;
+  const bpm = Math.round(transport.bpm || state.bpm || 120);
+  if ($('standalonePlayBtn')) {
+    $('standalonePlayBtn').hidden = !state.standalone;
+    $('standalonePlayBtn').textContent = transport.playing ? 'Stop' : 'Play';
+    $('standalonePlayBtn').className = 'btn' + (transport.playing ? ' active' : '');
+  }
+  if ($('bpmText')) {
+    $('bpmText').hidden = !!state.standalone;
+    $('bpmText').textContent = `${bpm} BPM`;
+  }
+  if ($('bpmInput')) {
+    $('bpmInput').hidden = !state.standalone;
+    if (document.activeElement !== $('bpmInput')) $('bpmInput').value = String(bpm);
+  }
   if ($('truncateBtn')) {
     $('truncateBtn').setAttribute('aria-pressed', String(!!state.truncate));
     $('truncateBtn').className = 'btn' + (state.truncate ? ' active' : '');
@@ -378,8 +449,10 @@ function renderHeaders() {
       l.length !== 16 ? `<span class="badge">${l.length}</span>` : '',
       l.sampleMissing ? `<span class="badge warn" title="${esc(l.sampleError)}">!</span>` : '',
     ].join('');
-    return `<div class="${cls}" style="--lane:${esc(l.color||'#E2B24A')}" data-lane="${l.slot}">` +
+    return `<div class="${cls}" style="--lane:${esc(l.color||'#E2B24A')}" data-lane="${l.slot}" draggable="true">` +
+      `<span class="drag-handle" title="Drag to reorder">⋮</span>` +
       `<span class="chip"></span>` +
+      `<span class="meter" aria-hidden="true"><span class="meter-fill" id="meter-${l.slot}"></span></span>` +
       `<button class="lane-name" data-lane="${l.slot}" aria-label="Select ${esc(l.name)}">${esc(l.name)}</button>` +
       badges +
       `<button class="ms m" data-action="mute" data-lane="${l.slot}" aria-pressed="${!!l.mute}" aria-label="Mute ${esc(l.name)}">M</button>` +
@@ -541,15 +614,18 @@ function renderInspector() {
     `<div class="lane-title" style="--lane:${esc(l.color)}"><span class="chip"></span><input data-field="name" data-lane="${l.slot}" value="${esc(l.name)}" aria-label="Lane name"></div>` +
     `<div class="field"><span class="label">Target</span><div class="segmented" role="radiogroup"><button data-target="sample" aria-checked="${l.target==='sample'}">Sample</button><button data-target="midi" aria-checked="${l.target==='midi'}">MIDI out</button></div></div>` +
     (l.target === 'sample'
-      ? `<div class="field"><canvas id="waveCanvas" class="wave"></canvas><div class="caption">${esc(sampleName)}</div>${l.sampleError ? `<div class="caption" style="color:var(--danger)" role="status">${esc(l.sampleError)}</div>` : ''}<div class="tools-grid"><button class="btn" data-action="chooseSample">Choose sample</button><button class="btn" data-action="retrySample" ${l.samplePath?'':'disabled'}>Retry</button><button class="btn" data-action="relinkFolder">Relink folder</button></div></div>`
+      ? `<div class="field"><canvas id="waveCanvas" class="wave"></canvas><div class="caption">${esc(sampleName)}</div>${l.sampleError ? `<div class="caption" style="color:var(--danger)" role="status">${esc(l.sampleError)}</div>` : ''}<div class="tools-grid"><button class="btn" data-action="chooseSample">Choose sample</button><button class="btn" data-action="retrySample" ${l.samplePath?'':'disabled'}>Retry</button><button class="btn" data-action="relinkFolder">Relink folder</button></div></div>` +
+        `<div class="row2"><div class="field"><span class="label">Playback</span><div class="segmented" role="radiogroup"><button data-playmode="oneshot" aria-checked="${(l.playMode||'oneshot')==='oneshot'}">One-Shot</button><button data-playmode="gate" aria-checked="${l.playMode==='gate'}">Gate</button></div></div>` +
+        `<div class="field"><span class="label">Direction</span><button class="btn ${l.reverse?'active':''}" data-reverse="${l.reverse?'0':'1'}" aria-pressed="${!!l.reverse}">${l.reverse?'Reversed':'Forward'}</button></div></div>` +
+        `<div class="field"><span class="label">Filter</span><div class="segmented" role="radiogroup"><button data-filter="off" aria-checked="${(l.filterMode||'off')==='off'}">Off</button><button data-filter="lp" aria-checked="${l.filterMode==='lp'}">Low-pass</button><button data-filter="hp" aria-checked="${l.filterMode==='hp'}">High-pass</button></div></div>`
       : `<div class="row2"><label class="field"><span class="label">Channel</span><input class="num-input" data-field="channel" data-lane="${l.slot}" type="number" min="1" max="16" value="${l.channel}"></label><label class="field"><span class="label">Base note (${noteName(l.note)})</span><input class="num-input" data-field="note" data-lane="${l.slot}" type="number" min="0" max="127" value="${l.note}"></label></div><div class="row2"><label class="field"><span class="label">Bend range</span><input class="num-input" data-field="bendRange" data-lane="${l.slot}" type="number" min="0" max="48" value="${l.bendRange ?? 2}"></label><label class="field"><span class="label">Mod A / B CC</span><div class="row2"><input class="num-input" data-field="modACc" data-lane="${l.slot}" type="number" min="0" max="127" value="${l.modACc ?? 74}"><input class="num-input" data-field="modBCc" data-lane="${l.slot}" type="number" min="0" max="127" value="${l.modBCc ?? 71}"></div></label></div>`) +
     `<div class="knobs" id="inspectorKnobs"></div>` +
     `<div class="row2"><label class="field"><span class="label">Steps (1-512)</span><input class="num-input" data-field="length" data-lane="${l.slot}" type="number" min="1" max="512" value="${l.length}"></label>` +
     (l.target === 'sample'
       ? `<label class="field"><span class="label">Output</span><select data-field="output" data-lane="${l.slot}">${busOpts}</select></label></div><label class="field"><span class="label">Choke group</span><select data-field="choke" data-lane="${l.slot}">${chokeOpts}</select></label>`
-      : `<div class="field"><span class="label">Drag lane MIDI</span><button class="btn" data-action="midiDragLane">Drag lane</button></div></div>`) +
+      : `<div class="field"><span class="label">MIDI note</span><div class="caption">${noteName(l.note)} (Ch ${l.channel})</div></div></div>`) +
     `<div class="field"><span class="label">Color</span><div class="swatches">${PALETTE.map(c => `<button class="swatch" data-color="${c}" style="--c:${c}" aria-checked="${(l.color||'').toUpperCase()===c}"></button>`).join('')}<input class="color-pick" data-field="color" data-lane="${l.slot}" type="color" value="${esc(l.color||'#E2B24A')}"></div></div>` +
-    `<div class="section"><span class="label">Lane tools</span><div class="tools-grid"><button class="btn" data-action="audition">Audition</button><button class="btn" data-fill="2">Fill 2</button><button class="btn" data-fill="4">Fill 4</button><button class="btn" data-fill="8">Fill 8</button><button class="btn" data-rotate="-1">Rot L</button><button class="btn" data-rotate="1">Rot R</button><button class="btn" data-action="invertLane">Invert</button><button class="btn" data-action="clearLane">Clear</button><button class="btn danger" data-action="removeLane">Delete</button></div></div>` +
+    `<div class="section"><span class="label">Lane tools</span><div class="tools-grid"><button class="btn" data-action="audition">Audition</button><button class="btn" data-action="midiDragLane">Drag MIDI</button><button class="btn" data-action="audioDragLane">Drag WAV</button><button class="btn" data-action="duplicateLane">Duplicate</button><button class="btn" data-fill="2">Fill 2</button><button class="btn" data-fill="4">Fill 4</button><button class="btn" data-fill="8">Fill 8</button><button class="btn" data-rotate="-1">Rot L</button><button class="btn" data-rotate="1">Rot R</button><button class="btn" data-action="invertLane">Invert</button><button class="btn" data-action="clearLane">Clear</button><button class="btn danger" data-action="removeLane">Delete</button></div></div>` +
     midiCard;
 
   if (l.target === 'sample') drawWaveform($('waveCanvas'), l);
@@ -568,34 +644,160 @@ function renderInspector() {
         { label: 'Release', min: 0, max: 2000, step: 5, def: 1, value: l.release ?? 1, fmt: v => Math.round(v) + ' ms', onChange: v => emit('setSampler', { lane: l.slot, field: 'release', value: v }) },
         { label: 'Start', min: 0, max: 0.99, step: 0.01, def: 0, value: l.start ?? 0, fmt: v => Math.round(v * 100) + '%', onChange: v => emit('setSampler', { lane: l.slot, field: 'start', value: Math.min(v, (l.end ?? 1) - 0.01) }) },
         { label: 'End', min: 0.01, max: 1, step: 0.01, def: 1, value: l.end ?? 1, fmt: v => Math.round(v * 100) + '%', onChange: v => emit('setSampler', { lane: l.slot, field: 'end', value: Math.max(v, (l.start ?? 0) + 0.01) }) },
+        { label: 'Cutoff', min: 20, max: 20000, step: 20, def: 20000, value: l.filterCutoff ?? 20000, fmt: v => v >= 1000 ? (v / 1000).toFixed(1) + ' kHz' : Math.round(v) + ' Hz', onChange: v => emit('setSampler', { lane: l.slot, field: 'filterCutoff', value: v }) },
+        { label: 'Res', min: 0, max: 0.95, step: 0.01, def: 0, value: l.filterResonance ?? 0, fmt: v => Math.round(v * 100) + '%', onChange: v => emit('setSampler', { lane: l.slot, field: 'filterResonance', value: v }) },
       );
     }
     for (const k of klist) kSlot.appendChild(makeKnob({ ...k, color: l.color || '#E2B24A' }));
   }
 }
 
+function browserEntries() {
+  const entries = state.browserListing?.entries || [];
+  const q = browserFilter.trim().toLowerCase();
+  return q ? entries.filter(e => String(e.name || '').toLowerCase().includes(q)) : entries;
+}
+function renderBrowser() {
+  if ($('browserPane')) $('browserPane').hidden = !browserOpen;
+  if ($('mainLayout')) $('mainLayout').className = 'main' + (browserOpen ? ' browser-open' : '');
+  if ($('browserToggleBtn')) {
+    $('browserToggleBtn').setAttribute('aria-pressed', String(browserOpen));
+    $('browserToggleBtn').className = 'btn' + (browserOpen ? ' active' : '');
+  }
+  if ($('browserAutoSwapBtn')) {
+    $('browserAutoSwapBtn').setAttribute('aria-pressed', String(browserAutoSwap));
+    $('browserAutoSwapBtn').className = 'btn' + (browserAutoSwap ? ' active' : '');
+  }
+  if ($('wavTailBtn')) {
+    $('wavTailBtn').setAttribute('aria-pressed', String(audioDragTail));
+    $('wavTailBtn').className = 'btn' + (audioDragTail ? ' active' : '');
+  }
+  const activePath = state.browserListing?.path || '';
+  if ($('browserRoots')) {
+    const roots = state.browserFolders || [];
+    $('browserRoots').innerHTML = roots.length
+      ? roots.map(r => `<div class="browser-root"><button class="root-btn ${activePath===r.path?'active':''}" data-root="${esc(r.path)}" title="${esc(r.path)}">${esc(r.name||r.path)}</button><button class="root-rm" data-rm-root="${esc(r.path)}" aria-label="Remove folder">×</button></div>`).join('')
+      : `<div class="caption">Add a drum folder to browse and hot-swap samples.</div>`;
+  }
+  if ($('browserUpBtn')) $('browserUpBtn').disabled = !state.browserListing?.parent;
+  if ($('browserList')) {
+    const entries = browserEntries();
+    const loadedPath = currentLane()?.samplePath || '';
+    $('browserList').innerHTML = entries.map((e, idx) =>
+      `<div class="browser-item ${idx===browserCursor?'selected':''} ${!e.isDir&&e.path===loadedPath?'loaded':''}" data-bidx="${idx}" data-bpath="${esc(e.path)}" data-bdir="${e.isDir?'1':'0'}" role="option">` +
+      `<span class="item-name">${e.isDir ? '▸ ' : ''}${esc(e.name)}</span>` +
+      (!e.isDir ? `<button class="item-add" data-add-sample="${esc(e.path)}" title="Add as new lane">+</button>` : '') +
+      `</div>`
+    ).join('');
+  }
+}
+
 function renderAll() {
   if (!currentLane()) selectedSlot = state.lanes?.[0]?.slot ?? 0;
-  renderTop(); renderHeaders(); drawGrid(); renderStepTabs(); drawBars(); renderInspector();
+  renderTop(); renderBrowser(); renderHeaders(); drawGrid(); renderStepTabs(); drawBars(); renderInspector();
 }
 
 /* ---------- Events ---------- */
-$('patternBtn')?.addEventListener('click', () => {
+function showPatternPopover() {
+  closeMenu();
   const r = $('patternBtn').getBoundingClientRect?.() || { left: 100, bottom: 44 };
-  const names = state.patterns || ['Pattern 1'];
-  const items = [];
-  for (let i = 0; i < Math.min(16, names.length); i++) {
-    items.push({ label: `${i + 1}. ${names[i]}`, checked: i === state.pattern, action: () => emit('pattern', { value: i }) });
-  }
-  items.push('-',
-    { label: 'Rename pattern', action: startInlinePatternRename },
-    { label: 'Clone pattern', action: () => emit('clonePattern') },
-    { label: 'Clear pattern', danger: true, action: () => emit('clearPattern') });
-  showMenu(r.left, r.bottom + 4, items);
-});
+  const pop = document.createElement('div');
+  pop.className = 'bank-pop';
+  activeBank = Math.floor((state.pattern || 0) / 16);
+  const nonEmpty = new Set(state.nonEmptyPatterns || []);
+  const renderPop = () => {
+    const names = state.patterns || ['Pattern 1'];
+    const base = activeBank * 16;
+    const chOpts = Array.from({ length: 17 }, (_, i) => `<option value="${i}" ${(state.patternMidiChannel||0)===i?'selected':''}>${i===0?'Keyswitch: Off':'Keyswitch Ch '+i}</option>`).join('');
+    pop.innerHTML =
+      `<div class="bank-tabs">${Array.from({ length: 16 }, (_, b) => `<button class="btn ${b===activeBank?'active':''}" data-bank="${b}">B${b+1}</button>`).join('')}</div>` +
+      `<div class="bank-grid">${Array.from({ length: 16 }, (_, i) => {
+        const p = base + i;
+        return `<button class="pat-cell ${p===state.pattern?'active':''} ${nonEmpty.has(p)?'has-data':''}" data-pat="${p}" title="${esc(names[p]||'Pattern '+(p+1))}">${p+1}</button>`;
+      }).join('')}</div>` +
+      `<div class="tools-grid"><button class="btn" data-pop="rename">Rename</button><button class="btn" data-pop="clone">Clone</button><button class="btn danger" data-pop="clear">Clear</button></div>` +
+      `<select id="patMidiCh">${chOpts}</select>`;
+  };
+  renderPop();
+  pop.addEventListener('click', e => {
+    const b = e.target.closest?.('[data-bank],[data-pat],[data-pop]');
+    if (!b) return;
+    if (b.dataset.bank !== undefined) { activeBank = Number(b.dataset.bank); renderPop(); return; }
+    if (b.dataset.pat !== undefined) { closeMenu(); emit('pattern', { value: Number(b.dataset.pat) }); return; }
+    const act = b.dataset.pop; closeMenu();
+    if (act === 'rename') startInlinePatternRename();
+    else if (act === 'clone') emit('clonePattern');
+    else if (act === 'clear') emit('clearPattern');
+  });
+  pop.addEventListener('change', e => {
+    if (e.target.id === 'patMidiCh') emit('setPatternMidiChannel', { value: Number(e.target.value) });
+  });
+  document.body.appendChild(pop);
+  pop.style.left = Math.min(r.left, (window.innerWidth || 1000) - 332) + 'px';
+  pop.style.top = (r.bottom + 4) + 'px';
+  openMenu = pop;
+}
+
+$('patternBtn')?.addEventListener('click', showPatternPopover);
+$('standalonePlayBtn')?.addEventListener('click', () => emit('standaloneTransport', { playing: !transport.playing }));
+$('bpmInput')?.addEventListener('change', e => emit('standaloneTransport', { bpm: clamp(Number(e.target.value) || 120, 20, 300) }));
 $('truncateBtn')?.addEventListener('click', () => emit('setRack', { field: RACK_FIELDS.truncate, value: state.truncate ? 0 : 1 }));
 $('seedBtn')?.addEventListener('click', () => emit('rerollSeed'));
 $('dragMidiBtn')?.addEventListener('pointerdown', e => { if (e.button === 0) emit('midiDragStart', { lane: -1 }); });
+$('dragWavBtn')?.addEventListener('pointerdown', e => { if (e.button === 0) emit('audioDragStart', { lane: -1, includeTail: audioDragTail }); });
+$('wavTailBtn')?.addEventListener('click', () => { audioDragTail = !audioDragTail; renderBrowser(); });
+$('browserToggleBtn')?.addEventListener('click', () => {
+  browserOpen = !browserOpen;
+  if (browserOpen && !state.browserListing && state.browserFolders?.length)
+    emit('browserList', { path: state.browserFolders[0].path });
+  renderBrowser();
+});
+$('browserAutoSwapBtn')?.addEventListener('click', () => { browserAutoSwap = !browserAutoSwap; renderBrowser(); });
+$('browserAddFolderBtn')?.addEventListener('click', () => emit('browserAddFolder'));
+$('browserUpBtn')?.addEventListener('click', () => { if (state.browserListing?.parent) { browserCursor = -1; emit('browserList', { path: state.browserListing.parent }); } });
+$('browserFilterInput')?.addEventListener('input', e => { browserFilter = e.target.value || ''; browserCursor = -1; renderBrowser(); });
+$('browserRoots')?.addEventListener('click', e => {
+  const rm = e.target.closest?.('[data-rm-root]');
+  if (rm) { emit('browserRemoveFolder', { path: rm.dataset.rmRoot }); return; }
+  const b = e.target.closest?.('[data-root]');
+  if (b) { browserCursor = -1; emit('browserList', { path: b.dataset.root }); }
+});
+$('browserList')?.addEventListener('click', e => {
+  const add = e.target.closest?.('[data-add-sample]');
+  if (add) { emit('addSampleFiles', { paths: [add.dataset.addSample] }); return; }
+  const item = e.target.closest?.('[data-bidx]');
+  if (!item) return;
+  browserCursor = Number(item.dataset.bidx);
+  if (item.dataset.bdir === '1') { browserCursor = -1; emit('browserList', { path: item.dataset.bpath }); return; }
+  if (browserAutoSwap) emit('browserHotSwap', { lane: selectedSlot, path: item.dataset.bpath });
+  else emit('browserPreview', { path: item.dataset.bpath });
+  renderBrowser();
+});
+$('browserList')?.addEventListener('dblclick', e => {
+  const item = e.target.closest?.('[data-bpath]');
+  if (item && item.dataset.bdir !== '1') emit('browserHotSwap', { lane: selectedSlot, path: item.dataset.bpath });
+});
+$('browserList')?.addEventListener('keydown', e => {
+  const entries = browserEntries();
+  if (!entries.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    browserCursor = clamp(browserCursor + (e.key === 'ArrowDown' ? 1 : -1), 0, entries.length - 1);
+    const cur = entries[browserCursor];
+    if (cur && !cur.isDir) {
+      if (browserAutoSwap) emit('browserHotSwap', { lane: selectedSlot, path: cur.path });
+      else emit('browserPreview', { path: cur.path });
+    }
+    renderBrowser();
+  } else if (e.key === 'Enter' && browserCursor >= 0 && entries[browserCursor]) {
+    e.preventDefault();
+    const cur = entries[browserCursor];
+    if (cur.isDir) { browserCursor = -1; emit('browserList', { path: cur.path }); }
+    else emit('browserHotSwap', { lane: selectedSlot, path: cur.path });
+  } else if (e.key === 'Escape') {
+    emit('browserStopPreview');
+  }
+});
 document.querySelector('.topbar')?.addEventListener('click', e => {
   const b = e.target.closest?.('[data-action]');
   if (b && !b.disabled) emit(b.dataset.action);
@@ -628,6 +830,9 @@ $('laneHeaders')?.addEventListener('contextmenu', e => {
   selectedSlot = slot;
   showMenu(e.clientX, e.clientY, [
     { label: 'Audition', action: () => emit('audition', { lane: slot }) },
+    { label: 'Duplicate lane', action: () => emit('duplicateLane', { lane: slot }) },
+    { label: 'Drag lane MIDI', action: () => emit('midiDragStart', { lane: slot }) },
+    { label: 'Drag lane WAV', action: () => emit('audioDragStart', { lane: slot, includeTail: audioDragTail }) },
     '-',
     { label: 'Fill every 2', action: () => emit('fillLane', { lane: slot, every: 2 }) },
     { label: 'Fill every 3', action: () => emit('fillLane', { lane: slot, every: 3 }) },
@@ -640,6 +845,30 @@ $('laneHeaders')?.addEventListener('contextmenu', e => {
     '-',
     { label: 'Delete lane', danger: true, action: () => emit('removeLane', { lane: slot }) },
   ]);
+});
+
+$('laneHeaders')?.addEventListener('dragstart', e => {
+  const row = e.target.closest?.('.lane-row'); if (!row) return;
+  dragLaneSlot = Number(row.dataset.lane);
+});
+$('laneHeaders')?.addEventListener('dragover', e => {
+  const row = e.target.closest?.('.lane-row');
+  if (dragLaneSlot < 0 || !row) return;
+  e.preventDefault(); row.classList.add('drag-over');
+});
+$('laneHeaders')?.addEventListener('dragleave', e => e.target.closest?.('.lane-row')?.classList.remove('drag-over'));
+$('laneHeaders')?.addEventListener('drop', e => {
+  const row = e.target.closest?.('.lane-row');
+  if (dragLaneSlot < 0 || !row) return;
+  e.preventDefault(); row.classList.remove('drag-over');
+  const targetSlot = Number(row.dataset.lane);
+  const src = dragLaneSlot; dragLaneSlot = -1;
+  if (src === targetSlot) return;
+  const slots = (state.lanes || []).map(l => l.slot);
+  const from = slots.indexOf(src), to = slots.indexOf(targetSlot);
+  if (from < 0 || to < 0) return;
+  slots.splice(from, 1); slots.splice(to, 0, src);
+  emit('reorderLanes', { order: slots });
 });
 
 /* Sync scroll between headers, grid, and step-lane bars */
@@ -778,9 +1007,12 @@ $('inspector')?.addEventListener('change', e => {
   else emit('setSampler', { lane, field, value });
 });
 $('inspector')?.addEventListener('click', e => {
-  const el = e.target.closest?.('[data-action],[data-target],[data-color],[data-fill],[data-rotate]');
+  const el = e.target.closest?.('[data-action],[data-target],[data-playmode],[data-reverse],[data-filter],[data-color],[data-fill],[data-rotate]');
   if (!el || el.disabled) return;
   if (el.dataset.target) { emit('setSampler', { lane: selectedSlot, field: 'target', value: el.dataset.target }); return; }
+  if (el.dataset.playmode) { emit('setSampler', { lane: selectedSlot, field: 'playMode', value: el.dataset.playmode }); return; }
+  if (el.dataset.reverse !== undefined) { emit('setSampler', { lane: selectedSlot, field: 'reverse', value: el.dataset.reverse === '1' }); return; }
+  if (el.dataset.filter) { emit('setSampler', { lane: selectedSlot, field: 'filterMode', value: el.dataset.filter }); return; }
   if (el.dataset.color) { emit('colorLane', { lane: selectedSlot, color: el.dataset.color }); return; }
   if (el.dataset.fill) { emit('fillLane', { lane: selectedSlot, every: Number(el.dataset.fill) }); return; }
   if (el.dataset.rotate) { emit('rotateLane', { lane: selectedSlot, direction: Number(el.dataset.rotate) }); return; }
@@ -788,6 +1020,7 @@ $('inspector')?.addEventListener('click', e => {
   if (action === 'addLane') { emit('addLane', { note: 60 }); return; }
   if (action === 'midiImport' && !state.midiPreview?.accepted) return;
   if (action === 'midiDragLane') { emit('midiDragStart', { lane: selectedSlot }); return; }
+  if (action === 'audioDragLane') { emit('audioDragStart', { lane: selectedSlot, includeTail: audioDragTail }); return; }
   if (['midiPreview', 'midiImport', 'panic', 'relinkFolder'].includes(action)) { emit(action); return; }
   if (action === 'retrySample') { const path = currentLane()?.samplePath; if (path) emit('retrySample', { lane: selectedSlot, path }); return; }
   emit(action, { lane: selectedSlot });
@@ -797,6 +1030,9 @@ $('inspector')?.addEventListener('click', e => {
 document.addEventListener('pointerdown', e => { if (openMenu && !openMenu.contains(e.target)) closeMenu(); });
 document.addEventListener('keydown', e => {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+  if (e.key === ' ' && state.standalone && document.activeElement !== $('gridCanvas')) {
+    e.preventDefault(); emit('standaloneTransport', { playing: !transport.playing }); return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); emit(e.shiftKey ? 'redo' : 'undo'); }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); emit('redo'); }
 });
@@ -809,9 +1045,18 @@ window.__furrowState = s => {
 };
 window.__furrowTransport = t => {
   if (!t) return;
-  const map = {};
+  const map = {}, mMap = {};
   for (const h of (t.playheads || [])) map[h.slot] = h.step;
-  transport = { ...t, playheads: map };
+  for (const m of (t.meters || [])) mMap[m.slot] = m.peak;
+  transport = { ...t, playheads: map, meters: mMap };
+  for (const l of (state.lanes || [])) {
+    const el = $('meter-' + l.slot);
+    if (el) {
+      const p = clamp(mMap[l.slot] || 0, 0, 1);
+      el.style.height = Math.round(p * 100) + '%';
+      el.style.background = p > 0.92 ? '#E8A091' : '#A3BE6E';
+    }
+  }
   renderTop();
   drawGrid();
 };

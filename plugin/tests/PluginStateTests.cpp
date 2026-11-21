@@ -165,7 +165,10 @@ TEST_CASE ("The plugin state keeps the engine's bytes and adds the lane setups")
     CHECK (bytes[4] == 2);
     std::vector<std::uint8_t> engineBytes;
     state::toBytes (words, engineBytes);
-    const std::uint32_t length = bytes[5] | (bytes[6] << 8) | (bytes[7] << 16) | (static_cast<std::uint32_t> (bytes[8]) << 24);
+    const std::uint32_t length = static_cast<std::uint32_t> (bytes[5])
+        | (static_cast<std::uint32_t> (bytes[6]) << 8)
+        | (static_cast<std::uint32_t> (bytes[7]) << 16)
+        | (static_cast<std::uint32_t> (bytes[8]) << 24);
     REQUIRE (length == engineBytes.size());
     CHECK (std::equal (engineBytes.begin(), engineBytes.end(), bytes.begin() + 9));
 
@@ -188,7 +191,7 @@ TEST_CASE ("The plugin state keeps the engine's bytes and adds the lane setups")
     wrongTag[0] = 'X';
     CHECK_FALSE (decodePluginState (wrongTag, back));
     auto future = bytes;
-    future[4] = 3;
+    future[4] = pluginV11Version + 1;
     CHECK_FALSE (decodePluginState (future, back));
 }
 
